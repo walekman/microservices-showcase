@@ -10,6 +10,7 @@ Plan 1 (Foundation + Account Service) is implemented and merged to `master`: a w
 
 - **Design spec:** `docs/microservices-showcase-design.md` — the source of truth for architecture, service boundaries, and tech stack. Update it (not just the plans) if an implementation decision changes the actual architecture.
 - **Implementation plans:** `docs/plan-N-<feature-name>.md` (e.g. `docs/plan-1-foundation-account-service.md`) — one per build increment, in execution order. This project uses this location/naming instead of the `docs/superpowers/plans/` default; keep new plans consistent with it.
+- **Roadmap:** `docs/roadmap.md` — tracks which plans are done/not-started and their forecast scope. Update its status/scope row whenever a plan starts, finishes, or its actual scope diverges from the forecast.
 
 ## Local environment
 
