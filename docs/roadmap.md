@@ -23,7 +23,7 @@ when it's brainstormed, and may reshape later rows.
 ## Deferred items (not their own plan — folded into whichever plan touches that area, or reassessed later)
 
 Carried over from Plan 1's final review, not yet assigned:
-- CI workflow (build/test on push) — strongly recommended once Plan 2 exists, since a CI gap is what let Plan 1's build-break reach `master` unnoticed.
+- ~~CI workflow (build/test on push)~~ — done: `.github/workflows/ci.yml` runs `./mvnw -B test` on every PR into `master` and on push to `master` (GitHub-hosted Ubuntu runner, Docker preinstalled for Testcontainers).
 - Actuator + container healthchecks — natural fit for Plan 2, since Transfer's `depends_on: account-service` needs it.
 - `ErrorResponse` wire-contract decision (stable `code` field vs. RFC 7807 `ProblemDetail`) — Transfer Service's error handling depends on this; decide during Plan 2 brainstorming rather than let Account's ad hoc shape become the de facto standard by default.
 - Flyway vs. `ddl-auto` for schema management — revisit before a second service's schema exists.
