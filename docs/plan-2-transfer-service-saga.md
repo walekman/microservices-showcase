@@ -418,7 +418,9 @@ Expected: `showcase-account-service` shows `(healthy)` within about a minute. Th
 ```bash
 curl -f http://localhost:8081/actuator/health
 ```
-Expected: `{"status":"UP"}`. Tear down with `docker compose down`.
+Expected: `{"status":"UP","groups":["liveness","readiness"]}` — the `groups` array is
+emitted precisely because Step 2 sets `probes.enabled: true`. Any later assertion on this
+endpoint must target `$.status`, not the whole document. Tear down with `docker compose down`.
 
 - [ ] **Step 6: Commit**
 
