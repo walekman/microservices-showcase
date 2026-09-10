@@ -16,7 +16,12 @@ Then:
 
 This starts Postgres and Account Service. More services land in later plans.
 
-## Try it
+## Try it (Swagger UI)
+
+Account Service's API is browsable and callable straight from a browser at
+http://localhost:8081/swagger-ui.html — no separate client needed.
+
+## Try it (curl)
 
     # Create an account
     curl -X POST http://localhost:8081/accounts \
