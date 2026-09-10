@@ -28,4 +28,4 @@ Carried over from Plan 1's final review, not yet assigned:
 - `ErrorResponse` wire-contract decision (stable `code` field vs. RFC 7807 `ProblemDetail`) — Transfer Service's error handling depends on this; decide during Plan 2 brainstorming rather than let Account's ad hoc shape become the de facto standard by default.
 - Flyway vs. `ddl-auto` for schema management — revisit before a second service's schema exists.
 - Idempotency keys for debit/credit — relevant once Transfer's saga can retry a sync call into Account.
-- springdoc-openapi — nice-to-have, no assigned plan yet.
+- Swagger UI (springdoc-openapi) — makes each service's REST API callable straight from a browser. Add per-service as each one is built (`springdoc-openapi-starter-webmvc-ui`, pinned to the last 2.x release compatible with the service's Spring Boot version — 3.x springdoc needs Boot 3.4+). Quick, low-risk follow-up; not tied to any one plan.
