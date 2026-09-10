@@ -12,6 +12,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.Callable;
@@ -89,28 +90,41 @@ class AccountControllerIT {
 
     @Test
     void returns409ForConcurrentUpdateConflict() throws Exception {
+        // A 2-thread version of this test (one barrier-released pair of requests) was flaky
+        // in CI: on a slow/constrained runner, both requests can fully serialize (one commits
+        // entirely before the other even reads), so no version conflict ever occurs and both
+        // return 200 OK instead of one returning 409. Widening to CONCURRENT_REQUESTS
+        // genuinely concurrent debits against the same account makes it overwhelmingly likely
+        // that at least two of them interleave and collide, without relying on exact
+        // microsecond-level thread-scheduling timing. This still exercises the real HTTP debit
+        // endpoint end-to-end (not the repository directly) — see AccountRepositoryTest for the
+        // deterministic repository-level proof of the same optimistic-locking behavior.
+        int concurrentRequests = 10;
         UUID id = createAccount(new BigDecimal("1000.00"));
 
-        // Two genuinely concurrent debits against the same account: whichever transaction
-        // commits second sees a stale version and must be rejected with 409 Conflict,
-        // exercised through the real HTTP debit endpoint rather than the repository directly.
-        CyclicBarrier barrier = new CyclicBarrier(2);
+        CyclicBarrier barrier = new CyclicBarrier(concurrentRequests);
         Callable<ResponseEntity<String>> debitCall = () -> {
             barrier.await();
             return restTemplate.postForEntity(
-                    "/accounts/" + id + "/debit", new AmountRequest(new BigDecimal("10.00")), String.class);
+                    "/accounts/" + id + "/debit", new AmountRequest(new BigDecimal("1.00")), String.class);
         };
 
-        ExecutorService executor = Executors.newFixedThreadPool(2);
+        ExecutorService executor = Executors.newFixedThreadPool(concurrentRequests);
         try {
-            Future<ResponseEntity<String>> first = executor.submit(debitCall);
-            Future<ResponseEntity<String>> second = executor.submit(debitCall);
+            List<Future<ResponseEntity<String>>> futures = new ArrayList<>();
+            for (int i = 0; i < concurrentRequests; i++) {
+                futures.add(executor.submit(debitCall));
+            }
 
-            List<HttpStatus> statuses = List.of(
-                    (HttpStatus) first.get(10, TimeUnit.SECONDS).getStatusCode(),
-                    (HttpStatus) second.get(10, TimeUnit.SECONDS).getStatusCode());
+            List<HttpStatus> statuses = new ArrayList<>();
+            for (Future<ResponseEntity<String>> future : futures) {
+                statuses.add((HttpStatus) future.get(10, TimeUnit.SECONDS).getStatusCode());
+            }
 
-            assertThat(statuses).contains(HttpStatus.CONFLICT);
+            assertThat(statuses).hasSize(concurrentRequests);
+            assertThat(statuses).allMatch(status -> status == HttpStatus.OK || status == HttpStatus.CONFLICT);
+            assertThat(statuses).as("at least one of %s concurrent debits should lose the optimistic-lock race", concurrentRequests)
+                    .contains(HttpStatus.CONFLICT);
         } finally {
             executor.shutdownNow();
         }
