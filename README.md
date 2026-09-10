@@ -1,5 +1,7 @@
 # Banking Microservices Showcase
 
+[![CI](https://github.com/walekman/microservices-showcase/actions/workflows/ci.yml/badge.svg)](https://github.com/walekman/microservices-showcase/actions/workflows/ci.yml)
+
 Design: [docs/microservices-showcase-design.md](docs/microservices-showcase-design.md)
 
 ## Running locally
