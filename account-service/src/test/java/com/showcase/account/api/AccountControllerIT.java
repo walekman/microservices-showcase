@@ -6,6 +6,8 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -66,10 +68,13 @@ class AccountControllerIT {
 
     @Test
     void returns404ForUnknownAccount() {
-        ResponseEntity<ErrorResponse> response = restTemplate.getForEntity(
-                "/accounts/" + UUID.randomUUID(), ErrorResponse.class);
+        ResponseEntity<ProblemDetail> response = restTemplate.getForEntity(
+                "/accounts/" + UUID.randomUUID(), ProblemDetail.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(response.getHeaders().getContentType()).isEqualTo(MediaType.APPLICATION_PROBLEM_JSON);
+        assertThat(response.getBody().getProperties()).containsEntry("code", "ACCOUNT_NOT_FOUND");
+        assertThat(response.getBody().getProperties()).containsKey("timestamp");
     }
 
     @Test
@@ -87,10 +92,11 @@ class AccountControllerIT {
     void rejectsDebitWithInsufficientFunds() {
         UUID id = createAccount(new BigDecimal("10.00"));
 
-        ResponseEntity<ErrorResponse> response = restTemplate.postForEntity(
-                "/accounts/" + id + "/debit", new AmountRequest(new BigDecimal("40.00")), ErrorResponse.class);
+        ResponseEntity<ProblemDetail> response = restTemplate.postForEntity(
+                "/accounts/" + id + "/debit", new AmountRequest(new BigDecimal("40.00")), ProblemDetail.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+        assertThat(response.getBody().getProperties()).containsEntry("code", "INSUFFICIENT_FUNDS");
     }
 
     @Test
@@ -148,10 +154,20 @@ class AccountControllerIT {
 
     @Test
     void rejectsNegativeInitialBalance() {
-        ResponseEntity<ErrorResponse> response = restTemplate.postForEntity(
-                "/accounts", new CreateAccountRequest("Ada Lovelace", new BigDecimal("-5.00")), ErrorResponse.class);
+        ResponseEntity<ProblemDetail> response = restTemplate.postForEntity(
+                "/accounts", new CreateAccountRequest("Ada Lovelace", new BigDecimal("-5.00")), ProblemDetail.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(response.getBody().getProperties()).containsEntry("code", "VALIDATION_FAILED");
+    }
+
+    @Test
+    void returns400ForMalformedAccountId() {
+        ResponseEntity<ProblemDetail> response = restTemplate.getForEntity(
+                "/accounts/not-a-uuid", ProblemDetail.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(response.getBody().getProperties()).containsEntry("code", "MALFORMED_REQUEST");
     }
 
     private UUID createAccount(BigDecimal initialBalance) {
