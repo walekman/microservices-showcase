@@ -23,5 +23,6 @@
   <properties>
     <java.version>21</java.version>
     <testcontainers.version>1.21.4</testcontainers.version>
+    <springdoc-openapi.version>2.6.0</springdoc-openapi.version>
   </properties>
 </project>
