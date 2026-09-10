@@ -18,6 +18,7 @@
 
   <modules>
     <module>account-service</module>
+    <module>transfer-service</module>
   </modules>
 
   <properties>
