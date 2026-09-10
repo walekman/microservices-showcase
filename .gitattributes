@@ -1,0 +1,4 @@
+mvnw text eol=lf
+mvnw.cmd text eol=crlf
+*.sh text eol=lf
+docker/postgres/init-db.sh text eol=lf diff=bash

@@ -4,17 +4,35 @@ services:
     container_name: showcase-postgres
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      ACCOUNT_DB_PASSWORD: ${ACCOUNT_DB_PASSWORD}
     ports:
       - "5432:5432"
     volumes:
-      - ./docker/postgres/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+      - ./docker/postgres/init-db.sh:/docker-entrypoint-initdb.d/init-db.sh
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
       timeout: 5s
       retries: 5
+
+  account-service:
+    build:
+      context: .
+      dockerfile: account-service/Dockerfile
+    container_name: showcase-account-service
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: account
+      DB_USER: account_service
+      DB_PASSWORD: ${ACCOUNT_DB_PASSWORD}
+    ports:
+      - "8081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   postgres-data:
