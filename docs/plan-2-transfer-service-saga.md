@@ -114,7 +114,8 @@ Both services emit `application/problem+json` with a stable `code` property. `ty
 | `CONCURRENT_MODIFICATION` | 409 | `INSUFFICIENT_FUNDS` | 422 |
 | `VALIDATION_FAILED` | 400 | `CONCURRENT_MODIFICATION` | 422 |
 | `MALFORMED_REQUEST` | 400 | `SAME_ACCOUNT_TRANSFER` | 400 |
-| `INTERNAL_ERROR` | 500 | `VALIDATION_FAILED` | 400 |
+| `REQUEST_REJECTED` | other 4xx | `VALIDATION_FAILED` | 400 |
+| `INTERNAL_ERROR` | 500 | `REQUEST_REJECTED` | other 4xx |
 | | | `MALFORMED_REQUEST` | 400 |
 | | | `ACCOUNT_SERVICE_UNAVAILABLE` | 503 |
 | | | `COMPENSATION_REQUIRED` | 500 |
@@ -122,6 +123,12 @@ Both services emit `application/problem+json` with a stable `code` property. `ty
 | | | `INTERNAL_ERROR` | 500 |
 
 A referenced account being missing is `422` at Transfer, not `404` — the transfer resource is not what is missing.
+
+Every error response carries a `code`, including the ones Spring's own MVC layer raises
+(405, 415, 406, `NoResourceFoundException`, and the rest). Un-enumerated 4xx statuses get
+`REQUEST_REJECTED`, un-enumerated 5xx get `INTERNAL_ERROR`, stamped in one place by
+overriding `handleExceptionInternal`. Without that, a caller reading `code` gets `null` on
+exactly the paths a mis-wired client hits most.
 
 Transfer has two distinct 500s. `UNEXPECTED_ERROR` means the saga ran and failed with a code from Account that this service does not recognise — the transfer record exists and says so. `INTERNAL_ERROR` is the catch-all handler firing on a bug, with no transfer outcome to report.
 
@@ -273,11 +280,6 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     public ProblemDetail handleConflict(ObjectOptimisticLockingFailureException ex) {
         return Problems.of(HttpStatus.CONFLICT, "CONCURRENT_MODIFICATION", "Concurrent modification",
                 "Account was modified concurrently, please retry");
-    }
-
-    @ExceptionHandler(IllegalArgumentException.class)
-    public ProblemDetail handleIllegalArgument(IllegalArgumentException ex) {
-        return Problems.of(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "Validation failed", ex.getMessage());
     }
 
     @ExceptionHandler(Exception.class)
@@ -2154,11 +2156,6 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(SameAccountTransferException.class)
     public ProblemDetail handleSameAccount(SameAccountTransferException ex) {
         return Problems.of(HttpStatus.BAD_REQUEST, "SAME_ACCOUNT_TRANSFER", "Same account", ex.getMessage());
-    }
-
-    @ExceptionHandler(IllegalArgumentException.class)
-    public ProblemDetail handleIllegalArgument(IllegalArgumentException ex) {
-        return Problems.of(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "Validation failed", ex.getMessage());
     }
 
     @ExceptionHandler(Exception.class)
