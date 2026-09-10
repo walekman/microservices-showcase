@@ -103,6 +103,11 @@ public class Transfer {
         if (reason == null || reason.length() <= 512) {
             return reason;
         }
-        return reason.substring(0, 512);
+        // Cutting at 512 blindly can split a surrogate pair (an emoji straddling the boundary),
+        // leaving an unpaired surrogate that the PostgreSQL driver refuses to encode. That would
+        // recreate the exact failure this method exists to prevent: a recorded failure silently
+        // becoming an unrecorded one. Drop the lone high surrogate instead.
+        int end = Character.isHighSurrogate(reason.charAt(511)) ? 511 : 512;
+        return reason.substring(0, end);
     }
 }

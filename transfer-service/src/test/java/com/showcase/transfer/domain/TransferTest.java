@@ -84,4 +84,70 @@ class TransferTest {
         assertThatThrownBy(() -> transfer.markFailed(TransferFailureCode.INSUFFICIENT_FUNDS, "x"))
                 .isInstanceOf(IllegalStateException.class);
     }
+
+    @Test
+    void rejectsANullAccountId() {
+        assertThatThrownBy(() -> new Transfer(null, TO, TEN))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new Transfer(FROM, null, TEN))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void truncatesAnOverlongFailureReason() {
+        Transfer transfer = new Transfer(FROM, TO, TEN);
+
+        transfer.markFailed(TransferFailureCode.UNEXPECTED_ERROR, "x".repeat(600));
+
+        assertThat(transfer.getFailureReason()).hasSize(512);
+    }
+
+    @Test
+    void keepsAFailureReasonOfExactlyTheColumnLength() {
+        Transfer transfer = new Transfer(FROM, TO, TEN);
+
+        transfer.markFailed(TransferFailureCode.UNEXPECTED_ERROR, "x".repeat(512));
+
+        assertThat(transfer.getFailureReason()).hasSize(512);
+    }
+
+    @Test
+    void doesNotSplitASurrogatePairWhenTruncating() {
+        // U+1F600 is two chars in UTF-16. Placed after 511 filler chars it straddles the
+        // 512-char boundary: high surrogate at index 511, low surrogate at index 512.
+        String emoji = new String(Character.toChars(0x1F600));
+        String reason = "x".repeat(511) + emoji + "y".repeat(100);
+        Transfer transfer = new Transfer(FROM, TO, TEN);
+
+        transfer.markFailed(TransferFailureCode.UNEXPECTED_ERROR, reason);
+
+        String stored = transfer.getFailureReason();
+        assertThat(stored).hasSize(511);
+        assertThat(Character.isHighSurrogate(stored.charAt(stored.length() - 1))).isFalse();
+        assertThat(stored.chars().anyMatch(c -> Character.isSurrogate((char) c))).isFalse();
+    }
+
+    @Test
+    void aFailedTransferCannotBeSettledAgain() {
+        Transfer transfer = new Transfer(FROM, TO, TEN);
+        transfer.markFailed(TransferFailureCode.INSUFFICIENT_FUNDS, "not enough money");
+
+        assertThatThrownBy(transfer::markCompleted).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> transfer.markFailed(TransferFailureCode.UNEXPECTED_ERROR, "x"))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> transfer.markCompensationRequired(TransferFailureCode.UNEXPECTED_ERROR, "x"))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void aTransferAwaitingCompensationCannotBeSettledAgain() {
+        Transfer transfer = new Transfer(FROM, TO, TEN);
+        transfer.markCompensationRequired(TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, "credit leg timed out");
+
+        assertThatThrownBy(transfer::markCompleted).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> transfer.markFailed(TransferFailureCode.UNEXPECTED_ERROR, "x"))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> transfer.markCompensationRequired(TransferFailureCode.UNEXPECTED_ERROR, "x"))
+                .isInstanceOf(IllegalStateException.class);
+    }
 }
