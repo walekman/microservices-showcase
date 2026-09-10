@@ -929,7 +929,7 @@ public class Transfer {
 - [ ] **Step 9: Run the entity test to verify it passes**
 
 Run: `./mvnw -pl transfer-service test -Dtest=TransferTest`
-Expected: PASS, 6 tests.
+Expected: PASS, 7 tests.
 
 - [ ] **Step 10: Write the failing repository test**
 
@@ -2200,7 +2200,7 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 - [ ] **Step 7: Run the whole module test suite**
 
 Run: `./mvnw -pl transfer-service test`
-Expected: PASS — `TransferTest` (6), `TransferRepositoryTest` (3), `AccountClientTest` (7), `TransferServiceTest` (9), `TransferControllerTest` (7).
+Expected: PASS — `TransferTest` (7), `TransferRepositoryTest` (3), `AccountClientTest` (7), `TransferServiceTest` (9), `TransferControllerTest` (7).
 
 - [ ] **Step 8: Commit**
 
