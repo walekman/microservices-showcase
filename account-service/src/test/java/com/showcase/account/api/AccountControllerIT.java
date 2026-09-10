@@ -49,6 +49,22 @@ class AccountControllerIT {
     }
 
     @Test
+    void listsAllAccounts() {
+        // Test methods in this class share one Testcontainers Postgres instance (no per-test
+        // cleanup), so other tests' accounts may already be in the table -- assert this test's
+        // own accounts are present in the list rather than asserting an exact total count.
+        UUID firstId = createAccount(new BigDecimal("100.00"));
+        UUID secondId = createAccount(new BigDecimal("50.00"));
+
+        ResponseEntity<AccountResponse[]> response = restTemplate.getForEntity("/accounts", AccountResponse[].class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody())
+                .extracting(AccountResponse::id)
+                .contains(firstId, secondId);
+    }
+
+    @Test
     void returns404ForUnknownAccount() {
         ResponseEntity<ErrorResponse> response = restTemplate.getForEntity(
                 "/accounts/" + UUID.randomUUID(), ErrorResponse.class);
