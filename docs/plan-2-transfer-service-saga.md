@@ -2427,7 +2427,29 @@ listable — but does not fix it. Compensation (crediting the source back) is Pl
 The gap is deliberate: it makes visible exactly why saga compensation exists.
 ```
 
-- [ ] **Step 10: Update the roadmap**
+- [ ] **Step 10: Record the error contract in the design spec**
+
+`CLAUDE.md` makes `docs/microservices-showcase-design.md` the source of truth for
+architecture and service boundaries, and says to update it — not just the plan — when an
+implementation decision changes the actual architecture. The inter-service error contract
+is exactly that, and the spec currently says nothing about it. Add a short subsection to
+§3 (Tech Stack), after the Resilience bullet:
+
+```markdown
+- **Error contract:** every service returns RFC 7807 `application/problem+json` on error,
+  carrying a stable machine-readable `code` property alongside the standard `type`,
+  `title`, `status` and `detail` fields. Consumers branch on `code`, never on the prose in
+  `detail`, and never on the `type` URI (which is an identifier, not a dereferenceable
+  URL). Un-enumerated 4xx statuses carry `REQUEST_REJECTED`, un-enumerated 5xx carry
+  `INTERNAL_ERROR`, so the property is never absent. The handler and its codes are
+  duplicated per service rather than shared through a common module: a shared DTO jar
+  turns every contract change into a lockstep redeploy of every service.
+```
+
+Do not touch `docs/plan-1-foundation-account-service.md` — it is a historical record of
+what Plan 1 built, and its `ErrorResponse` references are correct as history.
+
+- [ ] **Step 11: Update the roadmap**
 
 Replace the plan table in `docs/roadmap.md` with the reordered sequence — Plan 2 shrank during brainstorming, and what it dropped became Plans 3 and 4.
 
@@ -2445,14 +2467,14 @@ Replace the plan table in `docs/roadmap.md` with the reordered sequence — Plan
 
 Then update the deferred-items list: mark Actuator + healthchecks and the `ErrorResponse` wire-contract decision as done (resolved in Plan 2 — ProblemDetail with a `code` property, duplicated per service), move idempotency keys under Plan 3, and leave Flyway as the one still-unassigned item, noting it now has two schemas to baseline rather than one.
 
-- [ ] **Step 11: Commit**
+- [ ] **Step 12: Commit**
 
 ```bash
 git add docker/postgres/init-db.sh .env.example transfer-service/Dockerfile docker-compose.yml README.md docs/roadmap.md
 git commit -m "feat: run transfer-service in docker compose alongside account-service"
 ```
 
-- [ ] **Step 12: Open the pull request**
+- [ ] **Step 13: Open the pull request**
 
 Per `CLAUDE.md`: push the branch, open a PR, get a subagent review, then **stop**. Do not merge — the user reviews and merges.
 
