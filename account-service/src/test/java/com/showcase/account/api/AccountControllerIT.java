@@ -5,6 +5,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ProblemDetail;
@@ -138,15 +139,28 @@ class AccountControllerIT {
                 futures.add(executor.submit(debitCall));
             }
 
-            List<HttpStatus> statuses = new ArrayList<>();
+            List<ResponseEntity<String>> responses = new ArrayList<>();
             for (Future<ResponseEntity<String>> future : futures) {
-                statuses.add((HttpStatus) future.get(10, TimeUnit.SECONDS).getStatusCode());
+                responses.add(future.get(10, TimeUnit.SECONDS));
+            }
+
+            List<HttpStatus> statuses = new ArrayList<>();
+            for (ResponseEntity<String> response : responses) {
+                statuses.add((HttpStatus) response.getStatusCode());
             }
 
             assertThat(statuses).hasSize(concurrentRequests);
             assertThat(statuses).allMatch(status -> status == HttpStatus.OK || status == HttpStatus.CONFLICT);
             assertThat(statuses).as("at least one of %s concurrent debits should lose the optimistic-lock race", concurrentRequests)
                     .contains(HttpStatus.CONFLICT);
+            // Transfer Service branches on this literal to decide retry-vs-abort, and it is the only
+            // error code derived from a framework exception type rather than an app-owned one, so it
+            // is the most likely to drift silently under a Spring/Hibernate upgrade. The assertion
+            // above guarantees at least one CONFLICT, so this filtered check is never vacuous.
+            assertThat(responses)
+                    .filteredOn(response -> response.getStatusCode() == HttpStatus.CONFLICT)
+                    .as("every 409 body must carry the CONCURRENT_MODIFICATION code")
+                    .allSatisfy(response -> assertThat(response.getBody()).contains("CONCURRENT_MODIFICATION"));
         } finally {
             executor.shutdownNow();
         }
@@ -159,6 +173,21 @@ class AccountControllerIT {
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
         assertThat(response.getBody().getProperties()).containsEntry("code", "VALIDATION_FAILED");
+    }
+
+    @Test
+    void returns405WithCodeForUnsupportedMethod() {
+        // Covers the exceptions ResponseEntityExceptionHandler handles for us: they render through
+        // handleExceptionInternal, which must stamp the code/timestamp invariant on every problem body.
+        UUID id = createAccount(new BigDecimal("100.00"));
+
+        ResponseEntity<ProblemDetail> response = restTemplate.exchange(
+                "/accounts/" + id, HttpMethod.DELETE, null, ProblemDetail.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.METHOD_NOT_ALLOWED);
+        assertThat(response.getHeaders().getContentType()).isEqualTo(MediaType.APPLICATION_PROBLEM_JSON);
+        assertThat(response.getBody().getProperties()).containsEntry("code", "REQUEST_REJECTED");
+        assertThat(response.getBody().getProperties()).containsKey("timestamp");
     }
 
     @Test

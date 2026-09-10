@@ -16,6 +16,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
+import java.time.Instant;
+
 @RestControllerAdvice
 public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 
@@ -33,11 +35,6 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     public ProblemDetail handleConflict(ObjectOptimisticLockingFailureException ex) {
         return Problems.of(HttpStatus.CONFLICT, "CONCURRENT_MODIFICATION", "Concurrent modification",
                 "Account was modified concurrently, please retry");
-    }
-
-    @ExceptionHandler(IllegalArgumentException.class)
-    public ProblemDetail handleIllegalArgument(IllegalArgumentException ex) {
-        return Problems.of(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "Validation failed", ex.getMessage());
     }
 
     @ExceptionHandler(Exception.class)
@@ -72,5 +69,23 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         return ResponseEntity.badRequest()
                 .body(Problems.of(HttpStatus.BAD_REQUEST, "MALFORMED_REQUEST", "Malformed request",
                         "Invalid value for parameter: " + ex.getPropertyName()));
+    }
+
+    /**
+     * Last line of defence for the "every error response carries a {@code code}" contract: the
+     * exceptions {@link ResponseEntityExceptionHandler} handles for us (405, 415, 406, unmapped
+     * paths, missing path variables, ...) render a {@code ProblemDetail} that carries no custom
+     * properties, so stamp the invariant here rather than overriding every hook individually.
+     */
+    @Override
+    protected ResponseEntity<Object> handleExceptionInternal(Exception ex, Object body,
+            HttpHeaders headers, HttpStatusCode statusCode, WebRequest request) {
+        ResponseEntity<Object> response = super.handleExceptionInternal(ex, body, headers, statusCode, request);
+        if (response != null && response.getBody() instanceof ProblemDetail problem
+                && (problem.getProperties() == null || !problem.getProperties().containsKey("code"))) {
+            problem.setProperty("code", statusCode.is5xxServerError() ? "INTERNAL_ERROR" : "REQUEST_REJECTED");
+            problem.setProperty("timestamp", Instant.now());
+        }
+        return response;
     }
 }
