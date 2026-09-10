@@ -43,6 +43,9 @@ public class Account {
     }
 
     public void debit(BigDecimal amount) {
+        if (amount == null || amount.signum() <= 0) {
+            throw new IllegalArgumentException("Amount must be positive: " + amount);
+        }
         if (amount.compareTo(balance) > 0) {
             throw new InsufficientFundsException(id, amount, balance);
         }
@@ -50,6 +53,9 @@ public class Account {
     }
 
     public void credit(BigDecimal amount) {
+        if (amount == null || amount.signum() <= 0) {
+            throw new IllegalArgumentException("Amount must be positive: " + amount);
+        }
         balance = balance.add(amount);
     }
 }

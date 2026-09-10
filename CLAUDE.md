@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-This repository is currently in the **planning phase** — it contains a design spec and implementation plans, but no application code yet (no `pom.xml`, no `src/`, no `docker-compose.yml`). Before writing code here, read `docs/microservices-showcase-design.md` for the full architecture and `docs/plan-1-foundation-account-service.md` for the first slice's exact task-by-task plan (file layout, dependency versions, commands, and code). Do not re-derive architecture decisions that are already settled in those two files.
+Plan 1 (Foundation + Account Service) is implemented and merged to `master`: a working Account Service (Spring Boot 3.3.4, Java 21, JPA/Postgres, Testcontainers-tested, Lombok, Docker Compose deployable) exists under `account-service/`. See `docs/microservices-showcase-design.md` for the overall architecture and `docs/plan-1-foundation-account-service.md` for what Plan 1 built. Future plans (Plan 2+) will add the remaining services (Transfer, Fraud, Notification, Auth, API Gateway). Do not re-derive architecture decisions that are already settled in those two files.
 
 ## Documentation conventions
 
