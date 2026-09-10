@@ -13,9 +13,8 @@ This repository is currently in the **planning phase** — it contains a design 
 
 ## Local environment
 
-- Java 21+ is a Global Constraint (see the plan docs) — required for virtual threads. This machine has multiple JDKs installed outside the usual `Program Files` location, and the default `java` on PATH is **not** the right one:
-  - `C:\dev\openjdk-17.0.19` — JDK 17, below the floor. Do not build with this.
-  - `C:\dev\openjdk-26.0.1` — JDK 26. Use this one; set `JAVA_HOME` to it before running Maven (`maven.compiler.release=21` cross-compiles fine from it).
+- Java 21+ is a Global Constraint (see the plan docs) — required for virtual threads. The default `java` on PATH is not the right version for this project; use `C:\dev\openjdk-21.0.2` and set `JAVA_HOME` to it before running Maven.
+- Lombok is used for entity boilerplate (getters, JPA no-arg constructors) — see `account-service`'s `pom.xml`/`Account.java` for the pattern (`@Getter`, `@NoArgsConstructor(access = AccessLevel.PROTECTED)`; hand-write any constructor with custom logic rather than forcing it through Lombok).
 
 ## Git workflow
 
@@ -23,3 +22,4 @@ This repository is currently in the **planning phase** — it contains a design 
 - Branch naming: `feature/plan-<N>-task-<M>-<short-description>` (e.g. `feature/plan-1-task-1-project-scaffolding`), matching the plan/task the branch implements.
 - Merge to `master` only via a pull request — no direct pushes or merges to `master`.
 - Every PR must be reviewed by a subagent before merging.
+- Never merge a PR autonomously. Open it, get the subagent review, then stop — the user reviews and merges it themselves.
