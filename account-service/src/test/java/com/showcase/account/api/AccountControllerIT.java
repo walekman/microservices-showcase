@@ -12,7 +12,14 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -67,6 +74,46 @@ class AccountControllerIT {
                 "/accounts/" + id + "/debit", new AmountRequest(new BigDecimal("40.00")), ErrorResponse.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+    }
+
+    @Test
+    void creditsAnAccountSuccessfully() {
+        UUID id = createAccount(new BigDecimal("100.00"));
+
+        ResponseEntity<AccountResponse> response = restTemplate.postForEntity(
+                "/accounts/" + id + "/credit", new AmountRequest(new BigDecimal("40.00")), AccountResponse.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody().balance()).isEqualByComparingTo("140.00");
+    }
+
+    @Test
+    void returns409ForConcurrentUpdateConflict() throws Exception {
+        UUID id = createAccount(new BigDecimal("1000.00"));
+
+        // Two genuinely concurrent debits against the same account: whichever transaction
+        // commits second sees a stale version and must be rejected with 409 Conflict,
+        // exercised through the real HTTP debit endpoint rather than the repository directly.
+        CyclicBarrier barrier = new CyclicBarrier(2);
+        Callable<ResponseEntity<String>> debitCall = () -> {
+            barrier.await();
+            return restTemplate.postForEntity(
+                    "/accounts/" + id + "/debit", new AmountRequest(new BigDecimal("10.00")), String.class);
+        };
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<ResponseEntity<String>> first = executor.submit(debitCall);
+            Future<ResponseEntity<String>> second = executor.submit(debitCall);
+
+            List<HttpStatus> statuses = List.of(
+                    (HttpStatus) first.get(10, TimeUnit.SECONDS).getStatusCode(),
+                    (HttpStatus) second.get(10, TimeUnit.SECONDS).getStatusCode());
+
+            assertThat(statuses).contains(HttpStatus.CONFLICT);
+        } finally {
+            executor.shutdownNow();
+        }
     }
 
     @Test

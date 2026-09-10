@@ -35,4 +35,24 @@ class AccountTest {
 
         assertThat(account.getBalance()).isEqualByComparingTo("125.00");
     }
+
+    @Test
+    void debitThrowsWhenAmountIsNotPositive() {
+        Account account = new Account("Ada Lovelace", new BigDecimal("100.00"));
+
+        assertThatThrownBy(() -> account.debit(new BigDecimal("0.00")))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> account.debit(new BigDecimal("-10.00")))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void creditThrowsWhenAmountIsNotPositive() {
+        Account account = new Account("Ada Lovelace", new BigDecimal("100.00"));
+
+        assertThatThrownBy(() -> account.credit(new BigDecimal("0.00")))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> account.credit(new BigDecimal("-10.00")))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
 }
