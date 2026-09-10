@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.net.URI;
+import java.util.List;
 import java.util.UUID;
 
 @RestController
@@ -29,6 +30,13 @@ public class AccountController {
         Account account = accountService.createAccount(request.ownerName(), request.initialBalance());
         return ResponseEntity.created(URI.create("/accounts/" + account.getId()))
                 .body(AccountResponse.from(account));
+    }
+
+    @GetMapping
+    public List<AccountResponse> getAllAccounts() {
+        return accountService.getAllAccounts().stream()
+                .map(AccountResponse::from)
+                .toList();
     }
 
     @GetMapping("/{id}")

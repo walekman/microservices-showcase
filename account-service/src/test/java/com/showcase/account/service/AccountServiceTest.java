@@ -11,6 +11,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -43,6 +44,17 @@ class AccountServiceTest {
         assertThat(result.getOwnerName()).isEqualTo("Ada Lovelace");
         assertThat(result.getBalance()).isEqualByComparingTo("100.00");
         verify(accountRepository).save(any(Account.class));
+    }
+
+    @Test
+    void getAllAccountsReturnsEveryAccount() {
+        Account first = new Account("Ada Lovelace", new BigDecimal("100.00"));
+        Account second = new Account("Alan Turing", new BigDecimal("50.00"));
+        when(accountRepository.findAll()).thenReturn(List.of(first, second));
+
+        List<Account> result = accountService.getAllAccounts();
+
+        assertThat(result).containsExactly(first, second);
     }
 
     @Test

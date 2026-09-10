@@ -26,6 +26,9 @@ This starts Postgres and Account Service. More services land in later plans.
     # Fetch it (replace <id> with the id from the response above)
     curl http://localhost:8081/accounts/<id>
 
+    # List all accounts
+    curl http://localhost:8081/accounts
+
     # Debit it
     curl -X POST http://localhost:8081/accounts/<id>/debit \
       -H "Content-Type: application/json" \
