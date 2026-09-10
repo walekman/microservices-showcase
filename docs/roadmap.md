@@ -14,7 +14,7 @@ when it's brainstormed, and may reshape later rows.
 | # | Plan | Status | Scope (forecast) |
 |---|------|--------|-------------------|
 | 1 | [Foundation + Account Service](plan-1-foundation-account-service.md) | ✅ Done | Project scaffolding, Account entity/repo with optimistic locking, REST API, Docker Compose + Postgres |
-| 2 | Transfer Service + the Saga | Not started | Transfer entity/ledger, orchestrated saga calling Account (sync, Resilience4j-wrapped), transactional outbox + polling publisher, compensation on failure |
+| 2 | [Transfer Service + Synchronous Saga](plan-2-transfer-service-saga.md) | 🚧 Planned | Transfer entity/ledger, sync saga (pre-validate → debit → credit) over RestClient, RFC 7807 ProblemDetail on both services, Actuator + Compose healthchecks. Resilience4j, compensation and the outbox/Kafka were split out during brainstorming — the plan doc's deferral table says where each went |
 | 3 | Fraud Service | Not started | Stateless rule-based risk check (amount/velocity thresholds), wired into the saga as Transfer's second sync call |
 | 4 | Notification Service | Not started | Kafka consumer for `TransferCompleted`/`TransferFailed`, logs "notification sent" — closes the async leg of the saga |
 | 5 | API Gateway + Auth | Not started | Keycloak (pre-configured realm), JWT validation at the Gateway and via Spring Security Resource Server in each service |
