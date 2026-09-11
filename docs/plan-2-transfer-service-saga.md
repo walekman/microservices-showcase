@@ -1288,13 +1288,14 @@ import org.springframework.http.HttpRequest;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.ClientHttpResponse;
-import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 /**
  * Calls Account Service over blocking HTTP. Every outcome collapses onto two
@@ -1312,12 +1313,19 @@ public class AccountClient {
     }
 
     public AccountView getAccount(UUID accountId) {
-        return call(() -> restClient.get()
+        // A 204, or a 200 with Content-Length: 0, makes the message converter return null.
+        // Without this guard the saga NPEs on account.balance() instead of branching.
+        AccountView account = call(() -> restClient.get()
                 .uri("/accounts/{id}", accountId)
                 .retrieve()
                 .onStatus(HttpStatusCode::is4xxClientError, this::rejected)
                 .onStatus(HttpStatusCode::is5xxServerError, this::unavailable)
                 .body(AccountView.class));
+        if (account == null) {
+            throw new AccountServiceUnavailableException(
+                    "Account Service returned an empty body for " + accountId);
+        }
+        return account;
     }
 
     public void debit(UUID accountId, BigDecimal amount) {
@@ -1344,11 +1352,19 @@ public class AccountClient {
      * ResourceAccessException rather than a status code, so they are translated here
      * instead of in an onStatus handler.
      */
-    private <T> T call(java.util.function.Supplier<T> request) {
+    private <T> T call(Supplier<T> request) {
         try {
             return request.get();
-        } catch (ResourceAccessException ex) {
-            throw new AccountServiceUnavailableException("Account Service is unreachable: " + ex.getMessage(), ex);
+        } catch (RestClientException ex) {
+            // Deliberately the broad superclass, not just ResourceAccessException.
+            // ResourceAccessException covers connect-refused/DNS/read-timeout, but a 2xx
+            // carrying an unreadable body throws UnknownContentTypeException (proxy
+            // interstitial HTML) or a plain RestClientException (malformed JSON) instead.
+            // Catching only the narrow type lets those escape BOTH domain exceptions and
+            // reach the saga unhandled -- which defeats this class entirely. The two
+            // domain exceptions do not extend RestClientException, so they still pass
+            // through untouched.
+            throw new AccountServiceUnavailableException("Account Service call failed: " + ex.getMessage(), ex);
         }
     }
 
@@ -1394,6 +1410,15 @@ import java.time.Duration;
 
 @ConfigurationProperties(prefix = "account-service")
 public record AccountClientProperties(String baseUrl, Duration connectTimeout, Duration readTimeout) {
+
+    // Boot's binder skips a null Duration silently, which would leave the RestClient with
+    // NO timeout at all -- restoring exactly the unbounded-block failure these properties
+    // exist to prevent, with no startup error to warn anyone. Default rather than trust
+    // every future profile and SPRING_APPLICATION_JSON override to set them.
+    public AccountClientProperties {
+        connectTimeout = (connectTimeout != null) ? connectTimeout : Duration.ofSeconds(2);
+        readTimeout = (readTimeout != null) ? readTimeout : Duration.ofSeconds(5);
+    }
 }
 ```
 
