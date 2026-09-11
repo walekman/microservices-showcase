@@ -157,6 +157,26 @@ class AccountClientTest {
         server.verify();
     }
 
+    @Test
+    void debitThrowsUnavailableOn3xxRedirect() {
+        server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID + "/debit"))
+                .andRespond(withStatus(HttpStatus.FOUND));
+
+        assertThatThrownBy(() -> accountClient.debit(ACCOUNT_ID, new BigDecimal("40.00")))
+                .isInstanceOf(AccountServiceUnavailableException.class);
+        server.verify();
+    }
+
+    @Test
+    void getAccountThrowsUnavailableOn3xxRedirect() {
+        server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID))
+                .andRespond(withStatus(HttpStatus.FOUND));
+
+        assertThatThrownBy(() -> accountClient.getAccount(ACCOUNT_ID))
+                .isInstanceOf(AccountServiceUnavailableException.class);
+        server.verify();
+    }
+
     private static org.springframework.test.web.client.ResponseCreator problem(
             HttpStatus status, String code, String detail) {
         return withStatus(status)

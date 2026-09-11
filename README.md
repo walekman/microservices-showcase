@@ -10,6 +10,12 @@ First time only:
 
     cp .env.example .env
 
+If you ran an earlier version of this stack, destroy the Postgres volume first — the
+second database is created by an init script that only runs on an empty data directory
+(this discards any locally created accounts):
+
+    docker compose down -v
+
 Then:
 
     docker compose up --build
@@ -68,9 +74,11 @@ failure states below exist.
 
 Errors are RFC 7807 problem documents with a stable `code`:
 
-    # Insufficient funds -> 422 INSUFFICIENT_FUNDS, no money moves
-    # Unknown account    -> 422 ACCOUNT_NOT_FOUND, no money moves
-    # Account down       -> 503 ACCOUNT_SERVICE_UNAVAILABLE, no money moves
+    # Insufficient funds                        -> 422 INSUFFICIENT_FUNDS, no money moves
+    # Unknown account                           -> 422 ACCOUNT_NOT_FOUND, no money moves
+    # Account down during pre-validation        -> 503 ACCOUNT_SERVICE_UNAVAILABLE, no money moves
+    # Account down during the debit             -> 503 ACCOUNT_SERVICE_UNAVAILABLE, outcome UNKNOWN:
+    #                                              recorded FAILED, but the debit may have committed
 
 ### Known gap: COMPENSATION_REQUIRED
 
@@ -78,3 +86,7 @@ If the debit succeeds and the credit then fails, the money is stranded at the so
 This release records that as `COMPENSATION_REQUIRED`, logs it at ERROR, and makes it
 listable — but does not fix it. Compensation (crediting the source back) is Plan 3.
 The gap is deliberate: it makes visible exactly why saga compensation exists.
+
+Note: transfers recorded as `FAILED` with `ACCOUNT_SERVICE_UNAVAILABLE` during the debit
+leg also require reconciliation — the debit may have committed despite the 503 response.
+It is not only `COMPENSATION_REQUIRED` rows that are suspect.
