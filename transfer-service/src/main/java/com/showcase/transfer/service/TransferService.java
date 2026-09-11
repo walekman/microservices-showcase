@@ -114,7 +114,10 @@ public class TransferService {
                 // Marking again would throw IllegalStateException from requirePending()
                 // and mask the real cause.
                 log.error("Transfer {} failed to persist terminal state {}", transfer.getId(), transfer.getStatus(), ex);
-                throw ex;
+                // Wrapped, not rethrown raw: by now the transfer has an id and a row that still
+                // reads PENDING, and the API has to hand that id back -- a caller who cannot
+                // name the record cannot reconcile it. The original stays as the cause.
+                throw new TransferPersistenceException(transfer.getId(), ex);
             }
             return debited
                     ? strand(transfer, TransferFailureCode.UNEXPECTED_ERROR, ex.toString())

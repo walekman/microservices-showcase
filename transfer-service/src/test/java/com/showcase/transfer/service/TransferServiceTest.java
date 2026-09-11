@@ -244,7 +244,7 @@ class TransferServiceTest {
     }
 
     @Test
-    void rethrowsWhenPersistingTheTerminalStateFails() {
+    void wrapsTheCauseWithTheTransferIdWhenPersistingTheTerminalStateFails() {
         OptimisticLockingFailureException boom = new OptimisticLockingFailureException("version conflict");
         // First save (PENDING) succeeds; the final save of the terminal state blows up.
         when(transferRepository.save(any(Transfer.class)))
@@ -253,9 +253,14 @@ class TransferServiceTest {
         bothAccountsExist();
 
         // The entity is already COMPLETED in memory, so re-marking it would throw
-        // IllegalStateException from requirePending() and bury the real cause. The
-        // original exception must surface instead.
-        assertThatThrownBy(() -> transferService.execute(FROM, TO, AMOUNT)).isSameAs(boom);
+        // IllegalStateException from requirePending() and bury the real cause. The original
+        // exception is wrapped rather than re-marked or swallowed: the wrapper carries the
+        // id so the API can hand it back -- a row exists, still reading PENDING, and the
+        // caller cannot reconcile anything without knowing which one -- and keeps the
+        // original as its cause, which is the only real diagnostic.
+        assertThatThrownBy(() -> transferService.execute(FROM, TO, AMOUNT))
+                .isInstanceOf(TransferPersistenceException.class)
+                .hasCause(boom);
 
         verify(accountClient).debit(FROM, AMOUNT);
         verify(accountClient).credit(TO, AMOUNT);
