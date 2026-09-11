@@ -4,7 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-Plan 1 (Foundation + Account Service) is implemented and merged to `master`: a working Account Service (Spring Boot 3.3.4, Java 21, JPA/Postgres, Testcontainers-tested, Lombok, Docker Compose deployable) exists under `account-service/`. See `docs/microservices-showcase-design.md` for the overall architecture and `docs/plan-1-foundation-account-service.md` for what Plan 1 built. Future plans (Plan 2+) will add the remaining services (Transfer, Fraud, Notification, Auth, API Gateway). Do not re-derive architecture decisions that are already settled in those two files.
+Plans 1 and 2 are implemented and merged to `master`:
+
+- **Account Service** (`account-service/`, port 8081) — accounts and balances, debit/credit with optimistic locking.
+- **Transfer Service** (`transfer-service/`, port 8082) — orchestrates the transfer saga over synchronous HTTP into Account Service.
+
+Both are Spring Boot 3.3.4 / Java 21, JPA on Postgres (database-per-service), Testcontainers-tested, Lombok, and reachable via `docker compose up`. Both return RFC 7807 `application/problem+json` errors carrying a stable `code` property.
+
+See `docs/microservices-showcase-design.md` for the architecture, and `docs/plan-1-*.md` / `docs/plan-2-*.md` for what each plan built. **Do not re-derive architecture decisions already settled in those files.**
+
+Plan 3+ adds the remaining pieces (Resilience4j + compensation, the outbox + Kafka + Notification, Fraud, Gateway/Auth, observability) — see `docs/roadmap.md` for the sequence.
+
+**Before starting Plan 3, read the deferral table in `docs/plan-2-transfer-service-saga.md`.** It records four blocking preconditions for the compensator, all found during Plan 2's reviews. The critical one: a downstream call that fails with `ACCOUNT_SERVICE_UNAVAILABLE` has an **unknown** outcome, not a failed one — a read timeout cannot be distinguished from a non-delivery. Compensating blindly invents money on the debit leg and duplicates it on the credit leg, so the compensator must reconcile against Account before crediting anything back.
 
 ## Documentation conventions
 
@@ -23,4 +34,22 @@ Plan 1 (Foundation + Account Service) is implemented and merged to `master`: a w
 - Branch naming: `feature/plan-<N>-task-<M>-<short-description>` (e.g. `feature/plan-1-task-1-project-scaffolding`), matching the plan/task the branch implements.
 - Merge to `master` only via a pull request — no direct pushes or merges to `master`.
 - Every PR must be reviewed by a subagent before merging.
-- Never merge a PR autonomously. Open it, get the subagent review, then stop — the user reviews and merges it themselves.
+- Never merge a PR autonomously. Open it, get the subagent review, then stop — the user reviews and merges it themselves. The user says "merge it" to authorise one; treat that as genuine authorisation, but check `gh pr view <n> --json mergeable,statusCheckRollup` before merging.
+- **One PR per task, and stop after each.** When executing a multi-task plan, each task gets its own branch off the *current* `master`, its own subagent review, and its own PR — then stop until the user merges. The next branch then starts from merged code, so each PR's diff shows only that task's work.
+- **The review runs before the PR opens, not after.** Complete the subagent review and any fix rounds first, so the user only ever sees work that has already survived review.
+
+## Executing implementation plans
+
+Hard-won during Plan 2. These are not style preferences; each one cost a real defect.
+
+- **Sync review fixes back into the plan document, not just the code.** When a review finds a defect in code that came from a `docs/plan-N-*.md` code block, fix the plan too — re-sync the affected block verbatim from the merged source rather than hand-editing it. Plan 2 accumulated six fixes that lived only in code, including a surrogate-pair guard, a `PENDING`-orphan guard, and a client that read a 3xx redirect as a committed debit. That is not cosmetic staleness: later plans copy these code blocks into new services, so a stale block reproduces the bug. Audit by grepping a distinctive string from each fix against the plan doc.
+- **Tell implementer subagents to read the brief critically rather than transcribe it.** Include: *"If something in the brief is wrong or impossible, report it rather than silently working around it — read it critically rather than transcribing it."* Plan 2 measured the difference: a faithful transcription shipped three design defects from the brief, while implementers told to push back caught an impossible test instruction and a missing exception handler (the latter proved with a probe). A reviewer reviewing a transcription is reviewing the plan author's design, not the implementation — so defects surface a round later.
+- **When an implementer says a specified approach cannot work, check the claim before overriding it.** Both such claims in Plan 2 were correct.
+- **Verify subagent claims that matter rather than accepting them.** Re-run the suite yourself, read the config, check the numbers. Reported test counts have been module-scoped rather than reactor-wide, and a "verified" Docker build had not actually been run.
+
+## Subagent model policy
+
+- **Default to `haiku` for implementer and routine review subagents.** Cost matters on this project; opus for everything is not affordable.
+- **Use a more capable model for the high-stakes gates** — in particular the final whole-branch review at the end of a plan. In Plan 2 that single dispatch caught a money-creation bug (a 3xx response read as a committed debit) that six per-task reviews had missed.
+- Give smaller models **explicit checklists** rather than open-ended "check this hard" framing — the ability to generate its own lines of attack is the first thing that degrades. State a required result per item.
+- Always name the model explicitly when dispatching; an omitted model inherits the session's, which is usually the expensive one.
