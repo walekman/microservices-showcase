@@ -30,7 +30,7 @@
 | Deferred | Why not now | Lands in |
 |---|---|---|
 | Resilience4j (CircuitBreaker/Retry/TimeLimiter) | The saga's structure and the client's error mapping have to exist before there is anything to wrap | Plan 3 |
-| Compensation (credit-back on a failed credit) | This plan deliberately ends with a visible, recorded inconsistency so the next plan's compensator has a concrete state to drain | Plan 3 |
+| Compensation (credit-back on a failed credit) | This plan deliberately ends with a visible, recorded inconsistency so the next plan's compensator has a concrete state to drain. **Blocking precondition:** a debit that fails with `ACCOUNT_SERVICE_UNAVAILABLE` records `FAILED`, but its true outcome is UNKNOWN — a timeout cannot be told from a non-delivery. The compensator must reconcile against Account before crediting back, or it will invent money for debits that never landed. | Plan 3 |
 | Idempotency keys on debit/credit | Only matters once a client automatically retries a call that may already have succeeded; this plan has no retries | Plan 3 |
 | Transactional outbox + Kafka publisher | A distinct subsystem with its own container and test infrastructure | Plan 4 |
 | Fraud Service (the saga's third call) | The saga is built to accept another step; adding one is additive | Plan 5 |
@@ -1728,12 +1728,30 @@ public class TransferService {
             return fail(transfer, TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, ex.getMessage());
         }
 
-        // Step 2: debit the source. Nothing has moved yet, so any failure is clean.
+        // Step 2: debit the source.
         try {
             accountClient.debit(fromAccountId, amount);
         } catch (AccountRejectedException ex) {
+            // Account understood and refused. Nothing moved -- genuinely clean.
             return fail(transfer, TransferFailureCode.fromAccountCode(ex.getCode()), ex.getDetail());
         } catch (AccountServiceUnavailableException ex) {
+            // AMBIGUOUS, and the most dangerous state in this service. A read timeout is
+            // indistinguishable from "the request never arrived": Account may have
+            // committed the debit and failed to tell us. FAILED here therefore means
+            // "debit NOT CONFIRMED", never "debit definitely did not happen".
+            //
+            // It is deliberately NOT routed to COMPENSATION_REQUIRED. That state means
+            // "debit definitely succeeded, credit definitely did not", and the compensator
+            // in a later plan credits the source back on the strength of it. Feeding an
+            // ambiguous outcome into it would make the compensator invent money whenever
+            // the debit never actually landed -- strictly worse than under-reporting.
+            //
+            // BLOCKING PRECONDITION FOR THE COMPENSATOR PLAN: it must reconcile against
+            // Account before crediting anything back, and must not read this combination
+            // (FAILED + ACCOUNT_SERVICE_UNAVAILABLE on the debit leg) as "no money moved".
+            log.error("Transfer {} debit outcome UNKNOWN for account {} amount {}: {}. "
+                            + "Recorded FAILED, but the debit may have committed -- needs reconciliation.",
+                    transfer.getId(), fromAccountId, amount, ex.getMessage());
             return fail(transfer, TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, ex.getMessage());
         }
 
