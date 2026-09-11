@@ -2548,4 +2548,4 @@ Before calling this plan done, confirm each of these by running the command and 
 - [ ] `GET /transfers` lists every attempt, successful and failed
 - [ ] Account Service errors carry a `code` property (`curl -i http://localhost:8081/accounts/00000000-0000-0000-0000-000000000000`)
 - [ ] Both Swagger UIs load: `http://localhost:8081/swagger-ui.html` and `http://localhost:8082/swagger-ui.html`
-- [ ] `grep -rn "Transactional" transfer-service/src/main/java/com/showcase/transfer/service/` returns nothing — the orchestrator must not be transactional
+- [ ] The orchestrator is not transactional. `grep -rnE "^\s*@Transactional" transfer-service/src/main/java/com/showcase/transfer/service/` returns nothing. (A plain `grep "Transactional"` is the wrong check — it also matches the class Javadoc, which deliberately *mentions* `@Transactional` to explain why it is absent. Read the hits; a non-empty result from the loose grep is not itself a failure.)
