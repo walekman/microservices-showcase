@@ -14,7 +14,7 @@ when it's brainstormed, and may reshape later rows.
 | # | Plan | Status | Scope |
 |---|------|--------|-------|
 | 1 | [Foundation + Account Service](plan-1-foundation-account-service.md) | ✅ Done | Project scaffolding, Account entity/repo with optimistic locking, REST API, Docker Compose + Postgres |
-| 2 | [Transfer Service + Synchronous Saga](plan-2-transfer-service-saga.md) | 🚧 In progress | Transfer entity/ledger, sync saga (pre-validate → debit → credit) over RestClient, RFC 7807 ProblemDetail on both services, Actuator + Compose healthchecks. No resilience, no compensation, no Kafka |
+| 2 | [Transfer Service + Synchronous Saga](plan-2-transfer-service-saga.md) | ✅ Done | Transfer entity/ledger, sync saga (pre-validate → debit → credit) over RestClient, RFC 7807 ProblemDetail on both services, Actuator + Compose healthchecks. No resilience, no compensation, no Kafka |
 | 3 | Resilience4j + Compensation + Idempotency | Not started | CircuitBreaker/Retry/TimeLimiter on Transfer → Account; compensating credit-back that drains `COMPENSATION_REQUIRED`, with `COMPENSATION_FAILED` as the manual-review terminal state; idempotency keys on debit/credit so a retry cannot double-move money |
 | 4 | Transactional outbox + Kafka + Notification | Not started | Outbox table written in the same local transaction as the transfer's terminal state, scheduled polling publisher, Kafka in KRaft mode, Notification Service consuming `TransferCompleted`/`TransferFailed` |
 | 5 | Fraud Service | Not started | Stateless rule-based risk check (amount/velocity thresholds), wired into the saga as Transfer's second sync call, with fraud rejection driving compensation |
