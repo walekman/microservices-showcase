@@ -36,7 +36,7 @@ public class AccountClient {
                 .uri("/accounts/{id}", accountId)
                 .retrieve()
                 .onStatus(HttpStatusCode::is4xxClientError, this::rejected)
-                .onStatus(HttpStatusCode::is5xxServerError, this::unavailable)
+                .onStatus(status -> !status.is2xxSuccessful(), this::unavailable)
                 .body(AccountView.class));
         if (account == null) {
             throw new AccountServiceUnavailableException(
@@ -60,7 +60,11 @@ public class AccountClient {
                 .body(Map.of("amount", amount))
                 .retrieve()
                 .onStatus(HttpStatusCode::is4xxClientError, this::rejected)
-                .onStatus(HttpStatusCode::is5xxServerError, this::unavailable)
+                // Treat anything that is not 2xx as unavailable: 5xx and 3xx (redirects) are
+                // both unconfirmed outcomes. If a 3xx fell through and was treated as success,
+                // a redirect in the debit leg would silently create money (credit committed,
+                // debit unconfirmed).
+                .onStatus(status -> !status.is2xxSuccessful(), this::unavailable)
                 .toBodilessEntity());
     }
 

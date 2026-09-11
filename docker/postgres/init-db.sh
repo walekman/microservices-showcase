@@ -11,3 +11,14 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "account" <<-EOSQL
     GRANT ALL PRIVILEGES ON SCHEMA public TO account_service;
     ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO account_service;
 EOSQL
+
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+    CREATE DATABASE transfer;
+    CREATE USER transfer_service WITH PASSWORD '$TRANSFER_DB_PASSWORD';
+    GRANT ALL PRIVILEGES ON DATABASE transfer TO transfer_service;
+EOSQL
+
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "transfer" <<-EOSQL
+    GRANT ALL PRIVILEGES ON SCHEMA public TO transfer_service;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO transfer_service;
+EOSQL

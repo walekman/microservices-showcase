@@ -6,6 +6,7 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       ACCOUNT_DB_PASSWORD: ${ACCOUNT_DB_PASSWORD}
+      TRANSFER_DB_PASSWORD: ${TRANSFER_DB_PASSWORD}
     ports:
       - "5432:5432"
     volumes:
@@ -35,6 +36,32 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8081/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+
+  transfer-service:
+    build:
+      context: .
+      dockerfile: transfer-service/Dockerfile
+    container_name: showcase-transfer-service
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: transfer
+      DB_USER: transfer_service
+      DB_PASSWORD: ${TRANSFER_DB_PASSWORD}
+      ACCOUNT_SERVICE_URL: http://account-service:8081
+    ports:
+      - "8082:8082"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      account-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/actuator/health"]
       interval: 10s
       timeout: 5s
       retries: 10

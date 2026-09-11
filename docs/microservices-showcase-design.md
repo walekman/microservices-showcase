@@ -30,6 +30,14 @@ Each stateful service owns its data exclusively — no service queries another's
 - **Messaging:** Apache Kafka, **KRaft mode** (no Zookeeper).
 - **Auth:** Keycloak (OAuth2/OIDC), JWT validated at the Gateway and by each resource service via Spring Security Resource Server.
 - **Resilience:** Resilience4j — CircuitBreaker, Retry, TimeLimiter on synchronous inter-service calls (Transfer → Account, Transfer → Fraud).
+- **Error contract:** every service returns RFC 7807 `application/problem+json` on error,
+  carrying a stable machine-readable `code` property alongside the standard `type`,
+  `title`, `status` and `detail` fields. Consumers branch on `code`, never on the prose in
+  `detail`, and never on the `type` URI (which is an identifier, not a dereferenceable
+  URL). Un-enumerated 4xx statuses carry `REQUEST_REJECTED`, un-enumerated 5xx carry
+  `INTERNAL_ERROR`, so the property is never absent. The handler and its codes are
+  duplicated per service rather than shared through a common module: a shared DTO jar
+  turns every contract change into a lockstep redeploy of every service.
 - **Observability:** Micrometer Tracing bridged to OpenTelemetry → OTel Collector → Jaeger (or Grafana Tempo); Micrometer + Prometheus (`/actuator/prometheus`) scraped by Prometheus, visualized in Grafana; structured JSON logs with `traceId`/`spanId` auto-injected via MDC. No centralized log aggregation (ELK/Loki) — out of scope.
 - **Deployment (local):** Docker Compose — single `docker compose up` brings up all services, Postgres, Kafka, Keycloak, and the observability stack.
 

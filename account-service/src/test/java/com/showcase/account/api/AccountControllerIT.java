@@ -153,10 +153,11 @@ class AccountControllerIT {
             assertThat(statuses).allMatch(status -> status == HttpStatus.OK || status == HttpStatus.CONFLICT);
             assertThat(statuses).as("at least one of %s concurrent debits should lose the optimistic-lock race", concurrentRequests)
                     .contains(HttpStatus.CONFLICT);
-            // Transfer Service branches on this literal to decide retry-vs-abort, and it is the only
-            // error code derived from a framework exception type rather than an app-owned one, so it
-            // is the most likely to drift silently under a Spring/Hibernate upgrade. The assertion
-            // above guarantees at least one CONFLICT, so this filtered check is never vacuous.
+            // Transfer Service records CONCURRENT_MODIFICATION and aborts (does not retry);
+            // retry policy is a later plan's concern. This is the only error code derived
+            // from a framework exception type rather than an app-owned one, so it is the most
+            // likely to drift silently under a Spring/Hibernate upgrade. The assertion above
+            // guarantees at least one CONFLICT, so this filtered check is never vacuous.
             assertThat(responses)
                     .filteredOn(response -> response.getStatusCode() == HttpStatus.CONFLICT)
                     .as("every 409 body must carry the CONCURRENT_MODIFICATION code")
