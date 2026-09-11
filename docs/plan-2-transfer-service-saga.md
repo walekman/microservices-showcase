@@ -30,7 +30,7 @@
 | Deferred | Why not now | Lands in |
 |---|---|---|
 | Resilience4j (CircuitBreaker/Retry/TimeLimiter) | The saga's structure and the client's error mapping have to exist before there is anything to wrap | Plan 3 |
-| Compensation (credit-back on a failed credit) | This plan deliberately ends with a visible, recorded inconsistency so the next plan's compensator has a concrete state to drain | Plan 3 |
+| Compensation (credit-back on a failed credit) | This plan deliberately ends with a visible, recorded inconsistency so the next plan's compensator has a concrete state to drain. **Three blocking preconditions, all discovered during Task 5's review — read them before writing the compensator.** (1) *Reconcile before crediting, on either leg.* An `ACCOUNT_SERVICE_UNAVAILABLE` failure means the call's outcome is UNKNOWN, not that it did not happen — a timeout cannot be told from a non-delivery. A debit that times out records `FAILED` but may have committed; a credit that times out records `COMPENSATION_REQUIRED` but may also have committed. Blind compensation invents money in the first case and duplicates it in the second. The compensator must query Account for the real state first. (2) *Sweep stale `PENDING` rows too, not just `COMPENSATION_REQUIRED`.* If the final `save` fails after both legs committed, the orchestrator rethrows rather than mask the cause, leaving a row that says nothing happened while money moved both ways. That is the worst state in the system and nothing else will ever revisit it. (3) `COMPENSATION_REQUIRED` is terminal under `requirePending()`, so the compensator needs a new transition that accepts it as a pre-state. | Plan 3 |
 | Idempotency keys on debit/credit | Only matters once a client automatically retries a call that may already have succeeded; this plan has no retries | Plan 3 |
 | Transactional outbox + Kafka publisher | A distinct subsystem with its own container and test infrastructure | Plan 4 |
 | Fraud Service (the saga's third call) | The saga is built to accept another step; adding one is additive | Plan 5 |
@@ -1728,12 +1728,30 @@ public class TransferService {
             return fail(transfer, TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, ex.getMessage());
         }
 
-        // Step 2: debit the source. Nothing has moved yet, so any failure is clean.
+        // Step 2: debit the source.
         try {
             accountClient.debit(fromAccountId, amount);
         } catch (AccountRejectedException ex) {
+            // Account understood and refused. Nothing moved -- genuinely clean.
             return fail(transfer, TransferFailureCode.fromAccountCode(ex.getCode()), ex.getDetail());
         } catch (AccountServiceUnavailableException ex) {
+            // AMBIGUOUS, and the most dangerous state in this service. A read timeout is
+            // indistinguishable from "the request never arrived": Account may have
+            // committed the debit and failed to tell us. FAILED here therefore means
+            // "debit NOT CONFIRMED", never "debit definitely did not happen".
+            //
+            // It is deliberately NOT routed to COMPENSATION_REQUIRED. That state means
+            // "debit definitely succeeded, credit definitely did not", and the compensator
+            // in a later plan credits the source back on the strength of it. Feeding an
+            // ambiguous outcome into it would make the compensator invent money whenever
+            // the debit never actually landed -- strictly worse than under-reporting.
+            //
+            // BLOCKING PRECONDITION FOR THE COMPENSATOR PLAN: it must reconcile against
+            // Account before crediting anything back, and must not read this combination
+            // (FAILED + ACCOUNT_SERVICE_UNAVAILABLE on the debit leg) as "no money moved".
+            log.error("Transfer {} debit outcome UNKNOWN for account {} amount {}: {}. "
+                            + "Recorded FAILED, but the debit may have committed -- needs reconciliation.",
+                    transfer.getId(), fromAccountId, amount, ex.getMessage());
             return fail(transfer, TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, ex.getMessage());
         }
 
@@ -2548,4 +2566,4 @@ Before calling this plan done, confirm each of these by running the command and 
 - [ ] `GET /transfers` lists every attempt, successful and failed
 - [ ] Account Service errors carry a `code` property (`curl -i http://localhost:8081/accounts/00000000-0000-0000-0000-000000000000`)
 - [ ] Both Swagger UIs load: `http://localhost:8081/swagger-ui.html` and `http://localhost:8082/swagger-ui.html`
-- [ ] `grep -rn "Transactional" transfer-service/src/main/java/com/showcase/transfer/service/` returns nothing — the orchestrator must not be transactional
+- [ ] The orchestrator is not transactional. `grep -rnE "^\s*@Transactional" transfer-service/src/main/java/com/showcase/transfer/service/` returns nothing. (A plain `grep "Transactional"` is the wrong check — it also matches the class Javadoc, which deliberately *mentions* `@Transactional` to explain why it is absent. Read the hits; a non-empty result from the loose grep is not itself a failure.)
