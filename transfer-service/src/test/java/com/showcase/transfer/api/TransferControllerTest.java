@@ -19,8 +19,10 @@ import java.util.UUID;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -121,5 +123,16 @@ class TransferControllerTest {
         mockMvc.perform(get("/transfers/" + unknown))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("TRANSFER_NOT_FOUND"));
+    }
+
+    @Test
+    void returns405WithCodeForUnsupportedMethod() throws Exception {
+        // Covers the exceptions ResponseEntityExceptionHandler handles for us: they render through
+        // handleExceptionInternal, which must stamp the code/timestamp invariant on every problem body.
+        mockMvc.perform(delete("/transfers/" + UUID.randomUUID()))
+                .andExpect(status().isMethodNotAllowed())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("REQUEST_REJECTED"))
+                .andExpect(jsonPath("$.timestamp").exists());
     }
 }
