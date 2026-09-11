@@ -86,6 +86,7 @@
 | `client/AccountClientConfig.java` | Builds the `RestClient` with timeouts |
 | `service/TransferService.java` | The saga orchestrator — the heart of this plan |
 | `service/TransferFailedException.java` | Carries the persisted `Transfer` out to the API layer |
+| `service/TransferPersistenceException.java` | Carries the transfer's id out when persisting a terminal state fails, so the 500 still tells the caller which row to look at |
 | `api/CreateTransferRequest.java` | Request DTO + bean validation |
 | `api/TransferResponse.java` | Response DTO |
 | `api/TransferController.java` | `POST /transfers`, `GET /transfers/{id}`, `GET /transfers` |
@@ -249,6 +250,8 @@ package com.showcase.account.api;
 
 import com.showcase.account.domain.AccountNotFoundException;
 import com.showcase.account.domain.InsufficientFundsException;
+
+import java.time.Instant;
 import org.springframework.beans.TypeMismatchException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -314,6 +317,26 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         return ResponseEntity.badRequest()
                 .body(Problems.of(HttpStatus.BAD_REQUEST, "MALFORMED_REQUEST", "Malformed request",
                         "Invalid value for parameter: " + ex.getPropertyName()));
+    }
+
+    /**
+     * Stamps the {@code code}/{@code timestamp} invariant onto the ~14 MVC exception types
+     * this class does not override explicitly (405, 415, 406, unmapped paths, and the rest).
+     * Without it they render a ProblemDetail with NO code at all, and a consumer reading
+     * {@code code} gets null on exactly the paths a mis-wired caller hits most. The handler
+     * is duplicated per service rather than shared, so every service carries its own copy
+     * of this guard.
+     */
+    @Override
+    protected ResponseEntity<Object> handleExceptionInternal(Exception ex, Object body,
+            HttpHeaders headers, HttpStatusCode statusCode, WebRequest request) {
+        ResponseEntity<Object> response = super.handleExceptionInternal(ex, body, headers, statusCode, request);
+        if (response != null && response.getBody() instanceof ProblemDetail problem
+                && (problem.getProperties() == null || !problem.getProperties().containsKey("code"))) {
+            problem.setProperty("code", statusCode.is5xxServerError() ? "INTERNAL_ERROR" : "REQUEST_REJECTED");
+            problem.setProperty("timestamp", Instant.now());
+        }
+        return response;
     }
 }
 ```
@@ -774,8 +797,19 @@ public enum TransferFailureCode {
     ACCOUNT_SERVICE_UNAVAILABLE,
     UNEXPECTED_ERROR;
 
-    /** Translates a code from Account Service into this service vocabulary. */
+    /**
+     * Translates a code from Account Service into this service vocabulary.
+     *
+     * <p>A null code is not hypothetical: a well-formed problem document that simply omits
+     * {@code code} (a proxy or gateway between the services can produce one) binds to a null
+     * here. Failing with an NPE while handling a downstream failure would turn a transfer that
+     * should be recorded as FAILED into a 500 with no record of why, so a null maps to
+     * {@link #UNEXPECTED_ERROR} like any other unrecognised code.
+     */
     public static TransferFailureCode fromAccountCode(String accountCode) {
+        if (accountCode == null) {
+            return UNEXPECTED_ERROR;
+        }
         return switch (accountCode) {
             case "ACCOUNT_NOT_FOUND" -> ACCOUNT_NOT_FOUND;
             case "INSUFFICIENT_FUNDS" -> INSUFFICIENT_FUNDS;
@@ -923,7 +957,12 @@ public class Transfer {
         if (reason == null || reason.length() <= 512) {
             return reason;
         }
-        return reason.substring(0, 512);
+        // Cutting at 512 blindly can split a surrogate pair (an emoji straddling the boundary),
+        // leaving an unpaired surrogate that the PostgreSQL driver refuses to encode. That would
+        // recreate the exact failure this method exists to prevent: a recorded failure silently
+        // becoming an unrecorded one. Drop the lone high surrogate instead.
+        int end = Character.isHighSurrogate(reason.charAt(511)) ? 511 : 512;
+        return reason.substring(0, end);
     }
 }
 ```
@@ -1713,62 +1752,88 @@ public class TransferService {
 
     public Transfer execute(UUID fromAccountId, UUID toAccountId, BigDecimal amount) {
         // Constructor guards reject a self-transfer before anything is persisted.
+        // This save stays OUTSIDE the try below on purpose: SameAccountTransferException
+        // must propagate to the caller as a 400, not be swallowed into UNEXPECTED_ERROR.
         Transfer transfer = transferRepository.save(new Transfer(fromAccountId, toAccountId, amount));
         log.info("Transfer {} started: {} -> {} amount {}", transfer.getId(), fromAccountId, toAccountId, amount);
 
-        // Step 1: pre-validate both accounts. An optimisation for the common
-        // mistyped-id case, NOT a guarantee -- an account can still disappear between
-        // here and the debit, which is why step 2 handles every rejection on its own.
-        try {
-            accountClient.getAccount(fromAccountId);
-            accountClient.getAccount(toAccountId);
-        } catch (AccountRejectedException ex) {
-            return fail(transfer, TransferFailureCode.fromAccountCode(ex.getCode()), ex.getDetail());
-        } catch (AccountServiceUnavailableException ex) {
-            return fail(transfer, TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, ex.getMessage());
-        }
+        // Tracks whether the debit leg committed, so the catch-all below knows whether an
+        // unexpected failure left money stranded or left everything untouched.
+        boolean debited = false;
 
-        // Step 2: debit the source.
         try {
-            accountClient.debit(fromAccountId, amount);
-        } catch (AccountRejectedException ex) {
-            // Account understood and refused. Nothing moved -- genuinely clean.
-            return fail(transfer, TransferFailureCode.fromAccountCode(ex.getCode()), ex.getDetail());
-        } catch (AccountServiceUnavailableException ex) {
-            // AMBIGUOUS, and the most dangerous state in this service. A read timeout is
-            // indistinguishable from "the request never arrived": Account may have
-            // committed the debit and failed to tell us. FAILED here therefore means
-            // "debit NOT CONFIRMED", never "debit definitely did not happen".
-            //
-            // It is deliberately NOT routed to COMPENSATION_REQUIRED. That state means
-            // "debit definitely succeeded, credit definitely did not", and the compensator
-            // in a later plan credits the source back on the strength of it. Feeding an
-            // ambiguous outcome into it would make the compensator invent money whenever
-            // the debit never actually landed -- strictly worse than under-reporting.
-            //
-            // BLOCKING PRECONDITION FOR THE COMPENSATOR PLAN: it must reconcile against
-            // Account before crediting anything back, and must not read this combination
-            // (FAILED + ACCOUNT_SERVICE_UNAVAILABLE on the debit leg) as "no money moved".
-            log.error("Transfer {} debit outcome UNKNOWN for account {} amount {}: {}. "
-                            + "Recorded FAILED, but the debit may have committed -- needs reconciliation.",
-                    transfer.getId(), fromAccountId, amount, ex.getMessage());
-            return fail(transfer, TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, ex.getMessage());
-        }
+            // Step 1: pre-validate both accounts. An optimisation for the common
+            // mistyped-id case, NOT a guarantee -- an account can still disappear between
+            // here and the debit, which is why step 2 handles every rejection on its own.
+            try {
+                accountClient.getAccount(fromAccountId);
+                accountClient.getAccount(toAccountId);
+            } catch (AccountRejectedException ex) {
+                return fail(transfer, TransferFailureCode.fromAccountCode(ex.getCode()), ex.getDetail());
+            } catch (AccountServiceUnavailableException ex) {
+                return fail(transfer, TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, ex.getMessage());
+            }
 
-        // Step 3: credit the destination. Past this point the source is already debited,
-        // so business rejection and infrastructure failure have identical consequences:
-        // funds are stranded and something has to put them back. Plan 3 adds that.
-        try {
-            accountClient.credit(toAccountId, amount);
-        } catch (AccountRejectedException ex) {
-            return strand(transfer, TransferFailureCode.fromAccountCode(ex.getCode()), ex.getDetail());
-        } catch (AccountServiceUnavailableException ex) {
-            return strand(transfer, TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, ex.getMessage());
-        }
+            // Step 2: debit the source.
+            try {
+                accountClient.debit(fromAccountId, amount);
+            } catch (AccountRejectedException ex) {
+                // Account understood and refused. Nothing moved -- genuinely clean.
+                return fail(transfer, TransferFailureCode.fromAccountCode(ex.getCode()), ex.getDetail());
+            } catch (AccountServiceUnavailableException ex) {
+                // AMBIGUOUS, and the most dangerous state in this service. A read timeout is
+                // indistinguishable from "the request never arrived": Account may have
+                // committed the debit and failed to tell us. FAILED here therefore means
+                // "debit NOT CONFIRMED", never "debit definitely did not happen".
+                //
+                // It is deliberately NOT routed to COMPENSATION_REQUIRED. That state means
+                // "debit definitely succeeded, credit definitely did not", and the compensator
+                // in a later plan credits the source back on the strength of it. Feeding an
+                // ambiguous outcome into it would make the compensator invent money whenever
+                // the debit never actually landed -- strictly worse than under-reporting.
+                //
+                // BLOCKING PRECONDITION FOR THE COMPENSATOR PLAN: it must reconcile against
+                // Account before crediting anything back, and must not read this combination
+                // (FAILED + ACCOUNT_SERVICE_UNAVAILABLE on the debit leg) as "no money moved".
+                log.error("Transfer {} debit outcome UNKNOWN for account {} amount {}: {}. "
+                                + "Recorded FAILED, but the debit may have committed -- needs reconciliation.",
+                        transfer.getId(), fromAccountId, amount, ex.getMessage());
+                return fail(transfer, TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, ex.getMessage());
+            }
+            debited = true;
 
-        transfer.markCompleted();
-        log.info("Transfer {} completed", transfer.getId());
-        return transferRepository.save(transfer);
+            // Step 3: credit the destination. Past this point the source is already debited,
+            // so business rejection and infrastructure failure have identical consequences:
+            // funds are stranded and something has to put them back. Plan 3 adds that.
+            try {
+                accountClient.credit(toAccountId, amount);
+            } catch (AccountRejectedException ex) {
+                return strand(transfer, TransferFailureCode.fromAccountCode(ex.getCode()), ex.getDetail());
+            } catch (AccountServiceUnavailableException ex) {
+                return strand(transfer, TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, ex.getMessage());
+            }
+
+            transfer.markCompleted();
+            log.info("Transfer {} completed", transfer.getId());
+            return transferRepository.save(transfer);
+        } catch (RuntimeException ex) {
+            // Anything the two client exceptions do not cover -- a DataAccessException or an
+            // optimistic-lock failure from a save, a bug. Without this the row is orphaned in
+            // PENDING: a 500 reaches the caller and nothing ever revisits it.
+            if (transfer.getStatus() != TransferStatus.PENDING) {
+                // Already settled in memory -- the failure was persisting that outcome.
+                // Marking again would throw IllegalStateException from requirePending()
+                // and mask the real cause.
+                log.error("Transfer {} failed to persist terminal state {}", transfer.getId(), transfer.getStatus(), ex);
+                // Wrapped, not rethrown raw: by now the transfer has an id and a row that still
+                // reads PENDING, and the API has to hand that id back -- a caller who cannot
+                // name the record cannot reconcile it. The original stays as the cause.
+                throw new TransferPersistenceException(transfer.getId(), ex);
+            }
+            return debited
+                    ? strand(transfer, TransferFailureCode.UNEXPECTED_ERROR, ex.toString())
+                    : fail(transfer, TransferFailureCode.UNEXPECTED_ERROR, ex.toString());
+        }
     }
 
     public Transfer getTransfer(UUID id) {
@@ -2145,8 +2210,12 @@ package com.showcase.transfer.api;
 
 import com.showcase.transfer.domain.SameAccountTransferException;
 import com.showcase.transfer.domain.Transfer;
+import com.showcase.transfer.domain.TransferFailureCode;
 import com.showcase.transfer.domain.TransferNotFoundException;
 import com.showcase.transfer.domain.TransferStatus;
+import com.showcase.transfer.service.TransferPersistenceException;
+
+import java.time.Instant;
 import org.springframework.beans.TypeMismatchException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -2163,6 +2232,9 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExcep
 @RestControllerAdvice
 public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 
+    private static final String INTERNAL_FAILURE_DETAIL =
+            "The transfer could not be completed due to an internal error";
+
     @ExceptionHandler(TransferFailedException.class)
     public ProblemDetail handleTransferFailed(TransferFailedException ex) {
         Transfer transfer = ex.getTransfer();
@@ -2174,7 +2246,7 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
             status = HttpStatus.INTERNAL_SERVER_ERROR;
             code = "COMPENSATION_REQUIRED";
             title = "Transfer needs compensation";
-        } else {
+        } else if (transfer.getFailureCode() != null) {
             code = transfer.getFailureCode().name();
             title = "Transfer failed";
             status = switch (transfer.getFailureCode()) {
@@ -2183,13 +2255,59 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
                 case ACCOUNT_SERVICE_UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
                 case UNEXPECTED_ERROR -> HttpStatus.INTERNAL_SERVER_ERROR;
             };
+        } else {
+            // A non-terminal transfer (PENDING) reached the controller, so there is no failure
+            // code to read. Unreachable while TransferService holds to its contract, but reading
+            // the code unguarded would NPE inside this method -- and an exception thrown from an
+            // @ExceptionHandler is not routed to another one: the resolver gives up and the
+            // container renders its own error page, with no code and, worse, no transferId.
+            // Degrade to a well-formed problem instead, so the id survives.
+            logger.error("Transfer %s reached the API in non-terminal state %s"
+                    .formatted(transfer.getId(), transfer.getStatus()));
+            status = HttpStatus.INTERNAL_SERVER_ERROR;
+            code = "UNEXPECTED_ERROR";
+            title = "Transfer failed";
         }
 
-        ProblemDetail problem = Problems.of(status, code, title, transfer.getFailureReason());
+        ProblemDetail problem = Problems.of(status, code, title,
+                detailFor(transfer.getFailureCode(), transfer.getFailureReason()));
         // Always hand back the id: a caller that got a 500 still needs to be able to
         // fetch the record and see what state the transfer ended in.
         problem.setProperty("transferId", transfer.getId());
         problem.setProperty("transferStatus", transfer.getStatus());
+        return problem;
+    }
+
+    /**
+     * Chooses what the caller is allowed to read. A business rejection's recorded reason was
+     * written for them and says what to do next, so it goes out as-is. The other two codes carry
+     * operational text -- {@code ex.toString()} for an unexpected error, and a client message
+     * that can name Account Service's internal host and port for an outage -- which is for the
+     * log and the persisted row, not for an HTTP response. A null code reaches here only from
+     * the non-terminal fallback above.
+     */
+    private static String detailFor(TransferFailureCode failureCode, String failureReason) {
+        if (failureCode == null) {
+            return INTERNAL_FAILURE_DETAIL;
+        }
+        return switch (failureCode) {
+            case ACCOUNT_NOT_FOUND, INSUFFICIENT_FUNDS, CONCURRENT_MODIFICATION -> failureReason;
+            case ACCOUNT_SERVICE_UNAVAILABLE -> "Account Service is currently unavailable";
+            case UNEXPECTED_ERROR -> INTERNAL_FAILURE_DETAIL;
+        };
+    }
+
+    @ExceptionHandler(TransferPersistenceException.class)
+    public ProblemDetail handlePersistenceFailure(TransferPersistenceException ex) {
+        logger.error("Transfer %s could not be persisted".formatted(ex.getTransferId()), ex);
+
+        ProblemDetail problem = Problems.of(HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL_ERROR",
+                "Internal error", INTERNAL_FAILURE_DETAIL);
+        // The id, and only the id. The saga's outcome was never written, so the row's status is
+        // whatever the last successful save left -- reporting the in-memory state as
+        // transferStatus would tell the caller something the database does not agree with.
+        // GET /transfers/{id} is the honest answer, and needs exactly this.
+        problem.setProperty("transferId", ex.getTransferId());
         return problem;
     }
 
@@ -2236,13 +2354,33 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
                 .body(Problems.of(HttpStatus.BAD_REQUEST, "MALFORMED_REQUEST", "Malformed request",
                         "Invalid value for parameter: " + ex.getPropertyName()));
     }
+
+    /**
+     * Stamps the {@code code}/{@code timestamp} invariant onto the ~14 MVC exception types
+     * this class does not override explicitly (405, 415, 406, unmapped paths, and the rest).
+     * Without it they render a ProblemDetail with NO code at all, and a consumer reading
+     * {@code code} gets null on exactly the paths a mis-wired caller hits most. The handler
+     * is duplicated per service rather than shared, so every service carries its own copy
+     * of this guard.
+     */
+    @Override
+    protected ResponseEntity<Object> handleExceptionInternal(Exception ex, Object body,
+            HttpHeaders headers, HttpStatusCode statusCode, WebRequest request) {
+        ResponseEntity<Object> response = super.handleExceptionInternal(ex, body, headers, statusCode, request);
+        if (response != null && response.getBody() instanceof ProblemDetail problem
+                && (problem.getProperties() == null || !problem.getProperties().containsKey("code"))) {
+            problem.setProperty("code", statusCode.is5xxServerError() ? "INTERNAL_ERROR" : "REQUEST_REJECTED");
+            problem.setProperty("timestamp", Instant.now());
+        }
+        return response;
+    }
 }
 ```
 
 - [ ] **Step 7: Run the whole module test suite**
 
 Run: `./mvnw -pl transfer-service test`
-Expected: PASS — `TransferTest` (7), `TransferRepositoryTest` (3), `AccountClientTest` (7), `TransferServiceTest` (9), `TransferControllerTest` (7).
+Expected: PASS — 75 tests across the reactor (account-service 23, transfer-service 52). Do not match per-class counts against this line: earlier tasks grew several of these classes during their review rounds, so per-class figures drift. The reactor total is the check.
 
 - [ ] **Step 8: Commit**
 
