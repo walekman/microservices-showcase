@@ -249,6 +249,8 @@ package com.showcase.account.api;
 
 import com.showcase.account.domain.AccountNotFoundException;
 import com.showcase.account.domain.InsufficientFundsException;
+
+import java.time.Instant;
 import org.springframework.beans.TypeMismatchException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -314,6 +316,26 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         return ResponseEntity.badRequest()
                 .body(Problems.of(HttpStatus.BAD_REQUEST, "MALFORMED_REQUEST", "Malformed request",
                         "Invalid value for parameter: " + ex.getPropertyName()));
+    }
+
+    /**
+     * Stamps the {@code code}/{@code timestamp} invariant onto the ~14 MVC exception types
+     * this class does not override explicitly (405, 415, 406, unmapped paths, and the rest).
+     * Without it they render a ProblemDetail with NO code at all, and a consumer reading
+     * {@code code} gets null on exactly the paths a mis-wired caller hits most. The handler
+     * is duplicated per service rather than shared, so every service carries its own copy
+     * of this guard.
+     */
+    @Override
+    protected ResponseEntity<Object> handleExceptionInternal(Exception ex, Object body,
+            HttpHeaders headers, HttpStatusCode statusCode, WebRequest request) {
+        ResponseEntity<Object> response = super.handleExceptionInternal(ex, body, headers, statusCode, request);
+        if (response != null && response.getBody() instanceof ProblemDetail problem
+                && (problem.getProperties() == null || !problem.getProperties().containsKey("code"))) {
+            problem.setProperty("code", statusCode.is5xxServerError() ? "INTERNAL_ERROR" : "REQUEST_REJECTED");
+            problem.setProperty("timestamp", Instant.now());
+        }
+        return response;
     }
 }
 ```
@@ -2147,6 +2169,8 @@ import com.showcase.transfer.domain.SameAccountTransferException;
 import com.showcase.transfer.domain.Transfer;
 import com.showcase.transfer.domain.TransferNotFoundException;
 import com.showcase.transfer.domain.TransferStatus;
+
+import java.time.Instant;
 import org.springframework.beans.TypeMismatchException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -2236,13 +2260,33 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
                 .body(Problems.of(HttpStatus.BAD_REQUEST, "MALFORMED_REQUEST", "Malformed request",
                         "Invalid value for parameter: " + ex.getPropertyName()));
     }
+
+    /**
+     * Stamps the {@code code}/{@code timestamp} invariant onto the ~14 MVC exception types
+     * this class does not override explicitly (405, 415, 406, unmapped paths, and the rest).
+     * Without it they render a ProblemDetail with NO code at all, and a consumer reading
+     * {@code code} gets null on exactly the paths a mis-wired caller hits most. The handler
+     * is duplicated per service rather than shared, so every service carries its own copy
+     * of this guard.
+     */
+    @Override
+    protected ResponseEntity<Object> handleExceptionInternal(Exception ex, Object body,
+            HttpHeaders headers, HttpStatusCode statusCode, WebRequest request) {
+        ResponseEntity<Object> response = super.handleExceptionInternal(ex, body, headers, statusCode, request);
+        if (response != null && response.getBody() instanceof ProblemDetail problem
+                && (problem.getProperties() == null || !problem.getProperties().containsKey("code"))) {
+            problem.setProperty("code", statusCode.is5xxServerError() ? "INTERNAL_ERROR" : "REQUEST_REJECTED");
+            problem.setProperty("timestamp", Instant.now());
+        }
+        return response;
+    }
 }
 ```
 
 - [ ] **Step 7: Run the whole module test suite**
 
 Run: `./mvnw -pl transfer-service test`
-Expected: PASS — `TransferTest` (7), `TransferRepositoryTest` (3), `AccountClientTest` (7), `TransferServiceTest` (9), `TransferControllerTest` (7).
+Expected: PASS — 75 tests across the reactor (account-service 23, transfer-service 52). Do not match per-class counts against this line: earlier tasks grew several of these classes during their review rounds, so per-class figures drift. The reactor total is the check.
 
 - [ ] **Step 8: Commit**
 
