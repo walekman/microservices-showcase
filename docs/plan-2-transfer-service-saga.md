@@ -796,8 +796,19 @@ public enum TransferFailureCode {
     ACCOUNT_SERVICE_UNAVAILABLE,
     UNEXPECTED_ERROR;
 
-    /** Translates a code from Account Service into this service vocabulary. */
+    /**
+     * Translates a code from Account Service into this service vocabulary.
+     *
+     * <p>A null code is not hypothetical: a well-formed problem document that simply omits
+     * {@code code} (a proxy or gateway between the services can produce one) binds to a null
+     * here. Failing with an NPE while handling a downstream failure would turn a transfer that
+     * should be recorded as FAILED into a 500 with no record of why, so a null maps to
+     * {@link #UNEXPECTED_ERROR} like any other unrecognised code.
+     */
     public static TransferFailureCode fromAccountCode(String accountCode) {
+        if (accountCode == null) {
+            return UNEXPECTED_ERROR;
+        }
         return switch (accountCode) {
             case "ACCOUNT_NOT_FOUND" -> ACCOUNT_NOT_FOUND;
             case "INSUFFICIENT_FUNDS" -> INSUFFICIENT_FUNDS;
@@ -945,7 +956,12 @@ public class Transfer {
         if (reason == null || reason.length() <= 512) {
             return reason;
         }
-        return reason.substring(0, 512);
+        // Cutting at 512 blindly can split a surrogate pair (an emoji straddling the boundary),
+        // leaving an unpaired surrogate that the PostgreSQL driver refuses to encode. That would
+        // recreate the exact failure this method exists to prevent: a recorded failure silently
+        // becoming an unrecorded one. Drop the lone high surrogate instead.
+        int end = Character.isHighSurrogate(reason.charAt(511)) ? 511 : 512;
+        return reason.substring(0, end);
     }
 }
 ```
@@ -1735,62 +1751,85 @@ public class TransferService {
 
     public Transfer execute(UUID fromAccountId, UUID toAccountId, BigDecimal amount) {
         // Constructor guards reject a self-transfer before anything is persisted.
+        // This save stays OUTSIDE the try below on purpose: SameAccountTransferException
+        // must propagate to the caller as a 400, not be swallowed into UNEXPECTED_ERROR.
         Transfer transfer = transferRepository.save(new Transfer(fromAccountId, toAccountId, amount));
         log.info("Transfer {} started: {} -> {} amount {}", transfer.getId(), fromAccountId, toAccountId, amount);
 
-        // Step 1: pre-validate both accounts. An optimisation for the common
-        // mistyped-id case, NOT a guarantee -- an account can still disappear between
-        // here and the debit, which is why step 2 handles every rejection on its own.
-        try {
-            accountClient.getAccount(fromAccountId);
-            accountClient.getAccount(toAccountId);
-        } catch (AccountRejectedException ex) {
-            return fail(transfer, TransferFailureCode.fromAccountCode(ex.getCode()), ex.getDetail());
-        } catch (AccountServiceUnavailableException ex) {
-            return fail(transfer, TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, ex.getMessage());
-        }
+        // Tracks whether the debit leg committed, so the catch-all below knows whether an
+        // unexpected failure left money stranded or left everything untouched.
+        boolean debited = false;
 
-        // Step 2: debit the source.
         try {
-            accountClient.debit(fromAccountId, amount);
-        } catch (AccountRejectedException ex) {
-            // Account understood and refused. Nothing moved -- genuinely clean.
-            return fail(transfer, TransferFailureCode.fromAccountCode(ex.getCode()), ex.getDetail());
-        } catch (AccountServiceUnavailableException ex) {
-            // AMBIGUOUS, and the most dangerous state in this service. A read timeout is
-            // indistinguishable from "the request never arrived": Account may have
-            // committed the debit and failed to tell us. FAILED here therefore means
-            // "debit NOT CONFIRMED", never "debit definitely did not happen".
-            //
-            // It is deliberately NOT routed to COMPENSATION_REQUIRED. That state means
-            // "debit definitely succeeded, credit definitely did not", and the compensator
-            // in a later plan credits the source back on the strength of it. Feeding an
-            // ambiguous outcome into it would make the compensator invent money whenever
-            // the debit never actually landed -- strictly worse than under-reporting.
-            //
-            // BLOCKING PRECONDITION FOR THE COMPENSATOR PLAN: it must reconcile against
-            // Account before crediting anything back, and must not read this combination
-            // (FAILED + ACCOUNT_SERVICE_UNAVAILABLE on the debit leg) as "no money moved".
-            log.error("Transfer {} debit outcome UNKNOWN for account {} amount {}: {}. "
-                            + "Recorded FAILED, but the debit may have committed -- needs reconciliation.",
-                    transfer.getId(), fromAccountId, amount, ex.getMessage());
-            return fail(transfer, TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, ex.getMessage());
-        }
+            // Step 1: pre-validate both accounts. An optimisation for the common
+            // mistyped-id case, NOT a guarantee -- an account can still disappear between
+            // here and the debit, which is why step 2 handles every rejection on its own.
+            try {
+                accountClient.getAccount(fromAccountId);
+                accountClient.getAccount(toAccountId);
+            } catch (AccountRejectedException ex) {
+                return fail(transfer, TransferFailureCode.fromAccountCode(ex.getCode()), ex.getDetail());
+            } catch (AccountServiceUnavailableException ex) {
+                return fail(transfer, TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, ex.getMessage());
+            }
 
-        // Step 3: credit the destination. Past this point the source is already debited,
-        // so business rejection and infrastructure failure have identical consequences:
-        // funds are stranded and something has to put them back. Plan 3 adds that.
-        try {
-            accountClient.credit(toAccountId, amount);
-        } catch (AccountRejectedException ex) {
-            return strand(transfer, TransferFailureCode.fromAccountCode(ex.getCode()), ex.getDetail());
-        } catch (AccountServiceUnavailableException ex) {
-            return strand(transfer, TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, ex.getMessage());
-        }
+            // Step 2: debit the source.
+            try {
+                accountClient.debit(fromAccountId, amount);
+            } catch (AccountRejectedException ex) {
+                // Account understood and refused. Nothing moved -- genuinely clean.
+                return fail(transfer, TransferFailureCode.fromAccountCode(ex.getCode()), ex.getDetail());
+            } catch (AccountServiceUnavailableException ex) {
+                // AMBIGUOUS, and the most dangerous state in this service. A read timeout is
+                // indistinguishable from "the request never arrived": Account may have
+                // committed the debit and failed to tell us. FAILED here therefore means
+                // "debit NOT CONFIRMED", never "debit definitely did not happen".
+                //
+                // It is deliberately NOT routed to COMPENSATION_REQUIRED. That state means
+                // "debit definitely succeeded, credit definitely did not", and the compensator
+                // in a later plan credits the source back on the strength of it. Feeding an
+                // ambiguous outcome into it would make the compensator invent money whenever
+                // the debit never actually landed -- strictly worse than under-reporting.
+                //
+                // BLOCKING PRECONDITION FOR THE COMPENSATOR PLAN: it must reconcile against
+                // Account before crediting anything back, and must not read this combination
+                // (FAILED + ACCOUNT_SERVICE_UNAVAILABLE on the debit leg) as "no money moved".
+                log.error("Transfer {} debit outcome UNKNOWN for account {} amount {}: {}. "
+                                + "Recorded FAILED, but the debit may have committed -- needs reconciliation.",
+                        transfer.getId(), fromAccountId, amount, ex.getMessage());
+                return fail(transfer, TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, ex.getMessage());
+            }
+            debited = true;
 
-        transfer.markCompleted();
-        log.info("Transfer {} completed", transfer.getId());
-        return transferRepository.save(transfer);
+            // Step 3: credit the destination. Past this point the source is already debited,
+            // so business rejection and infrastructure failure have identical consequences:
+            // funds are stranded and something has to put them back. Plan 3 adds that.
+            try {
+                accountClient.credit(toAccountId, amount);
+            } catch (AccountRejectedException ex) {
+                return strand(transfer, TransferFailureCode.fromAccountCode(ex.getCode()), ex.getDetail());
+            } catch (AccountServiceUnavailableException ex) {
+                return strand(transfer, TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, ex.getMessage());
+            }
+
+            transfer.markCompleted();
+            log.info("Transfer {} completed", transfer.getId());
+            return transferRepository.save(transfer);
+        } catch (RuntimeException ex) {
+            // Anything the two client exceptions do not cover -- a DataAccessException or an
+            // optimistic-lock failure from a save, a bug. Without this the row is orphaned in
+            // PENDING: a 500 reaches the caller and nothing ever revisits it.
+            if (transfer.getStatus() != TransferStatus.PENDING) {
+                // Already settled in memory -- the failure was persisting that outcome.
+                // Marking again would throw IllegalStateException from requirePending()
+                // and mask the real cause.
+                log.error("Transfer {} failed to persist terminal state {}", transfer.getId(), transfer.getStatus(), ex);
+                throw ex;
+            }
+            return debited
+                    ? strand(transfer, TransferFailureCode.UNEXPECTED_ERROR, ex.toString())
+                    : fail(transfer, TransferFailureCode.UNEXPECTED_ERROR, ex.toString());
+        }
     }
 
     public Transfer getTransfer(UUID id) {
