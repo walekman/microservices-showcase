@@ -57,8 +57,12 @@ class AccountClientTest {
 
         assertThatThrownBy(() -> accountClient.getAccount(ACCOUNT_ID))
                 .isInstanceOf(AccountRejectedException.class)
-                .satisfies(thrown -> assertThat(((AccountRejectedException) thrown).getCode())
-                        .isEqualTo("ACCOUNT_NOT_FOUND"));
+                .satisfies(thrown -> {
+                    assertThat(((AccountRejectedException) thrown).getCode()).isEqualTo("ACCOUNT_NOT_FOUND");
+                    assertThat(((AccountRejectedException) thrown).getDetail())
+                            .isEqualTo("Account not found: " + ACCOUNT_ID);
+                });
+        server.verify();
     }
 
     @Test
@@ -84,6 +88,7 @@ class AccountClientTest {
                 .isInstanceOf(AccountRejectedException.class)
                 .satisfies(thrown -> assertThat(((AccountRejectedException) thrown).getCode())
                         .isEqualTo("INSUFFICIENT_FUNDS"));
+        server.verify();
     }
 
     @Test
@@ -93,6 +98,7 @@ class AccountClientTest {
 
         assertThatThrownBy(() -> accountClient.credit(ACCOUNT_ID, new BigDecimal("40.00")))
                 .isInstanceOf(AccountServiceUnavailableException.class);
+        server.verify();
     }
 
     @Test
@@ -102,6 +108,7 @@ class AccountClientTest {
 
         assertThatThrownBy(() -> accountClient.credit(ACCOUNT_ID, new BigDecimal("40.00")))
                 .isInstanceOf(AccountServiceUnavailableException.class);
+        server.verify();
     }
 
     @Test
@@ -115,6 +122,39 @@ class AccountClientTest {
                 .isInstanceOf(AccountRejectedException.class)
                 .satisfies(thrown -> assertThat(((AccountRejectedException) thrown).getCode())
                         .isEqualTo("UNKNOWN"));
+        server.verify();
+    }
+
+    @Test
+    void getAccountThrowsUnavailableWhenTheBodyIsEmpty() {
+        server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID))
+                .andRespond(withSuccess());
+
+        assertThatThrownBy(() -> accountClient.getAccount(ACCOUNT_ID))
+                .isInstanceOf(AccountServiceUnavailableException.class);
+        server.verify();
+    }
+
+    @Test
+    void getAccountThrowsUnavailableWhenA2xxBodyIsNotReadable() {
+        server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID))
+                .andRespond(withSuccess("<html>proxy interstitial</html>", MediaType.TEXT_HTML));
+
+        assertThatThrownBy(() -> accountClient.getAccount(ACCOUNT_ID))
+                .isInstanceOf(AccountServiceUnavailableException.class);
+        server.verify();
+    }
+
+    @Test
+    void throwsRejectedWithUnknownCodeWhenTheErrorHasNoBodyAtAll() {
+        server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID))
+                .andRespond(withStatus(HttpStatus.BAD_REQUEST));
+
+        assertThatThrownBy(() -> accountClient.getAccount(ACCOUNT_ID))
+                .isInstanceOf(AccountRejectedException.class)
+                .satisfies(thrown -> assertThat(((AccountRejectedException) thrown).getCode())
+                        .isEqualTo("UNKNOWN"));
+        server.verify();
     }
 
     private static org.springframework.test.web.client.ResponseCreator problem(
