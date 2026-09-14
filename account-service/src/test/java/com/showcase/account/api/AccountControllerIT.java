@@ -214,6 +214,68 @@ class AccountControllerIT {
     }
 
     @Test
+    void concurrentDebitsWithTheSameIdempotencyKeyNeverDoubleApplyAndTheLoserGets500() throws Exception {
+        // A genuine same-key race: unlike returns409ForConcurrentUpdateConflict above (each
+        // request uses its OWN key), every request here shares ONE idempotency key, so more
+        // than one can pass AccountService.apply()'s existing-operation check as "not yet
+        // applied" before either commits. The primary key on idempotency_key then makes
+        // every loser's INSERT collide at commit time -- @Transactional rolls the whole
+        // method back, so the loser's balance change never persists, and a generic 500 (not
+        // 409) is the documented, deliberately-uncaught outcome (see AccountService.apply()'s
+        // comment). This proves that outcome live rather than assuming Hibernate's
+        // insert-before-update flush ordering -- which is what actually keeps a losing
+        // request from double-debiting instead of merely failing loudly -- as Phase 3's
+        // final review flagged (docs/roadmap.md).
+        int concurrentRequests = 10;
+        UUID id = createAccount(new BigDecimal("100.00"));
+        String sharedKey = "race-key";
+
+        CyclicBarrier barrier = new CyclicBarrier(concurrentRequests);
+        List<Callable<ResponseEntity<String>>> debitCalls = new ArrayList<>();
+        for (int i = 0; i < concurrentRequests; i++) {
+            debitCalls.add(() -> {
+                barrier.await();
+                return restTemplate.exchange(
+                        "/accounts/" + id + "/debit", HttpMethod.POST,
+                        amountRequest(new BigDecimal("40.00"), sharedKey), String.class);
+            });
+        }
+
+        ExecutorService executor = Executors.newFixedThreadPool(concurrentRequests);
+        try {
+            List<Future<ResponseEntity<String>>> futures = new ArrayList<>();
+            for (Callable<ResponseEntity<String>> call : debitCalls) {
+                futures.add(executor.submit(call));
+            }
+
+            List<ResponseEntity<String>> responses = new ArrayList<>();
+            for (Future<ResponseEntity<String>> future : futures) {
+                responses.add(future.get(10, TimeUnit.SECONDS));
+            }
+
+            List<HttpStatus> statuses = new ArrayList<>();
+            for (ResponseEntity<String> response : responses) {
+                statuses.add((HttpStatus) response.getStatusCode());
+            }
+
+            assertThat(statuses).hasSize(concurrentRequests);
+            // OK covers both the winner and any request that arrived late enough to see the
+            // winner's row already committed -- a genuine idempotent replay, not a race loss.
+            assertThat(statuses).allMatch(status -> status == HttpStatus.OK || status == HttpStatus.INTERNAL_SERVER_ERROR);
+            assertThat(statuses)
+                    .as("at least one of %s same-key concurrent debits should lose the insert race", concurrentRequests)
+                    .contains(HttpStatus.INTERNAL_SERVER_ERROR);
+
+            ResponseEntity<AccountResponse> after = restTemplate.getForEntity("/accounts/" + id, AccountResponse.class);
+            assertThat(after.getBody().balance())
+                    .as("the debit must land exactly once no matter how many requests raced for the same key")
+                    .isEqualByComparingTo("60.00");
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
     void rejectsNegativeInitialBalance() {
         ResponseEntity<ProblemDetail> response = restTemplate.postForEntity(
                 "/accounts", new CreateAccountRequest("Ada Lovelace", new BigDecimal("-5.00")), ProblemDetail.class);
