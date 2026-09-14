@@ -240,10 +240,11 @@ public class AccountOperation implements Persistable<String> {
     @Column(nullable = false, updatable = false, length = 16)
     private AccountOperationType operation;
 
-    @Column(nullable = false, precision = 19, scale = 4, updatable = false)
+    // scale 2, matching Account.balance -- see the comment there.
+    @Column(nullable = false, precision = 19, scale = 2, updatable = false)
     private BigDecimal amount;
 
-    @Column(nullable = false, precision = 19, scale = 4, updatable = false)
+    @Column(nullable = false, precision = 19, scale = 2, updatable = false)
     private BigDecimal balanceAfter;
 
     @Column(nullable = false, updatable = false)
