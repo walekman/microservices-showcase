@@ -27,7 +27,11 @@ public class Account {
     @Column(nullable = false)
     private String ownerName;
 
-    @Column(nullable = false, precision = 19, scale = 4)
+    // scale 2, not more: AmountRequest already restricts every debit/credit to 2 decimal
+    // places (@Digits(fraction = 2)), and this project has no interest/FX/proration that
+    // would need sub-cent intermediate precision -- see docs/microservices-showcase-design.md's
+    // non-goals. A wider scale here would be unused headroom, not a real requirement.
+    @Column(nullable = false, precision = 19, scale = 2)
     private BigDecimal balance;
 
     @Version
