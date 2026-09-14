@@ -120,6 +120,18 @@ public class AccountClient {
 
     private void rejected(HttpRequest request, ClientHttpResponse response) {
         AccountProblem problem = readProblem(response);
+        if ("CONCURRENT_MODIFICATION".equals(problem.code())) {
+            // Account's own optimistic-lock conflict (its @Version check losing a race) is
+            // genuinely transient, not a business rejection -- unlike every other 4xx this
+            // method handles. Surfacing it as AccountRejectedException would make the live
+            // saga abort permanently and, worse, make CompensationScheduler read a routine
+            // version conflict during a sweep as a definitive rejection and reverse a
+            // transfer that never actually failed (see docs/roadmap.md's Phase 3 review
+            // findings). AccountServiceUnavailableException instead lets Resilience4j's
+            // @Retry retry it live, and lets the compensator's sweep retry it next pass.
+            throw new AccountServiceUnavailableException(
+                    "Account Service reported a transient conflict: " + problem.detail());
+        }
         throw new AccountRejectedException(problem.code(), problem.detail());
     }
 

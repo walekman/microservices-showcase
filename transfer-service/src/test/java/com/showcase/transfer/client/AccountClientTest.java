@@ -94,6 +94,38 @@ class AccountClientTest {
     }
 
     @Test
+    void debitThrowsUnavailableNotRejectedOnConcurrentModification() {
+        // CONCURRENT_MODIFICATION is Account's own optimistic-lock conflict -- genuinely
+        // transient, not a business rejection. Callers (the live saga's Resilience4j @Retry,
+        // and CompensationScheduler's reconciliation) must be able to retry it, which only
+        // happens if this surfaces as AccountServiceUnavailableException, never
+        // AccountRejectedException. See docs/roadmap.md's Phase 3 review findings.
+        server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID + "/debit"))
+                .andRespond(problem(HttpStatus.CONFLICT, "CONCURRENT_MODIFICATION", "Account was modified concurrently, please retry"));
+
+        assertThatThrownBy(() -> accountClient.debit(ACCOUNT_ID, new BigDecimal("40.00"), "transfer-1:debit"))
+                .isInstanceOf(AccountServiceUnavailableException.class)
+                .isNotInstanceOf(AccountRejectedException.class);
+        server.verify();
+    }
+
+    @Test
+    void debitStillThrowsRejectedOnIdempotencyKeyConflict() {
+        // A DIFFERENT 409 code from the same status: reusing a key against a different
+        // account/amount/type is a genuine, permanent rejection, not a transient race --
+        // it must keep failing AccountRejectedException, not get swept up by the
+        // CONCURRENT_MODIFICATION special-case above.
+        server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID + "/debit"))
+                .andRespond(problem(HttpStatus.CONFLICT, "IDEMPOTENCY_KEY_CONFLICT", "Idempotency key already used with different parameters"));
+
+        assertThatThrownBy(() -> accountClient.debit(ACCOUNT_ID, new BigDecimal("40.00"), "transfer-1:debit"))
+                .isInstanceOf(AccountRejectedException.class)
+                .satisfies(thrown -> assertThat(((AccountRejectedException) thrown).getCode())
+                        .isEqualTo("IDEMPOTENCY_KEY_CONFLICT"));
+        server.verify();
+    }
+
+    @Test
     void creditPostsTheIdempotencyKey() {
         server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID + "/credit"))
                 .andExpect(header("Idempotency-Key", "transfer-1:credit"))
