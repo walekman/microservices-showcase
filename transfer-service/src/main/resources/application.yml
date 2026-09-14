@@ -53,3 +53,8 @@ resilience4j:
           - com.showcase.transfer.client.AccountServiceUnavailableException
         ignore-exceptions:
           - com.showcase.transfer.client.AccountRejectedException
+
+transfer:
+  compensation:
+    sweep-interval: 15s
+    pending-stale-after: 120s

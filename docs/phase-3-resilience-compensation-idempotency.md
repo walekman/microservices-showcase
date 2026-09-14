@@ -2566,6 +2566,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
@@ -2604,8 +2605,12 @@ class CompensationSchedulerTest {
     }
 
     private Transfer strandedTransfer() {
-        Transfer transfer = new Transfer(FROM, TO, AMOUNT);
-        ReflectionTestUtils.setField(transfer, "id", TRANSFER_ID);
+        return strandedTransfer(TRANSFER_ID, FROM, TO);
+    }
+
+    private Transfer strandedTransfer(UUID id, UUID from, UUID to) {
+        Transfer transfer = new Transfer(from, to, AMOUNT);
+        ReflectionTestUtils.setField(transfer, "id", id);
         transfer.markCompensationRequired(TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, "credit leg timed out");
         return transfer;
     }
@@ -2684,6 +2689,22 @@ class CompensationSchedulerTest {
         assertThat(transfer.getStatus()).isEqualTo(TransferStatus.COMPENSATION_REQUIRED);
         verify(transferRepository, never()).save(any());
     }
+
+    @Test
+    void anUnexpectedSaveFailureDoesNotBlockOtherTransfersInTheBatch() {
+        Transfer failing = strandedTransfer();
+        Transfer succeeding = strandedTransfer(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
+        when(transferRepository.findByStatus(TransferStatus.COMPENSATION_REQUIRED))
+                .thenReturn(List.of(failing, succeeding));
+        when(transferRepository.save(failing)).thenThrow(new OptimisticLockingFailureException("stale row"));
+        when(transferRepository.save(succeeding)).thenReturn(succeeding);
+        // credit(...) succeeds for both (void mock, no stubbing needed).
+
+        scheduler.drainCompensationRequired();
+
+        assertThat(succeeding.getStatus()).isEqualTo(TransferStatus.COMPLETED);
+        verify(transferRepository).save(succeeding);
+    }
 }
 ```
 
@@ -2751,7 +2772,17 @@ public class CompensationScheduler implements SchedulingConfigurer {
     void drainCompensationRequired() {
         List<Transfer> stranded = transferRepository.findByStatus(TransferStatus.COMPENSATION_REQUIRED);
         for (Transfer transfer : stranded) {
-            reconcileCredit(transfer);
+            try {
+                reconcileCredit(transfer);
+            } catch (RuntimeException unexpected) {
+                // A save() failure (an optimistic-lock conflict, a transient Postgres blip)
+                // would otherwise propagate out of this loop and silently skip every other
+                // stranded transfer in this batch until the next sweep. Isolating it here is
+                // a delay, not data loss: the row is still COMPENSATION_REQUIRED, so the next
+                // sweep picks it up again, and the credit call itself is idempotent either way.
+                log.error("Transfer {} unexpected failure during reconciliation, will retry next sweep",
+                        transfer.getId(), unexpected);
+            }
         }
     }
 
@@ -2797,7 +2828,7 @@ public class CompensationScheduler implements SchedulingConfigurer {
 - [ ] **Step 11: Run the test to verify it passes**
 
 Run: `./mvnw -pl transfer-service test -Dtest=CompensationSchedulerTest`
-Expected: PASS, 5 tests.
+Expected: PASS, 6 tests.
 
 - [ ] **Step 12: Run the whole Transfer test suite**
 
@@ -3004,7 +3035,17 @@ public class CompensationScheduler implements SchedulingConfigurer {
     void drainCompensationRequired() {
         List<Transfer> stranded = transferRepository.findByStatus(TransferStatus.COMPENSATION_REQUIRED);
         for (Transfer transfer : stranded) {
-            reconcileCredit(transfer);
+            try {
+                reconcileCredit(transfer);
+            } catch (RuntimeException unexpected) {
+                // A save() failure (an optimistic-lock conflict, a transient Postgres blip)
+                // would otherwise propagate out of this loop and silently skip every other
+                // stranded transfer in this batch until the next sweep. Isolating it here is
+                // a delay, not data loss: the row is still COMPENSATION_REQUIRED, so the next
+                // sweep picks it up again, and the credit call itself is idempotent either way.
+                log.error("Transfer {} unexpected failure during reconciliation, will retry next sweep",
+                        transfer.getId(), unexpected);
+            }
         }
     }
 
@@ -3101,6 +3142,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
@@ -3139,8 +3181,12 @@ class CompensationSchedulerTest {
     }
 
     private Transfer strandedTransfer() {
-        Transfer transfer = new Transfer(FROM, TO, AMOUNT);
-        ReflectionTestUtils.setField(transfer, "id", TRANSFER_ID);
+        return strandedTransfer(TRANSFER_ID, FROM, TO);
+    }
+
+    private Transfer strandedTransfer(UUID id, UUID from, UUID to) {
+        Transfer transfer = new Transfer(from, to, AMOUNT);
+        ReflectionTestUtils.setField(transfer, "id", id);
         transfer.markCompensationRequired(TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, "credit leg timed out");
         return transfer;
     }
@@ -3224,6 +3270,22 @@ class CompensationSchedulerTest {
 
         assertThat(transfer.getStatus()).isEqualTo(TransferStatus.COMPENSATION_REQUIRED);
         verify(transferRepository, never()).save(any());
+    }
+
+    @Test
+    void anUnexpectedSaveFailureDoesNotBlockOtherTransfersInTheBatch() {
+        Transfer failing = strandedTransfer();
+        Transfer succeeding = strandedTransfer(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
+        when(transferRepository.findByStatus(TransferStatus.COMPENSATION_REQUIRED))
+                .thenReturn(List.of(failing, succeeding));
+        when(transferRepository.save(failing)).thenThrow(new OptimisticLockingFailureException("stale row"));
+        when(transferRepository.save(succeeding)).thenReturn(succeeding);
+        // credit(...) succeeds for both (void mock, no stubbing needed).
+
+        scheduler.drainCompensationRequired();
+
+        assertThat(succeeding.getStatus()).isEqualTo(TransferStatus.COMPLETED);
+        verify(transferRepository).save(succeeding);
     }
 
     @Test

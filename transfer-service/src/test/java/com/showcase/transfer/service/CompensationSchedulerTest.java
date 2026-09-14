@@ -1,0 +1,154 @@
+package com.showcase.transfer.service;
+
+import com.showcase.transfer.client.AccountClient;
+import com.showcase.transfer.client.AccountRejectedException;
+import com.showcase.transfer.client.AccountServiceUnavailableException;
+import com.showcase.transfer.domain.Transfer;
+import com.showcase.transfer.domain.TransferFailureCode;
+import com.showcase.transfer.domain.TransferRepository;
+import com.showcase.transfer.domain.TransferStatus;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.test.util.ReflectionTestUtils;
+
+import java.math.BigDecimal;
+import java.time.Duration;
+import java.util.List;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+@ExtendWith(MockitoExtension.class)
+class CompensationSchedulerTest {
+
+    private static final UUID TRANSFER_ID = UUID.randomUUID();
+    private static final UUID FROM = UUID.randomUUID();
+    private static final UUID TO = UUID.randomUUID();
+    private static final BigDecimal AMOUNT = new BigDecimal("40.00");
+
+    @Mock
+    private TransferRepository transferRepository;
+
+    @Mock
+    private AccountClient accountClient;
+
+    private CompensationScheduler scheduler;
+
+    @BeforeEach
+    void setUp() {
+        scheduler = new CompensationScheduler(transferRepository, accountClient,
+                new CompensationProperties(Duration.ofSeconds(15), Duration.ofSeconds(120)));
+    }
+
+    private Transfer strandedTransfer() {
+        return strandedTransfer(TRANSFER_ID, FROM, TO);
+    }
+
+    private Transfer strandedTransfer(UUID id, UUID from, UUID to) {
+        Transfer transfer = new Transfer(from, to, AMOUNT);
+        ReflectionTestUtils.setField(transfer, "id", id);
+        transfer.markCompensationRequired(TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, "credit leg timed out");
+        return transfer;
+    }
+
+    @Test
+    void reconciledSuccessMarksTheTransferCompleted() {
+        Transfer transfer = strandedTransfer();
+        when(transferRepository.findByStatus(TransferStatus.COMPENSATION_REQUIRED)).thenReturn(List.of(transfer));
+        when(transferRepository.save(transfer)).thenReturn(transfer);
+        // credit(...) succeeds by default (void mock, no stubbing needed) -- the destination
+        // had actually already received the money.
+
+        scheduler.drainCompensationRequired();
+
+        assertThat(transfer.getStatus()).isEqualTo(TransferStatus.COMPLETED);
+        verify(accountClient).credit(TO, AMOUNT, TRANSFER_ID + ":credit");
+        verify(accountClient, never()).credit(eq(FROM), any(), any());
+        verify(transferRepository).save(transfer);
+    }
+
+    @Test
+    void definitiveRejectionThenSuccessfulReversalMarksCompensated() {
+        Transfer transfer = strandedTransfer();
+        when(transferRepository.findByStatus(TransferStatus.COMPENSATION_REQUIRED)).thenReturn(List.of(transfer));
+        when(transferRepository.save(transfer)).thenReturn(transfer);
+        doThrow(new AccountRejectedException("ACCOUNT_NOT_FOUND", "Account not found: " + TO))
+                .when(accountClient).credit(TO, AMOUNT, TRANSFER_ID + ":credit");
+        // The source credit-back succeeds (void mock, no stubbing needed).
+
+        scheduler.drainCompensationRequired();
+
+        assertThat(transfer.getStatus()).isEqualTo(TransferStatus.COMPENSATED);
+        verify(accountClient).credit(FROM, AMOUNT, TRANSFER_ID + ":compensate");
+    }
+
+    @Test
+    void definitiveRejectionThenReversalAlsoRejectedMarksCompensationFailed() {
+        Transfer transfer = strandedTransfer();
+        when(transferRepository.findByStatus(TransferStatus.COMPENSATION_REQUIRED)).thenReturn(List.of(transfer));
+        when(transferRepository.save(transfer)).thenReturn(transfer);
+        doThrow(new AccountRejectedException("ACCOUNT_NOT_FOUND", "Account not found: " + TO))
+                .when(accountClient).credit(TO, AMOUNT, TRANSFER_ID + ":credit");
+        doThrow(new AccountRejectedException("ACCOUNT_NOT_FOUND", "Account not found: " + FROM))
+                .when(accountClient).credit(FROM, AMOUNT, TRANSFER_ID + ":compensate");
+
+        scheduler.drainCompensationRequired();
+
+        assertThat(transfer.getStatus()).isEqualTo(TransferStatus.COMPENSATION_FAILED);
+        assertThat(transfer.getFailureReason()).contains("manual review required");
+    }
+
+    @Test
+    void stillUnavailableLeavesTheTransferAwaitingTheNextSweep() {
+        Transfer transfer = strandedTransfer();
+        when(transferRepository.findByStatus(TransferStatus.COMPENSATION_REQUIRED)).thenReturn(List.of(transfer));
+        doThrow(new AccountServiceUnavailableException("read timed out"))
+                .when(accountClient).credit(TO, AMOUNT, TRANSFER_ID + ":credit");
+
+        scheduler.drainCompensationRequired();
+
+        assertThat(transfer.getStatus()).isEqualTo(TransferStatus.COMPENSATION_REQUIRED);
+        verify(transferRepository, never()).save(any());
+    }
+
+    @Test
+    void destinationRejectedButSourceReversalStillUnavailableLeavesAwaitingTheNextSweep() {
+        Transfer transfer = strandedTransfer();
+        when(transferRepository.findByStatus(TransferStatus.COMPENSATION_REQUIRED)).thenReturn(List.of(transfer));
+        doThrow(new AccountRejectedException("ACCOUNT_NOT_FOUND", "Account not found: " + TO))
+                .when(accountClient).credit(TO, AMOUNT, TRANSFER_ID + ":credit");
+        doThrow(new AccountServiceUnavailableException("read timed out"))
+                .when(accountClient).credit(FROM, AMOUNT, TRANSFER_ID + ":compensate");
+
+        scheduler.drainCompensationRequired();
+
+        assertThat(transfer.getStatus()).isEqualTo(TransferStatus.COMPENSATION_REQUIRED);
+        verify(transferRepository, never()).save(any());
+    }
+
+    @Test
+    void anUnexpectedSaveFailureDoesNotBlockOtherTransfersInTheBatch() {
+        Transfer failing = strandedTransfer();
+        Transfer succeeding = strandedTransfer(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
+        when(transferRepository.findByStatus(TransferStatus.COMPENSATION_REQUIRED))
+                .thenReturn(List.of(failing, succeeding));
+        when(transferRepository.save(failing)).thenThrow(new OptimisticLockingFailureException("stale row"));
+        when(transferRepository.save(succeeding)).thenReturn(succeeding);
+        // credit(...) succeeds for both (void mock, no stubbing needed).
+
+        scheduler.drainCompensationRequired();
+
+        assertThat(succeeding.getStatus()).isEqualTo(TransferStatus.COMPLETED);
+        verify(transferRepository).save(succeeding);
+    }
+}
