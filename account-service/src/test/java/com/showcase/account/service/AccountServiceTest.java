@@ -130,6 +130,24 @@ class AccountServiceTest {
     }
 
     @Test
+    void replayingAKnownKeyWhenTheAccountIsGoneThrowsNotFound() {
+        // Pins a documented, currently-unreachable limitation (Phase 3 final-review, see
+        // docs/roadmap.md): the replay branch still does an independent account lookup, so
+        // an account gone by replay time turns an already-applied operation into a false
+        // rejection. Not fixed: no delete/archival capability exists anywhere in this app,
+        // so this cannot happen today. If a future phase adds one, this test is the
+        // tripwire to revisit AccountService.apply()'s replay branch.
+        UUID id = UUID.randomUUID();
+        when(accountOperationRepository.findById("key-1")).thenReturn(Optional.of(
+                new AccountOperation("key-1", id, AccountOperationType.DEBIT,
+                        new BigDecimal("40.00"), new BigDecimal("60.00"))));
+        when(accountRepository.findById(id)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> accountService.debit(id, new BigDecimal("40.00"), "key-1"))
+                .isInstanceOf(AccountNotFoundException.class);
+    }
+
+    @Test
     void replayingAKeyWithDifferentParametersConflicts() {
         UUID id = UUID.randomUUID();
         when(accountOperationRepository.findById("key-1")).thenReturn(Optional.of(

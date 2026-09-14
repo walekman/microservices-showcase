@@ -63,6 +63,15 @@ public class AccountService {
             // current state is returned rather than reconstructing the exact historical
             // balance. AccountOperation.balanceAfter still holds the authoritative figure
             // for whenever an audit/history read is built on top of this table.
+            //
+            // KNOWN LIMITATION (Phase 3 final-review, see docs/roadmap.md): this still does
+            // an independent account lookup, so a replay for an account that no longer
+            // exists would 404 here -- turning an already-applied operation into a false
+            // rejection. Deliberately left as-is: no delete/archival capability exists
+            // anywhere in this app, so the account row present when the operation was first
+            // recorded cannot vanish before a replay. Revisit this branch (the response
+            // cannot carry a full Account body without one -- ownerName/current balance are
+            // not stored on AccountOperation) if a future phase adds one.
             return accountRepository.findById(id).orElseThrow(() -> new AccountNotFoundException(id));
         }
 
