@@ -30,3 +30,57 @@ Carried over from Phase 1's final review, resolved or reassigned:
 - ~~Swagger UI (springdoc-openapi)~~ — done for Account and Transfer Services: `springdoc-openapi-starter-webmvc-ui` 2.6.0 (pinned in root `pom.xml`'s `springdoc-openapi.version` property — this is the version that actually matches Spring Boot 3.3.4/Spring Framework 6.1.x; newer 2.7.x+ lines target Spring Framework 6.2/Boot 3.4+ and fail to start against 3.3.4 with a `NoClassDefFoundError` on `LiteWebJarsResourceResolver`), browsable at `/swagger-ui.html` on each service port. Add to each future service the same way as it's built — re-verify the pinned version against that service's actual Spring Boot version each time; don't assume the same 2.6.0 pin still applies once a service moves to a newer Boot version.
 - Flyway vs. `ddl-auto` for schema management — revisit before Phase 4 or later deploys to
   three service schemas (Account + Transfer + the outbox). Currently using `ddl-auto: update`.
+
+Carried over from Phase 3's final review (an Opus subagent whole-branch pass, per
+`CLAUDE.md`'s policy of using a more capable model for this gate), not yet resolved:
+- **Critical — a transient 409 is read as a permanent rejection.** `AccountClient.rejected()`
+  maps every 4xx, including `CONCURRENT_MODIFICATION` (Account's own optimistic-lock
+  conflict, genuinely transient and expected under concurrent load), to
+  `AccountRejectedException`. `CompensationScheduler.reconcileCredit`/`compensateSource`
+  treat *any* `AccountRejectedException` as definitive without checking which code it
+  carries, so a routine version conflict on either leg during a sweep can trigger an
+  unwarranted reversal, or — if both legs hit one — a permanent `COMPENSATION_FAILED` that
+  neither sweep ever revisits. Fix: map `CONCURRENT_MODIFICATION` to
+  `AccountServiceUnavailableException` in `AccountClient.rejected()` (or branch on
+  `ex.getCode()` in the compensator), so it retries next sweep instead of reversing.
+- **High — the concurrent-duplicate-debit race's safety is unproven.** Two concurrent
+  requests with the same `Idempotency-Key` both reach `account.debit(amount)` in
+  `AccountService.apply(...)` before either flushes; today's 500-not-409 outcome for the
+  loser (which the Critical item above depends on to stay safe) appears to rely on
+  Hibernate flushing queued inserts before queued updates within one transaction — plausible
+  and consistent with documented Hibernate behavior, but untested and unstated in the code.
+  Add a live concurrency test that races two same-key debits at the real endpoint and
+  asserts the loser gets 500, and document the ordering dependency inline.
+- **High — the idempotent-replay path re-reads the account, not just the ledger.** In
+  `AccountService.apply(...)`, a replay hit still does an independent
+  `accountRepository.findById(id)` and can 404 if the account is ever gone — turning an
+  already-applied operation into a false rejection. Currently unreachable (no delete
+  capability exists anywhere in the app), so defense-in-depth rather than a live bug; revisit
+  if any future phase adds account deletion/archival.
+- **High — `AccountClientFallbackIT` only covers `getAccount`'s Resilience4j fallback.** The
+  test written specifically to guard the Task 6 fallback-passthrough bug doesn't call
+  `debit`/`credit`, so `debitCreditFallback` — the one the compensator actually depends on —
+  has no real-AOP-proxy regression coverage. Add the same assertion for `debit`/`credit`.
+- **Medium — `markCompleted()` from `COMPENSATION_REQUIRED` leaves stale `failureCode`/
+  `failureReason`.** A transfer reconciled to `COMPLETED` after being stranded still returns
+  its old failure diagnostics in the API response. Clear both fields in `markCompleted()`.
+- **Medium — Resilience4j threshold tuning.** Each retry attempt counts as its own
+  circuit-breaker call (`@Retry` is the outer decorator), so two failing sagas alone can trip
+  `minimum-number-of-calls: 5` — observed live during Phase 3's own verification (the circuit
+  opened after two transfer attempts while `account-service` was down). Not clearly wrong,
+  but worth a deliberate tuning pass rather than the current default.
+- **Medium — test coverage gaps that could hide a real-wiring bug the way the fallback bug
+  was hidden.** `AccountClientResilienceTest`'s hand-built Retry/CircuitBreaker config isn't
+  cross-checked against `application.yml` (the two can drift silently); no test exercises a
+  real scheduled `CompensationScheduler` execution end-to-end; `CompensationSchedulerTest`
+  mocks both `AccountClient` and `TransferRepository`, so the real `save()`/`@Version` path
+  is untested at that layer too.
+- **Medium — unbounded sweep batch size.** Neither `findByStatus` nor
+  `findByStatusAndCreatedAtBefore` in `CompensationScheduler` paginates; fine at this
+  project's scale, worth a `Limit`-bounded query if transfer volume ever grows.
+- **Low — `Idempotency-Key` has no `@NotBlank`/`@Size` validation** on `AccountController`'s
+  `debit`/`credit` endpoints; a blank or overlong key reaches a generic 500 that
+  `AccountClient` then treats as retryable.
+- **Low — README's `Idempotency-Key: demo-debit-1` examples share the global key namespace**
+  (the `account_operations` PK is the key alone, not scoped per account), so copy-pasting the
+  literal example against a second account returns 409 instead of debiting it.
