@@ -32,55 +32,46 @@ Carried over from Phase 1's final review, resolved or reassigned:
   three service schemas (Account + Transfer + the outbox). Currently using `ddl-auto: update`.
 
 Carried over from Phase 3's final review (an Opus subagent whole-branch pass, per
-`CLAUDE.md`'s policy of using a more capable model for this gate), not yet resolved:
-- **Critical — a transient 409 is read as a permanent rejection.** `AccountClient.rejected()`
-  maps every 4xx, including `CONCURRENT_MODIFICATION` (Account's own optimistic-lock
-  conflict, genuinely transient and expected under concurrent load), to
-  `AccountRejectedException`. `CompensationScheduler.reconcileCredit`/`compensateSource`
-  treat *any* `AccountRejectedException` as definitive without checking which code it
-  carries, so a routine version conflict on either leg during a sweep can trigger an
-  unwarranted reversal, or — if both legs hit one — a permanent `COMPENSATION_FAILED` that
-  neither sweep ever revisits. Fix: map `CONCURRENT_MODIFICATION` to
-  `AccountServiceUnavailableException` in `AccountClient.rejected()` (or branch on
-  `ex.getCode()` in the compensator), so it retries next sweep instead of reversing.
-- **High — the concurrent-duplicate-debit race's safety is unproven.** Two concurrent
-  requests with the same `Idempotency-Key` both reach `account.debit(amount)` in
-  `AccountService.apply(...)` before either flushes; today's 500-not-409 outcome for the
-  loser (which the Critical item above depends on to stay safe) appears to rely on
-  Hibernate flushing queued inserts before queued updates within one transaction — plausible
-  and consistent with documented Hibernate behavior, but untested and unstated in the code.
-  Add a live concurrency test that races two same-key debits at the real endpoint and
-  asserts the loser gets 500, and document the ordering dependency inline.
-- **High — the idempotent-replay path re-reads the account, not just the ledger.** In
-  `AccountService.apply(...)`, a replay hit still does an independent
-  `accountRepository.findById(id)` and can 404 if the account is ever gone — turning an
-  already-applied operation into a false rejection. Currently unreachable (no delete
-  capability exists anywhere in the app), so defense-in-depth rather than a live bug; revisit
-  if any future phase adds account deletion/archival.
-- **High — `AccountClientFallbackIT` only covers `getAccount`'s Resilience4j fallback.** The
-  test written specifically to guard the Task 6 fallback-passthrough bug doesn't call
-  `debit`/`credit`, so `debitCreditFallback` — the one the compensator actually depends on —
-  has no real-AOP-proxy regression coverage. Add the same assertion for `debit`/`credit`.
-- **Medium — `markCompleted()` from `COMPENSATION_REQUIRED` leaves stale `failureCode`/
-  `failureReason`.** A transfer reconciled to `COMPLETED` after being stranded still returns
-  its old failure diagnostics in the API response. Clear both fields in `markCompleted()`.
-- **Medium — Resilience4j threshold tuning.** Each retry attempt counts as its own
-  circuit-breaker call (`@Retry` is the outer decorator), so two failing sagas alone can trip
-  `minimum-number-of-calls: 5` — observed live during Phase 3's own verification (the circuit
-  opened after two transfer attempts while `account-service` was down). Not clearly wrong,
-  but worth a deliberate tuning pass rather than the current default.
-- **Medium — test coverage gaps that could hide a real-wiring bug the way the fallback bug
-  was hidden.** `AccountClientResilienceTest`'s hand-built Retry/CircuitBreaker config isn't
-  cross-checked against `application.yml` (the two can drift silently); no test exercises a
-  real scheduled `CompensationScheduler` execution end-to-end; `CompensationSchedulerTest`
-  mocks both `AccountClient` and `TransferRepository`, so the real `save()`/`@Version` path
-  is untested at that layer too.
-- **Medium — unbounded sweep batch size.** Neither `findByStatus` nor
-  `findByStatusAndCreatedAtBefore` in `CompensationScheduler` paginates; fine at this
-  project's scale, worth a `Limit`-bounded query if transfer volume ever grows.
-- **Low — `Idempotency-Key` has no `@NotBlank`/`@Size` validation** on `AccountController`'s
-  `debit`/`credit` endpoints; a blank or overlong key reaches a generic 500 that
-  `AccountClient` then treats as retryable.
-- **Low — README's `Idempotency-Key: demo-debit-1` examples share the global key namespace**
-  (the `account_operations` PK is the key alone, not scoped per account), so copy-pasting the
-  literal example against a second account returns 409 instead of debiting it.
+`CLAUDE.md`'s policy of using a more capable model for this gate), resolved on
+`feature/phase-3-review-findings`:
+- ~~Critical — a transient 409 is read as a permanent rejection.~~ — done:
+  `AccountClient.rejected()` maps `CONCURRENT_MODIFICATION` to
+  `AccountServiceUnavailableException` instead of `AccountRejectedException`, so both the
+  live saga's `@Retry` and `CompensationScheduler`'s next sweep retry it instead of treating
+  a routine optimistic-lock conflict as a definitive rejection. `IDEMPOTENCY_KEY_CONFLICT`
+  (a genuine, permanent 409) is unaffected.
+- ~~High — the concurrent-duplicate-debit race's safety is unproven.~~ — done: a live
+  10-way same-`Idempotency-Key` concurrent-debit test against the real endpoint
+  (`AccountControllerIT`) proves at least one loser gets 500 and the balance reflects
+  exactly one debit, verifying the Hibernate flush-ordering assumption live instead of
+  leaving it stated but untested.
+- ~~High — the idempotent-replay path re-reads the account, not just the ledger.~~ — done
+  (documented, not changed): confirmed still unreachable (no delete/archival capability
+  exists anywhere in the app), so left as-is with an inline comment and a pinning regression
+  test (`AccountServiceTest`) as the tripwire for whichever future phase adds one.
+- ~~High — `AccountClientFallbackIT` only covers `getAccount`'s Resilience4j fallback.~~ —
+  done: extended to assert `debit`/`credit`'s `debitCreditFallback` passes a definitive
+  rejection through the real AOP proxy unchanged too; verified live by temporarily
+  reintroducing the Task 6 bug and confirming the new assertions catch it.
+- ~~Medium — `markCompleted()` from `COMPENSATION_REQUIRED` leaves stale `failureCode`/
+  `failureReason`.~~ — done: both fields are now cleared in `markCompleted()`.
+- ~~Medium — Resilience4j threshold tuning.~~ — done: `sliding-window-size`/
+  `minimum-number-of-calls` scaled by the retry multiplier (10→30, 5→15) to restore the
+  original "5 failed logical calls out of a window of 10" intent now that each logical call
+  can cost up to 3 circuit-breaker-recorded attempts.
+- ~~Medium — test coverage gaps that could hide a real-wiring bug the way the fallback bug
+  was hidden.~~ — done: `AccountClientResilienceConfigMatchesYamlIT` cross-checks the
+  hand-copied Retry/CircuitBreaker config against the real Spring-bound configuration (fails
+  if they drift, verified live); `CompensationSchedulerIT` runs the real, Spring-managed
+  `CompensationScheduler` bean against a real Postgres-backed `TransferRepository`, proving
+  the real `save()`/`@Version` path end-to-end.
+- ~~Medium — unbounded sweep batch size.~~ — done: `findByStatus`/
+  `findByStatusAndCreatedAtBefore` gained `Limit`-bounded overloads, and
+  `CompensationScheduler`'s two sweeps now pass a configurable
+  `transfer.compensation.sweep-batch-size` (default 500).
+- ~~Low — `Idempotency-Key` has no `@NotBlank`/`@Size` validation.~~ — done:
+  `AccountController`'s `debit`/`credit` endpoints now validate it (`@NotBlank @Size(max =
+  255)` via class-level `@Validated`), mapped to 400 `VALIDATION_FAILED` by a new
+  `ConstraintViolationException` handler instead of falling through to a generic 500.
+- ~~Low — README's `Idempotency-Key: demo-debit-1` examples share the global key
+  namespace.~~ — done: examples now work the account id into the key.
