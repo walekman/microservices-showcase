@@ -33,10 +33,9 @@ Phase 3+ adds the remaining pieces (Resilience4j + compensation, the outbox + Ka
 - Never commit directly to `master`. All work happens on a `feature/*` branch.
 - Branch naming: `feature/phase-<N>-task-<M>-<short-description>` (e.g. `feature/phase-1-task-1-project-scaffolding`), matching the phase/task the branch implements.
 - Merge to `master` only via a pull request — no direct pushes or merges to `master`.
-- Every PR must be reviewed by a subagent before merging.
-- Never merge a PR autonomously. Open it, get the subagent review, then stop — the user reviews and merges it themselves. The user says "merge it" to authorise one; treat that as genuine authorisation, but check `gh pr view <n> --json mergeable,statusCheckRollup` before merging.
-- **One PR per task, and stop after each.** When executing a multi-task phase, each task gets its own branch off the *current* `master`, its own subagent review, and its own PR — then stop until the user merges. The next branch then starts from merged code, so each PR's diff shows only that task's work.
-- **The review runs before the PR opens, not after.** Complete the subagent review and any fix rounds first, so the user only ever sees work that has already survived review.
+- **Subagent review is not automatic.** The user reviews PRs manually; only dispatch a subagent review when the user asks for one.
+- Never merge a PR autonomously. Open it, then stop — the user reviews and merges it themselves. The user says "merge it" to authorise one; treat that as genuine authorisation, but check `gh pr view <n> --json mergeable,statusCheckRollup` before merging.
+- **One PR per task, and stop after each.** When executing a multi-task phase, each task gets its own branch off the *current* `master` and its own PR — then stop until the user merges. The next branch then starts from merged code, so each PR's diff shows only that task's work.
 
 ## Executing implementation phases
 
