@@ -5,6 +5,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -82,8 +84,7 @@ class AccountControllerIT {
     void debitsAnAccountSuccessfully() {
         UUID id = createAccount(new BigDecimal("100.00"));
 
-        ResponseEntity<AccountResponse> response = restTemplate.postForEntity(
-                "/accounts/" + id + "/debit", new AmountRequest(new BigDecimal("40.00")), AccountResponse.class);
+        ResponseEntity<AccountResponse> response = debit(id, new BigDecimal("40.00"), "debit-key-1");
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody().balance()).isEqualByComparingTo("60.00");
@@ -93,8 +94,9 @@ class AccountControllerIT {
     void rejectsDebitWithInsufficientFunds() {
         UUID id = createAccount(new BigDecimal("10.00"));
 
-        ResponseEntity<ProblemDetail> response = restTemplate.postForEntity(
-                "/accounts/" + id + "/debit", new AmountRequest(new BigDecimal("40.00")), ProblemDetail.class);
+        ResponseEntity<ProblemDetail> response = restTemplate.exchange(
+                "/accounts/" + id + "/debit", HttpMethod.POST,
+                amountRequest(new BigDecimal("40.00"), "debit-key-2"), ProblemDetail.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
         assertThat(response.getBody().getProperties()).containsEntry("code", "INSUFFICIENT_FUNDS");
@@ -104,11 +106,47 @@ class AccountControllerIT {
     void creditsAnAccountSuccessfully() {
         UUID id = createAccount(new BigDecimal("100.00"));
 
-        ResponseEntity<AccountResponse> response = restTemplate.postForEntity(
-                "/accounts/" + id + "/credit", new AmountRequest(new BigDecimal("40.00")), AccountResponse.class);
+        ResponseEntity<AccountResponse> response = credit(id, new BigDecimal("40.00"), "credit-key-1");
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody().balance()).isEqualByComparingTo("140.00");
+    }
+
+    @Test
+    void rejectsADebitWithNoIdempotencyKeyHeader() {
+        UUID id = createAccount(new BigDecimal("100.00"));
+
+        ResponseEntity<ProblemDetail> response = restTemplate.postForEntity(
+                "/accounts/" + id + "/debit", new AmountRequest(new BigDecimal("40.00")), ProblemDetail.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(response.getBody().getProperties()).containsEntry("code", "VALIDATION_FAILED");
+    }
+
+    @Test
+    void replayingTheSameIdempotencyKeyDoesNotDebitTwice() {
+        UUID id = createAccount(new BigDecimal("100.00"));
+
+        ResponseEntity<AccountResponse> first = debit(id, new BigDecimal("40.00"), "replay-key");
+        ResponseEntity<AccountResponse> second = debit(id, new BigDecimal("40.00"), "replay-key");
+
+        assertThat(first.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(second.getStatusCode()).isEqualTo(HttpStatus.OK);
+        ResponseEntity<AccountResponse> current = restTemplate.getForEntity("/accounts/" + id, AccountResponse.class);
+        assertThat(current.getBody().balance()).isEqualByComparingTo("60.00");
+    }
+
+    @Test
+    void reusingAKeyWithADifferentAmountConflicts() {
+        UUID id = createAccount(new BigDecimal("100.00"));
+        debit(id, new BigDecimal("40.00"), "conflict-key");
+
+        ResponseEntity<ProblemDetail> response = restTemplate.exchange(
+                "/accounts/" + id + "/debit", HttpMethod.POST,
+                amountRequest(new BigDecimal("15.00"), "conflict-key"), ProblemDetail.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(response.getBody().getProperties()).containsEntry("code", "IDEMPOTENCY_KEY_CONFLICT");
     }
 
     @Test
@@ -122,21 +160,29 @@ class AccountControllerIT {
         // microsecond-level thread-scheduling timing. This still exercises the real HTTP debit
         // endpoint end-to-end (not the repository directly) — see AccountRepositoryTest for the
         // deterministic repository-level proof of the same optimistic-locking behavior.
+        //
+        // Each request uses its OWN idempotency key: giving them all the same key would make
+        // the dedup path short-circuit 9 of the 10 requests instead of letting them race.
         int concurrentRequests = 10;
         UUID id = createAccount(new BigDecimal("1000.00"));
 
         CyclicBarrier barrier = new CyclicBarrier(concurrentRequests);
-        Callable<ResponseEntity<String>> debitCall = () -> {
-            barrier.await();
-            return restTemplate.postForEntity(
-                    "/accounts/" + id + "/debit", new AmountRequest(new BigDecimal("1.00")), String.class);
-        };
+        List<Callable<ResponseEntity<String>>> debitCalls = new ArrayList<>();
+        for (int i = 0; i < concurrentRequests; i++) {
+            String key = "concurrent-key-" + i;
+            debitCalls.add(() -> {
+                barrier.await();
+                return restTemplate.exchange(
+                        "/accounts/" + id + "/debit", HttpMethod.POST,
+                        amountRequest(new BigDecimal("1.00"), key), String.class);
+            });
+        }
 
         ExecutorService executor = Executors.newFixedThreadPool(concurrentRequests);
         try {
             List<Future<ResponseEntity<String>>> futures = new ArrayList<>();
-            for (int i = 0; i < concurrentRequests; i++) {
-                futures.add(executor.submit(debitCall));
+            for (Callable<ResponseEntity<String>> call : debitCalls) {
+                futures.add(executor.submit(call));
             }
 
             List<ResponseEntity<String>> responses = new ArrayList<>();
@@ -204,5 +250,21 @@ class AccountControllerIT {
         ResponseEntity<AccountResponse> response = restTemplate.postForEntity(
                 "/accounts", new CreateAccountRequest("Ada Lovelace", initialBalance), AccountResponse.class);
         return response.getBody().id();
+    }
+
+    private HttpEntity<AmountRequest> amountRequest(BigDecimal amount, String idempotencyKey) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("Idempotency-Key", idempotencyKey);
+        return new HttpEntity<>(new AmountRequest(amount), headers);
+    }
+
+    private ResponseEntity<AccountResponse> debit(UUID id, BigDecimal amount, String idempotencyKey) {
+        return restTemplate.exchange(
+                "/accounts/" + id + "/debit", HttpMethod.POST, amountRequest(amount, idempotencyKey), AccountResponse.class);
+    }
+
+    private ResponseEntity<AccountResponse> credit(UUID id, BigDecimal amount, String idempotencyKey) {
+        return restTemplate.exchange(
+                "/accounts/" + id + "/credit", HttpMethod.POST, amountRequest(amount, idempotencyKey), AccountResponse.class);
     }
 }

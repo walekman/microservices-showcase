@@ -8,6 +8,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -45,12 +46,14 @@ public class AccountController {
     }
 
     @PostMapping("/{id}/debit")
-    public AccountResponse debit(@PathVariable UUID id, @Valid @RequestBody AmountRequest request) {
-        return AccountResponse.from(accountService.debit(id, request.amount()));
+    public AccountResponse debit(@PathVariable UUID id, @Valid @RequestBody AmountRequest request,
+                                  @RequestHeader("Idempotency-Key") String idempotencyKey) {
+        return AccountResponse.from(accountService.debit(id, request.amount(), idempotencyKey));
     }
 
     @PostMapping("/{id}/credit")
-    public AccountResponse credit(@PathVariable UUID id, @Valid @RequestBody AmountRequest request) {
-        return AccountResponse.from(accountService.credit(id, request.amount()));
+    public AccountResponse credit(@PathVariable UUID id, @Valid @RequestBody AmountRequest request,
+                                   @RequestHeader("Idempotency-Key") String idempotencyKey) {
+        return AccountResponse.from(accountService.credit(id, request.amount(), idempotencyKey));
     }
 }
