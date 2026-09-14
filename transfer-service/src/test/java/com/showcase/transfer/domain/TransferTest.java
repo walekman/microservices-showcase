@@ -53,6 +53,19 @@ class TransferTest {
     }
 
     @Test
+    void markCompletedAlsoSucceedsFromCompensationRequired() {
+        // Reconciliation found the destination credit had already landed -- nothing to
+        // reverse, the transfer genuinely completed.
+        Transfer transfer = new Transfer(FROM, TO, TEN);
+        transfer.markCompensationRequired(TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, "credit leg timed out");
+
+        transfer.markCompleted();
+
+        assertThat(transfer.getStatus()).isEqualTo(TransferStatus.COMPLETED);
+        assertThat(transfer.getSettledAt()).isNotNull();
+    }
+
+    @Test
     void markFailedRecordsTheReason() {
         Transfer transfer = new Transfer(FROM, TO, TEN);
 
@@ -76,6 +89,43 @@ class TransferTest {
     }
 
     @Test
+    void markCompensatedRequiresCompensationRequired() {
+        Transfer transfer = new Transfer(FROM, TO, TEN);
+        transfer.markCompensationRequired(TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, "credit leg timed out");
+
+        transfer.markCompensated();
+
+        assertThat(transfer.getStatus()).isEqualTo(TransferStatus.COMPENSATED);
+        assertThat(transfer.getSettledAt()).isNotNull();
+    }
+
+    @Test
+    void markCompensatedThrowsFromPending() {
+        Transfer transfer = new Transfer(FROM, TO, TEN);
+
+        assertThatThrownBy(transfer::markCompensated).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void markCompensationFailedRequiresCompensationRequired() {
+        Transfer transfer = new Transfer(FROM, TO, TEN);
+        transfer.markCompensationRequired(TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, "credit leg timed out");
+
+        transfer.markCompensationFailed("source account no longer exists -- manual review required");
+
+        assertThat(transfer.getStatus()).isEqualTo(TransferStatus.COMPENSATION_FAILED);
+        assertThat(transfer.getFailureReason()).isEqualTo("source account no longer exists -- manual review required");
+        assertThat(transfer.getSettledAt()).isNotNull();
+    }
+
+    @Test
+    void markCompensationFailedThrowsFromPending() {
+        Transfer transfer = new Transfer(FROM, TO, TEN);
+
+        assertThatThrownBy(() -> transfer.markCompensationFailed("x")).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
     void aSettledTransferCannotBeSettledAgain() {
         Transfer transfer = new Transfer(FROM, TO, TEN);
         transfer.markCompleted();
@@ -83,6 +133,8 @@ class TransferTest {
         assertThatThrownBy(transfer::markCompleted).isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(() -> transfer.markFailed(TransferFailureCode.INSUFFICIENT_FUNDS, "x"))
                 .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(transfer::markCompensated).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> transfer.markCompensationFailed("x")).isInstanceOf(IllegalStateException.class);
     }
 
     @Test
@@ -137,14 +189,15 @@ class TransferTest {
                 .isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(() -> transfer.markCompensationRequired(TransferFailureCode.UNEXPECTED_ERROR, "x"))
                 .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(transfer::markCompensated).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> transfer.markCompensationFailed("x")).isInstanceOf(IllegalStateException.class);
     }
 
     @Test
-    void aTransferAwaitingCompensationCannotBeSettledAgain() {
+    void aTransferAwaitingCompensationCannotBeFailedOrReMarkedCompensationRequired() {
         Transfer transfer = new Transfer(FROM, TO, TEN);
         transfer.markCompensationRequired(TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, "credit leg timed out");
 
-        assertThatThrownBy(transfer::markCompleted).isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(() -> transfer.markFailed(TransferFailureCode.UNEXPECTED_ERROR, "x"))
                 .isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(() -> transfer.markCompensationRequired(TransferFailureCode.UNEXPECTED_ERROR, "x"))

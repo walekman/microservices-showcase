@@ -14,6 +14,7 @@ import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.UUID;
 
 @Entity
@@ -72,14 +73,15 @@ public class Transfer {
         this.createdAt = Instant.now();
     }
 
+    /** Reachable from PENDING (the live saga) or COMPENSATION_REQUIRED (reconciliation found the credit had already landed). */
     public void markCompleted() {
-        requirePending();
+        requireStatus(TransferStatus.PENDING, TransferStatus.COMPENSATION_REQUIRED);
         this.status = TransferStatus.COMPLETED;
         this.settledAt = Instant.now();
     }
 
     public void markFailed(TransferFailureCode failureCode, String failureReason) {
-        requirePending();
+        requireStatus(TransferStatus.PENDING);
         this.status = TransferStatus.FAILED;
         this.failureCode = failureCode;
         this.failureReason = truncate(failureReason);
@@ -87,17 +89,36 @@ public class Transfer {
     }
 
     public void markCompensationRequired(TransferFailureCode failureCode, String failureReason) {
-        requirePending();
+        requireStatus(TransferStatus.PENDING);
         this.status = TransferStatus.COMPENSATION_REQUIRED;
         this.failureCode = failureCode;
         this.failureReason = truncate(failureReason);
         this.settledAt = Instant.now();
     }
 
-    private void requirePending() {
-        if (status != TransferStatus.PENDING) {
-            throw new IllegalStateException("Transfer %s is already %s".formatted(id, status));
+    /** The destination definitively never received the credit; the source has now been credited back. */
+    public void markCompensated() {
+        requireStatus(TransferStatus.COMPENSATION_REQUIRED);
+        this.status = TransferStatus.COMPENSATED;
+        this.settledAt = Instant.now();
+    }
+
+    /** Both the destination credit and the source credit-back definitively failed. Manual review. */
+    public void markCompensationFailed(String failureReason) {
+        requireStatus(TransferStatus.COMPENSATION_REQUIRED);
+        this.status = TransferStatus.COMPENSATION_FAILED;
+        this.failureReason = truncate(failureReason);
+        this.settledAt = Instant.now();
+    }
+
+    private void requireStatus(TransferStatus... allowed) {
+        for (TransferStatus candidate : allowed) {
+            if (status == candidate) {
+                return;
+            }
         }
+        throw new IllegalStateException(
+                "Transfer %s is %s, expected one of %s".formatted(id, status, Arrays.toString(allowed)));
     }
 
     private static String truncate(String reason) {
