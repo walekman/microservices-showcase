@@ -44,16 +44,20 @@ Both APIs are browsable and callable straight from a browser:
     curl http://localhost:8081/accounts
 
     # Debit it (Idempotency-Key is required -- a retry with the same key is a no-op, not a
-    # second debit)
+    # second debit. The key must be unique per operation, not just per account: it is the
+    # sole primary key in Account's idempotency ledger, so copy-pasting a literal example
+    # key like "demo-debit-1" against a second account returns 409
+    # IDEMPOTENCY_KEY_CONFLICT instead of debiting it -- give each account its own key, e.g.
+    # by working the account id into it as below)
     curl -X POST http://localhost:8081/accounts/<id>/debit \
       -H "Content-Type: application/json" \
-      -H "Idempotency-Key: demo-debit-1" \
+      -H "Idempotency-Key: demo-debit-<id>" \
       -d '{"amount": 40.00}'
 
     # Credit it
     curl -X POST http://localhost:8081/accounts/<id>/credit \
       -H "Content-Type: application/json" \
-      -H "Idempotency-Key: demo-credit-1" \
+      -H "Idempotency-Key: demo-credit-<id>" \
       -d '{"amount": 15.00}'
 
 ## Transfers
@@ -79,7 +83,8 @@ Errors are RFC 7807 problem documents with a stable `code`:
 
     # Insufficient funds                  -> 422 INSUFFICIENT_FUNDS, no money moves
     # Unknown account                     -> 422 ACCOUNT_NOT_FOUND, no money moves
-    # Missing Idempotency-Key header      -> 400 VALIDATION_FAILED (debit/credit only)
+    # Missing, blank, or overlong          -> 400 VALIDATION_FAILED (debit/credit only)
+    #   Idempotency-Key header
     # Idempotency key reused with         -> 409 IDEMPOTENCY_KEY_CONFLICT (should never
     #   different parameters                 happen in normal operation)
     # Account down during pre-validation  -> after Retry/CircuitBreaker exhaust their
