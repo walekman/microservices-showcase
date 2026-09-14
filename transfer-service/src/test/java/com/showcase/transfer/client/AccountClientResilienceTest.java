@@ -40,8 +40,11 @@ class AccountClientResilienceTest {
         server = MockRestServiceServer.bindTo(builder).build();
         accountClient = new AccountClient(builder.build(), new ObjectMapper());
 
-        // Mirrors application.yml's resilience4j.*.instances.accountService exactly --
-        // if these numbers and that file drift apart, this test is the tripwire.
+        // Mirrors application.yml's resilience4j.*.instances.accountService exactly (see the
+        // comment there for why the circuit-breaker window/minimum are 3x the retry count) --
+        // if these numbers and that file drift apart, this test is the tripwire. See also
+        // AccountClientResilienceConfigMatchesYamlIT, which cross-checks these hand-copied
+        // values against the actual Spring-bound configuration instead of trusting the copy.
         retry = Retry.of("accountService", RetryConfig.custom()
                 .maxAttempts(3)
                 .waitDuration(Duration.ofMillis(200))
@@ -49,8 +52,8 @@ class AccountClientResilienceTest {
                 .ignoreExceptions(AccountRejectedException.class)
                 .build());
         circuitBreaker = CircuitBreaker.of("accountService", CircuitBreakerConfig.custom()
-                .slidingWindowSize(10)
-                .minimumNumberOfCalls(5)
+                .slidingWindowSize(30)
+                .minimumNumberOfCalls(15)
                 .failureRateThreshold(50)
                 .waitDurationInOpenState(Duration.ofSeconds(10))
                 .permittedNumberOfCallsInHalfOpenState(3)
@@ -100,13 +103,13 @@ class AccountClientResilienceTest {
 
     @Test
     void opensAfterEnoughFailuresAndShortCircuitsWithoutANewRequest() {
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < 15; i++) {
             server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID))
                     .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
         }
-        // Drive exactly 5 failures through the circuit breaker alone (bypassing Retry here,
+        // Drive exactly 15 failures through the circuit breaker alone (bypassing Retry here,
         // so each iteration is exactly one HTTP call) to reach minimumNumberOfCalls.
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < 15; i++) {
             assertThatThrownBy(() -> CircuitBreaker.decorateSupplier(circuitBreaker,
                     () -> accountClient.getAccount(ACCOUNT_ID)).get())
                     .isInstanceOf(AccountServiceUnavailableException.class);
@@ -116,8 +119,8 @@ class AccountClientResilienceTest {
         assertThatThrownBy(() -> CircuitBreaker.decorateSupplier(circuitBreaker,
                 () -> accountClient.getAccount(ACCOUNT_ID)).get())
                 .isInstanceOf(CallNotPermittedException.class);
-        // No 6th expectation was registered -- if the circuit had not actually opened, the
-        // call above would attempt a real 6th request and MockRestServiceServer would fail
+        // No 16th expectation was registered -- if the circuit had not actually opened, the
+        // call above would attempt a real 16th request and MockRestServiceServer would fail
         // with "no further requests expected" instead of this reaching CallNotPermittedException.
         server.verify();
     }

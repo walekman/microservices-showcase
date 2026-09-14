@@ -35,8 +35,15 @@ resilience4j:
   circuitbreaker:
     instances:
       accountService:
-        sliding-window-size: 10
-        minimum-number-of-calls: 5
+        # Scaled by retry.instances.accountService's max-attempts (3): @Retry is the outer
+        # decorator, so each retried call is recorded as up to 3 separate circuit-breaker
+        # calls, not one. Unscaled (window 10 / minimum 5), a full Account Service outage
+        # tripped the circuit after just ~2 failed logical calls (2 * 3 = 6 >= 5) -- observed
+        # live during Phase 3's own verification. These numbers restore the original design
+        # intent -- 5 failed logical calls out of a window of 10 -- once the x3 retry
+        # multiplier is accounted for: 15 physical calls (5 * 3) out of a window of 30 (10 * 3).
+        sliding-window-size: 30
+        minimum-number-of-calls: 15
         failure-rate-threshold: 50
         wait-duration-in-open-state: 10s
         permitted-number-of-calls-in-half-open-state: 3
