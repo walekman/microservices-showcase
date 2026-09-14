@@ -30,3 +30,26 @@ account-service:
   base-url: ${ACCOUNT_SERVICE_URL:http://localhost:8081}
   connect-timeout: 2s
   read-timeout: 5s
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      accountService:
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 3
+        record-exceptions:
+          - com.showcase.transfer.client.AccountServiceUnavailableException
+        ignore-exceptions:
+          - com.showcase.transfer.client.AccountRejectedException
+  retry:
+    instances:
+      accountService:
+        max-attempts: 3
+        wait-duration: 200ms
+        retry-exceptions:
+          - com.showcase.transfer.client.AccountServiceUnavailableException
+        ignore-exceptions:
+          - com.showcase.transfer.client.AccountRejectedException

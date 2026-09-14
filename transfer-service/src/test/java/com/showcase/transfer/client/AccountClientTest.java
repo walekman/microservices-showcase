@@ -13,6 +13,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
@@ -66,15 +67,16 @@ class AccountClientTest {
     }
 
     @Test
-    void debitPostsTheAmountAndSucceeds() {
+    void debitPostsTheAmountAndIdempotencyKeyAndSucceeds() {
         server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID + "/debit"))
                 .andExpect(method(org.springframework.http.HttpMethod.POST))
                 .andExpect(jsonPath("$.amount").value(40.00))
+                .andExpect(header("Idempotency-Key", "transfer-1:debit"))
                 .andRespond(withSuccess("""
                         {"id":"%s","ownerName":"Ada Lovelace","balance":60.00,"createdAt":"2026-09-10T12:00:00Z"}
                         """.formatted(ACCOUNT_ID), MediaType.APPLICATION_JSON));
 
-        accountClient.debit(ACCOUNT_ID, new BigDecimal("40.00"));
+        accountClient.debit(ACCOUNT_ID, new BigDecimal("40.00"), "transfer-1:debit");
 
         server.verify();
     }
@@ -84,10 +86,23 @@ class AccountClientTest {
         server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID + "/debit"))
                 .andRespond(problem(HttpStatus.UNPROCESSABLE_ENTITY, "INSUFFICIENT_FUNDS", "not enough money"));
 
-        assertThatThrownBy(() -> accountClient.debit(ACCOUNT_ID, new BigDecimal("40.00")))
+        assertThatThrownBy(() -> accountClient.debit(ACCOUNT_ID, new BigDecimal("40.00"), "transfer-1:debit"))
                 .isInstanceOf(AccountRejectedException.class)
                 .satisfies(thrown -> assertThat(((AccountRejectedException) thrown).getCode())
                         .isEqualTo("INSUFFICIENT_FUNDS"));
+        server.verify();
+    }
+
+    @Test
+    void creditPostsTheIdempotencyKey() {
+        server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID + "/credit"))
+                .andExpect(header("Idempotency-Key", "transfer-1:credit"))
+                .andRespond(withSuccess("""
+                        {"id":"%s","ownerName":"Ada Lovelace","balance":140.00,"createdAt":"2026-09-10T12:00:00Z"}
+                        """.formatted(ACCOUNT_ID), MediaType.APPLICATION_JSON));
+
+        accountClient.credit(ACCOUNT_ID, new BigDecimal("40.00"), "transfer-1:credit");
+
         server.verify();
     }
 
@@ -96,7 +111,7 @@ class AccountClientTest {
         server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID + "/credit"))
                 .andRespond(withStatus(HttpStatus.INTERNAL_SERVER_ERROR));
 
-        assertThatThrownBy(() -> accountClient.credit(ACCOUNT_ID, new BigDecimal("40.00")))
+        assertThatThrownBy(() -> accountClient.credit(ACCOUNT_ID, new BigDecimal("40.00"), "transfer-1:credit"))
                 .isInstanceOf(AccountServiceUnavailableException.class);
         server.verify();
     }
@@ -106,7 +121,7 @@ class AccountClientTest {
         server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID + "/credit"))
                 .andRespond(withException(new java.net.ConnectException("connection refused")));
 
-        assertThatThrownBy(() -> accountClient.credit(ACCOUNT_ID, new BigDecimal("40.00")))
+        assertThatThrownBy(() -> accountClient.credit(ACCOUNT_ID, new BigDecimal("40.00"), "transfer-1:credit"))
                 .isInstanceOf(AccountServiceUnavailableException.class);
         server.verify();
     }
@@ -162,7 +177,7 @@ class AccountClientTest {
         server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID + "/debit"))
                 .andRespond(withStatus(HttpStatus.FOUND));
 
-        assertThatThrownBy(() -> accountClient.debit(ACCOUNT_ID, new BigDecimal("40.00")))
+        assertThatThrownBy(() -> accountClient.debit(ACCOUNT_ID, new BigDecimal("40.00"), "transfer-1:debit"))
                 .isInstanceOf(AccountServiceUnavailableException.class);
         server.verify();
     }
