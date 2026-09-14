@@ -3417,8 +3417,10 @@ Errors are RFC 7807 problem documents with a stable `code`:
     # Account down during the debit       -> after Retry/CircuitBreaker exhaust their
     #                                         attempts, 503 ACCOUNT_SERVICE_UNAVAILABLE,
     #                                         outcome UNKNOWN: recorded FAILED, but the
-    #                                         debit may have committed -- resolved
-    #                                         automatically by the stale-PENDING sweep below
+    #                                         debit may have committed -- this is a terminal
+    #                                         state, not PENDING, so it is NOT reconciled by
+    #                                         the stale-PENDING sweep below (see the note
+    #                                         at the end of this section)
 ```
 
 ```markdown
@@ -3447,6 +3449,14 @@ from the debit leg.
     curl "http://localhost:8082/transfers?status=COMPENSATION_REQUIRED"
     curl "http://localhost:8082/transfers?status=COMPENSATED"
     curl "http://localhost:8082/transfers?status=COMPENSATION_FAILED"
+
+Known gap, narrower than Phase 2's: a transfer recorded `FAILED` with
+`ACCOUNT_SERVICE_UNAVAILABLE` on the debit leg still needs reconciliation — the debit may
+have committed despite the 503. Retry now resolves most of these on its own (a retry
+replays the same idempotency key, so a merely-lost response gets confirmed within the live
+saga itself); this only remains open for the rarer case where every retry attempt, not just
+the first, fails to get back a definitive answer. Either way, this state is terminal
+(`FAILED`, not `PENDING`), so it is not touched by either sweep above.
 ```
 
 - [ ] **Step 2: Update the roadmap**

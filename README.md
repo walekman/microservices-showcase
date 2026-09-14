@@ -43,14 +43,17 @@ Both APIs are browsable and callable straight from a browser:
     # List all accounts
     curl http://localhost:8081/accounts
 
-    # Debit it
+    # Debit it (Idempotency-Key is required -- a retry with the same key is a no-op, not a
+    # second debit)
     curl -X POST http://localhost:8081/accounts/<id>/debit \
       -H "Content-Type: application/json" \
+      -H "Idempotency-Key: demo-debit-1" \
       -d '{"amount": 40.00}'
 
     # Credit it
     curl -X POST http://localhost:8081/accounts/<id>/credit \
       -H "Content-Type: application/json" \
+      -H "Idempotency-Key: demo-credit-1" \
       -d '{"amount": 15.00}'
 
 ## Transfers
@@ -74,19 +77,51 @@ failure states below exist.
 
 Errors are RFC 7807 problem documents with a stable `code`:
 
-    # Insufficient funds                        -> 422 INSUFFICIENT_FUNDS, no money moves
-    # Unknown account                           -> 422 ACCOUNT_NOT_FOUND, no money moves
-    # Account down during pre-validation        -> 503 ACCOUNT_SERVICE_UNAVAILABLE, no money moves
-    # Account down during the debit             -> 503 ACCOUNT_SERVICE_UNAVAILABLE, outcome UNKNOWN:
-    #                                              recorded FAILED, but the debit may have committed
+    # Insufficient funds                  -> 422 INSUFFICIENT_FUNDS, no money moves
+    # Unknown account                     -> 422 ACCOUNT_NOT_FOUND, no money moves
+    # Missing Idempotency-Key header      -> 400 VALIDATION_FAILED (debit/credit only)
+    # Idempotency key reused with         -> 409 IDEMPOTENCY_KEY_CONFLICT (should never
+    #   different parameters                 happen in normal operation)
+    # Account down during pre-validation  -> after Retry/CircuitBreaker exhaust their
+    #                                         attempts, 503 ACCOUNT_SERVICE_UNAVAILABLE,
+    #                                         no money moves
+    # Account down during the debit       -> after Retry/CircuitBreaker exhaust their
+    #                                         attempts, 503 ACCOUNT_SERVICE_UNAVAILABLE,
+    #                                         outcome UNKNOWN: recorded FAILED, but the
+    #                                         debit may have committed -- this is a terminal
+    #                                         state, not PENDING, so it is NOT reconciled by
+    #                                         the stale-PENDING sweep below (see the note
+    #                                         at the end of this section)
 
-### Known gap: COMPENSATION_REQUIRED
+### Automatic compensation and idempotency
 
-If the debit succeeds and the credit then fails, the money is stranded at the source.
-This release records that as `COMPENSATION_REQUIRED`, logs it at ERROR, and makes it
-listable — but does not fix it. Compensation (crediting the source back) is Phase 3.
-The gap is deliberate: it makes visible exactly why saga compensation exists.
+Transfer Service wraps every call into Account Service in a CircuitBreaker + Retry
+(Resilience4j), and every debit/credit carries a deterministic `Idempotency-Key`
+(`"{transferId}:debit"`, `"{transferId}:credit"`) so a retry can never double-move money.
 
-Note: transfers recorded as `FAILED` with `ACCOUNT_SERVICE_UNAVAILABLE` during the debit
-leg also require reconciliation — the debit may have committed despite the 503 response.
-It is not only `COMPENSATION_REQUIRED` rows that are suspect.
+If the debit succeeds and the credit then fails, the money is momentarily stranded at the
+source and recorded `COMPENSATION_REQUIRED`. A background sweep (`transfer.compensation.sweep-interval`,
+default 15s) resolves it automatically, by replaying the ambiguous call rather than guessing:
+
+- If the destination credit had actually already landed (a lost response, not a lost
+  request) — the transfer is marked `COMPLETED`. Nothing to reverse.
+- If the destination definitively rejects it, the source is credited back and the transfer
+  is marked `COMPENSATED`.
+- If crediting the source back also definitively fails, the transfer is marked
+  `COMPENSATION_FAILED` — a manual-review terminal state, logged at ERROR.
+
+A separate sweep (`transfer.compensation.pending-stale-after`, default 120s) recovers
+transfers stuck at `PENDING` — e.g. the process crashed mid-saga — the same way, starting
+from the debit leg.
+
+    curl "http://localhost:8082/transfers?status=COMPENSATION_REQUIRED"
+    curl "http://localhost:8082/transfers?status=COMPENSATED"
+    curl "http://localhost:8082/transfers?status=COMPENSATION_FAILED"
+
+Known gap, narrower than Phase 2's: a transfer recorded `FAILED` with
+`ACCOUNT_SERVICE_UNAVAILABLE` on the debit leg still needs reconciliation — the debit may
+have committed despite the 503. Retry now resolves most of these on its own (a retry
+replays the same idempotency key, so a merely-lost response gets confirmed within the live
+saga itself); this only remains open for the rarer case where every retry attempt, not just
+the first, fails to get back a definitive answer. Either way, this state is terminal
+(`FAILED`, not `PENDING`), so it is not touched by either sweep above.
