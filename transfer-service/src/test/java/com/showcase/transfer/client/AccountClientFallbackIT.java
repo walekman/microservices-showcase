@@ -66,9 +66,27 @@ class AccountClientFallbackIT {
                 os.write(body);
             }
         });
+        fakeAccountService.createContext("/accounts/" + ACCOUNT_ID + "/debit", rejectingHandler());
+        fakeAccountService.createContext("/accounts/" + ACCOUNT_ID + "/credit", rejectingHandler());
         fakeAccountService.start();
         registry.add("account-service.base-url",
                 () -> "http://localhost:" + fakeAccountService.getAddress().getPort());
+    }
+
+    /** Rejects every debit/credit with a definitive, non-transient business rejection. */
+    private static com.sun.net.httpserver.HttpHandler rejectingHandler() {
+        return exchange -> {
+            byte[] body = """
+                    {"type":"https://showcase.example/errors/insufficient-funds","title":"Insufficient funds",
+                     "status":422,"detail":"not enough money","code":"INSUFFICIENT_FUNDS",
+                     "timestamp":"2026-09-10T12:00:00Z"}
+                    """.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/problem+json");
+            exchange.sendResponseHeaders(422, body.length);
+            try (OutputStream os = exchange.getResponseBody()) {
+                os.write(body);
+            }
+        };
     }
 
     @AfterAll
@@ -90,5 +108,29 @@ class AccountClientFallbackIT {
                 .asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.type(AccountRejectedException.class))
                 .extracting(AccountRejectedException::getCode)
                 .isEqualTo("ACCOUNT_NOT_FOUND");
+    }
+
+    /**
+     * debitCreditFallback is the fallback CompensationScheduler actually depends on --
+     * getAccount's fallback above proves nothing about it, since Resilience4j wires a
+     * fallbackMethod per decorated method, not per class. Without this test's own explicit
+     * passthrough coverage, the exact Task 6 bug (a definitive rejection silently
+     * miscategorized as AccountServiceUnavailableException) could recur here undetected --
+     * see this class's javadoc and docs/roadmap.md's Phase 3 final-review finding.
+     */
+    @Test
+    void debitsDefinitiveRejectionPassesThroughTheRealAopProxyUnchanged() {
+        assertThatThrownBy(() -> accountClient.debit(ACCOUNT_ID, new java.math.BigDecimal("40.00"), "fallback-it:debit"))
+                .asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.type(AccountRejectedException.class))
+                .extracting(AccountRejectedException::getCode)
+                .isEqualTo("INSUFFICIENT_FUNDS");
+    }
+
+    @Test
+    void creditsDefinitiveRejectionPassesThroughTheRealAopProxyUnchanged() {
+        assertThatThrownBy(() -> accountClient.credit(ACCOUNT_ID, new java.math.BigDecimal("40.00"), "fallback-it:credit"))
+                .asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.type(AccountRejectedException.class))
+                .extracting(AccountRejectedException::getCode)
+                .isEqualTo("INSUFFICIENT_FUNDS");
     }
 }
