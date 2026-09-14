@@ -1,6 +1,6 @@
-# Foundation + Account Service Implementation Plan
+# Foundation + Account Service Implementation Phase
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this phase task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Stand up the repo's multi-module Maven build and Docker Compose skeleton, and deliver a working, independently-testable Account Service (create accounts, fetch balance, debit/credit with optimistic locking) reachable via `docker compose up`.
 
@@ -16,10 +16,10 @@
 - Spring MVC (blocking), not WebFlux; virtual threads enabled via `spring.threads.virtual.enabled=true`. No thread-pinning diagnostics/verification tooling — explicitly descoped during brainstorming. (spec §3)
 - Spring Data JPA + PostgreSQL, one logical database per stateful service — no service queries another's database. (spec §2, §3)
 - Integration-level tests use Testcontainers against real Postgres/Kafka — never H2 or mocks at that layer. (spec §6)
-- No centralized log aggregation (ELK/Loki); structured JSON logs with MDC trace correlation only, once tracing is wired up in a later plan. (spec §5)
+- No centralized log aggregation (ELK/Loki); structured JSON logs with MDC trace correlation only, once tracing is wired up in a later phase. (spec §5)
 - No Kubernetes/service mesh; local deployment is Docker Compose only, single `docker compose up`. (spec §7)
-- Kafka runs in KRaft mode (no Zookeeper) when it's introduced. (spec §3) — not touched in this plan.
-- Transactional outbox is published via scheduled polling, not Debezium, when it's introduced. (spec §4) — not touched in this plan.
+- Kafka runs in KRaft mode (no Zookeeper) when it's introduced. (spec §3) — not touched in this phase.
+- Transactional outbox is published via scheduled polling, not Debezium, when it's introduced. (spec §4) — not touched in this phase.
 
 ---
 
@@ -753,7 +753,7 @@ git commit -m "feat: add AccountService orchestration layer"
 
 **Interfaces:**
 - Consumes: `AccountService` (Task 3) — `createAccount`, `getAccount`, `debit`, `credit`; `Account` getters (Task 2).
-- Produces: `POST /accounts`, `GET /accounts/{id}`, `POST /accounts/{id}/debit`, `POST /accounts/{id}/credit` — the HTTP surface Task 5's Docker Compose wiring and later plans' Transfer Service call into.
+- Produces: `POST /accounts`, `GET /accounts/{id}`, `POST /accounts/{id}/debit`, `POST /accounts/{id}/credit` — the HTTP surface Task 5's Docker Compose wiring and later phases' Transfer Service call into.
 
 - [ ] **Step 1: Add web and validation dependencies**
 
@@ -1066,7 +1066,7 @@ git commit -m "feat: add Account Service REST API and error handling"
 
 **Interfaces:**
 - Consumes: the full Account Service application (Tasks 1-4) and the `postgres` compose service (Task 1).
-- Produces: `docker compose up --build` brings up a working Account Service on `localhost:8081`, backed by its own Postgres database — the demoable deliverable for this plan.
+- Produces: `docker compose up --build` brings up a working Account Service on `localhost:8081`, backed by its own Postgres database — the demoable deliverable for this phase.
 
 - [ ] **Step 1: Write the Dockerfile**
 
@@ -1144,7 +1144,7 @@ Design: [docs/microservices-showcase-design.md](docs/microservices-showcase-desi
 
     docker compose up --build
 
-This starts Postgres and Account Service. More services land in later plans.
+This starts Postgres and Account Service. More services land in later phases.
 
 ## Try it
 
@@ -1176,6 +1176,6 @@ git commit -m "feat: wire Account Service into Docker Compose, add README"
 
 ---
 
-## Next Plan
+## Next Phase
 
-Plan 2 — **Transfer + Fraud Services (the Saga)** — adds the `transfer` and `fraud` databases/services, the orchestrated saga in Transfer Service, Resilience4j-wrapped calls to Account Service, the transactional outbox, and Kafka (KRaft mode) to Docker Compose.
+Phase 2 — **Transfer + Fraud Services (the Saga)** — adds the `transfer` and `fraud` databases/services, the orchestrated saga in Transfer Service, Resilience4j-wrapped calls to Account Service, the transactional outbox, and Kafka (KRaft mode) to Docker Compose.
