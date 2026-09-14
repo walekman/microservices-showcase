@@ -886,7 +886,8 @@ public class Transfer {
     @Column(nullable = false, updatable = false)
     private UUID toAccountId;
 
-    @Column(nullable = false, precision = 19, scale = 4, updatable = false)
+    // scale 2, matching Account.balance -- see the comment there.
+    @Column(nullable = false, precision = 19, scale = 2, updatable = false)
     private BigDecimal amount;
 
     @Enumerated(EnumType.STRING)
