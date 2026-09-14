@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
@@ -50,8 +51,12 @@ class CompensationSchedulerTest {
     }
 
     private Transfer strandedTransfer() {
-        Transfer transfer = new Transfer(FROM, TO, AMOUNT);
-        ReflectionTestUtils.setField(transfer, "id", TRANSFER_ID);
+        return strandedTransfer(TRANSFER_ID, FROM, TO);
+    }
+
+    private Transfer strandedTransfer(UUID id, UUID from, UUID to) {
+        Transfer transfer = new Transfer(from, to, AMOUNT);
+        ReflectionTestUtils.setField(transfer, "id", id);
         transfer.markCompensationRequired(TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, "credit leg timed out");
         return transfer;
     }
@@ -129,5 +134,21 @@ class CompensationSchedulerTest {
 
         assertThat(transfer.getStatus()).isEqualTo(TransferStatus.COMPENSATION_REQUIRED);
         verify(transferRepository, never()).save(any());
+    }
+
+    @Test
+    void anUnexpectedSaveFailureDoesNotBlockOtherTransfersInTheBatch() {
+        Transfer failing = strandedTransfer();
+        Transfer succeeding = strandedTransfer(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
+        when(transferRepository.findByStatus(TransferStatus.COMPENSATION_REQUIRED))
+                .thenReturn(List.of(failing, succeeding));
+        when(transferRepository.save(failing)).thenThrow(new OptimisticLockingFailureException("stale row"));
+        when(transferRepository.save(succeeding)).thenReturn(succeeding);
+        // credit(...) succeeds for both (void mock, no stubbing needed).
+
+        scheduler.drainCompensationRequired();
+
+        assertThat(succeeding.getStatus()).isEqualTo(TransferStatus.COMPLETED);
+        verify(transferRepository).save(succeeding);
     }
 }

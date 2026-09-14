@@ -53,7 +53,17 @@ public class CompensationScheduler implements SchedulingConfigurer {
     void drainCompensationRequired() {
         List<Transfer> stranded = transferRepository.findByStatus(TransferStatus.COMPENSATION_REQUIRED);
         for (Transfer transfer : stranded) {
-            reconcileCredit(transfer);
+            try {
+                reconcileCredit(transfer);
+            } catch (RuntimeException unexpected) {
+                // A save() failure (an optimistic-lock conflict, a transient Postgres blip)
+                // would otherwise propagate out of this loop and silently skip every other
+                // stranded transfer in this batch until the next sweep. Isolating it here is
+                // a delay, not data loss: the row is still COMPENSATION_REQUIRED, so the next
+                // sweep picks it up again, and the credit call itself is idempotent either way.
+                log.error("Transfer {} unexpected failure during reconciliation, will retry next sweep",
+                        transfer.getId(), unexpected);
+            }
         }
     }
 
