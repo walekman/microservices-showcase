@@ -21,7 +21,7 @@ Then:
     docker compose up --build
 
 This starts Postgres, Account Service (8081) and Transfer Service (8082).
-More services land in later plans.
+More services land in later phases.
 
 ## Try it (Swagger UI)
 
@@ -84,7 +84,7 @@ Errors are RFC 7807 problem documents with a stable `code`:
 
 If the debit succeeds and the credit then fails, the money is stranded at the source.
 This release records that as `COMPENSATION_REQUIRED`, logs it at ERROR, and makes it
-listable — but does not fix it. Compensation (crediting the source back) is Plan 3.
+listable — but does not fix it. Compensation (crediting the source back) is Phase 3.
 The gap is deliberate: it makes visible exactly why saga compensation exists.
 
 Note: transfers recorded as `FAILED` with `ACCOUNT_SERVICE_UNAVAILABLE` during the debit

@@ -1,6 +1,6 @@
-# Transfer Service + Synchronous Saga Implementation Plan
+# Transfer Service + Synchronous Saga Implementation Phase
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this phase task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Deliver a working Transfer Service that orchestrates a money transfer across two synchronous calls into Account Service (pre-validate → debit → credit), records every outcome in its own database, and is reachable via `docker compose up` alongside Account Service.
 
@@ -29,14 +29,14 @@
 
 | Deferred | Why not now | Lands in |
 |---|---|---|
-| Resilience4j (CircuitBreaker/Retry/TimeLimiter) | The saga's structure and the client's error mapping have to exist before there is anything to wrap | Plan 3 |
-| Compensation (credit-back on a failed credit) | This plan deliberately ends with a visible, recorded inconsistency so the next plan's compensator has a concrete state to drain. **Three blocking preconditions, all discovered during Task 5's review — read them before writing the compensator.** (1) *Reconcile before crediting, on either leg.* An `ACCOUNT_SERVICE_UNAVAILABLE` failure means the call's outcome is UNKNOWN, not that it did not happen — a timeout cannot be told from a non-delivery. A debit that times out records `FAILED` but may have committed; a credit that times out records `COMPENSATION_REQUIRED` but may also have committed. Blind compensation invents money in the first case and duplicates it in the second. The compensator must query Account for the real state first. (2) *Sweep stale `PENDING` rows too, not just `COMPENSATION_REQUIRED`.* If the final `save` fails after both legs committed, the orchestrator rethrows rather than mask the cause, leaving a row that says nothing happened while money moved both ways. That is the worst state in the system and nothing else will ever revisit it. (3) `COMPENSATION_REQUIRED` is terminal under `requirePending()`, so the compensator needs a new transition that accepts it as a pre-state. | Plan 3 |
-| Idempotency keys on debit/credit | Only matters once a client automatically retries a call that may already have succeeded; this plan has no retries | Plan 3 |
-| Transactional outbox + Kafka publisher | A distinct subsystem with its own container and test infrastructure | Plan 4 |
-| Fraud Service (the saga's third call) | The saga is built to accept another step; adding one is additive | Plan 5 |
-| Flyway migrations | Would require baselining Account's existing table too — real work outside this slice; `ddl-auto: update` stays, consistent with Account | its own plan |
-| Spring Cloud Contract; dedicated e2e module | Cross-service test infrastructure, not saga logic | Plan 7 |
-| Auth / JWT | No security on any service yet | Plan 6 |
+| Resilience4j (CircuitBreaker/Retry/TimeLimiter) | The saga's structure and the client's error mapping have to exist before there is anything to wrap | Phase 3 |
+| Compensation (credit-back on a failed credit) | This phase deliberately ends with a visible, recorded inconsistency so the next phase's compensator has a concrete state to drain. **Three blocking preconditions, all discovered during Task 5's review — read them before writing the compensator.** (1) *Reconcile before crediting, on either leg.* An `ACCOUNT_SERVICE_UNAVAILABLE` failure means the call's outcome is UNKNOWN, not that it did not happen — a timeout cannot be told from a non-delivery. A debit that times out records `FAILED` but may have committed; a credit that times out records `COMPENSATION_REQUIRED` but may also have committed. Blind compensation invents money in the first case and duplicates it in the second. The compensator must query Account for the real state first. (2) *Sweep stale `PENDING` rows too, not just `COMPENSATION_REQUIRED`.* If the final `save` fails after both legs committed, the orchestrator rethrows rather than mask the cause, leaving a row that says nothing happened while money moved both ways. That is the worst state in the system and nothing else will ever revisit it. (3) `COMPENSATION_REQUIRED` is terminal under `requirePending()`, so the compensator needs a new transition that accepts it as a pre-state. | Phase 3 |
+| Idempotency keys on debit/credit | Only matters once a client automatically retries a call that may already have succeeded; this phase has no retries | Phase 3 |
+| Transactional outbox + Kafka publisher | A distinct subsystem with its own container and test infrastructure | Phase 4 |
+| Fraud Service (the saga's third call) | The saga is built to accept another step; adding one is additive | Phase 5 |
+| Flyway migrations | Would require baselining Account's existing table too — real work outside this slice; `ddl-auto: update` stays, consistent with Account | its own phase |
+| Spring Cloud Contract; dedicated e2e module | Cross-service test infrastructure, not saga logic | Phase 7 |
+| Auth / JWT | No security on any service yet | Phase 6 |
 
 ## Design Decisions Worth Knowing Before You Start
 
@@ -50,7 +50,7 @@
 | `FAILED` | rejected before or during the debit | nothing moved |
 | `COMPENSATION_REQUIRED` | debit succeeded, credit did not | **stranded at source** |
 
-`COMPENSATION_REQUIRED` is named for what happens next rather than for the symptom, so Plan 3 turns it into a real transient state that a compensator drains — no rename, no data migration. Every entry into it logs at ERROR and is listable via `GET /transfers?status=COMPENSATION_REQUIRED`.
+`COMPENSATION_REQUIRED` is named for what happens next rather than for the symptom, so Phase 3 turns it into a real transient state that a compensator drains — no rename, no data migration. Every entry into it logs at ERROR and is listable via `GET /transfers?status=COMPENSATION_REQUIRED`.
 
 **Pre-validation is an optimisation, not a guarantee.** Step 3 of the saga `GET`s both accounts so the common mistyped-destination case costs nothing. An account can still be deleted or drained between that check and the debit — so step 4 handles every rejection on its own regardless. Do not read step 3 as a correctness mechanism, and do not delete the step-4 handling on the grounds that step 3 already checked.
 
@@ -84,7 +84,7 @@
 | `client/AccountServiceUnavailableException.java` | Account is broken or unreachable (5xx, timeout, connection refused) |
 | `client/AccountClientProperties.java` | `base-url`, `connect-timeout`, `read-timeout` |
 | `client/AccountClientConfig.java` | Builds the `RestClient` with timeouts |
-| `service/TransferService.java` | The saga orchestrator — the heart of this plan |
+| `service/TransferService.java` | The saga orchestrator — the heart of this phase |
 | `service/TransferFailedException.java` | Carries the persisted `Transfer` out to the API layer |
 | `service/TransferPersistenceException.java` | Carries the transfer's id out when persisting a terminal state fails, so the 500 still tells the caller which row to look at |
 | `api/CreateTransferRequest.java` | Request DTO + bean validation |
@@ -1442,7 +1442,7 @@ public class AccountClient {
 
 - [ ] **Step 5: Create the properties and configuration**
 
-Timeouts are not optional here. With no circuit breaker yet (Plan 3), a hung Account Service would otherwise block every in-flight transfer indefinitely, and the default `RestClient` request factory has no read timeout at all.
+Timeouts are not optional here. With no circuit breaker yet (Phase 3), a hung Account Service would otherwise block every in-flight transfer indefinitely, and the default `RestClient` request factory has no read timeout at all.
 
 ```java
 // transfer-service/src/main/java/com/showcase/transfer/client/AccountClientProperties.java
@@ -2426,7 +2426,7 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "transfer" <<-EOSQL
 EOSQL
 ```
 
-**Postgres runs `/docker-entrypoint-initdb.d` scripts only when the data directory is empty.** The `postgres-data` volume already exists from Plan 1, so this edit does nothing on an existing checkout until the volume is destroyed. Step 8 handles that. Expect to lose any locally created accounts.
+**Postgres runs `/docker-entrypoint-initdb.d` scripts only when the data directory is empty.** The `postgres-data` volume already exists from Phase 1, so this edit does nothing on an existing checkout until the volume is destroyed. Step 8 handles that. Expect to lose any locally created accounts.
 
 - [ ] **Step 2: Add the password variable**
 
@@ -2571,7 +2571,7 @@ Expected: the completed and failed transfers above; the `COMPENSATION_REQUIRED` 
 ```markdown
 <!-- README.md: replace the "This starts Postgres and Account Service" line -->
 This starts Postgres, Account Service (8081) and Transfer Service (8082).
-More services land in later plans.
+More services land in later phases.
 
 <!-- README.md: replace the Swagger section -->
 ## Try it (Swagger UI)
@@ -2611,14 +2611,14 @@ Errors are RFC 7807 problem documents with a stable `code`:
 
 If the debit succeeds and the credit then fails, the money is stranded at the source.
 This release records that as `COMPENSATION_REQUIRED`, logs it at ERROR, and makes it
-listable — but does not fix it. Compensation (crediting the source back) is Plan 3.
+listable — but does not fix it. Compensation (crediting the source back) is Phase 3.
 The gap is deliberate: it makes visible exactly why saga compensation exists.
 ```
 
 - [ ] **Step 10: Record the error contract in the design spec**
 
 `CLAUDE.md` makes `docs/microservices-showcase-design.md` the source of truth for
-architecture and service boundaries, and says to update it — not just the plan — when an
+architecture and service boundaries, and says to update it — not just the phase doc — when an
 implementation decision changes the actual architecture. The inter-service error contract
 is exactly that, and the spec currently says nothing about it. Add a short subsection to
 §3 (Tech Stack), after the Resilience bullet:
@@ -2634,12 +2634,12 @@ is exactly that, and the spec currently says nothing about it. Add a short subse
   turns every contract change into a lockstep redeploy of every service.
 ```
 
-Do not touch `docs/plan-1-foundation-account-service.md` — it is a historical record of
-what Plan 1 built, and its `ErrorResponse` references are correct as history.
+Do not touch `docs/phase-1-foundation-account-service.md` — it is a historical record of
+what Phase 1 built, and its `ErrorResponse` references are correct as history.
 
 - [ ] **Step 11: Update the roadmap**
 
-Replace the plan table in `docs/roadmap.md` with the reordered sequence — Plan 2 shrank during brainstorming, and what it dropped became Plans 3 and 4.
+Replace the phase table in `docs/roadmap.md` with the reordered sequence — Phase 2 shrank during brainstorming, and what it dropped became Phases 3 and 4.
 
 ```markdown
 | # | Plan | Status | Scope |
@@ -2653,7 +2653,7 @@ Replace the plan table in `docs/roadmap.md` with the reordered sequence — Plan
 | 7 | Observability + Full Compose Integration | Not started | OTel Collector, Prometheus, Grafana, Jaeger/Tempo; full trace across the sync+async hop; Spring Cloud Contract tests; end-to-end saga test module; final `docker compose up` bringing up all services + infra |
 ```
 
-Then update the deferred-items list: mark Actuator + healthchecks and the `ErrorResponse` wire-contract decision as done (resolved in Plan 2 — ProblemDetail with a `code` property, duplicated per service), move idempotency keys under Plan 3, and leave Flyway as the one still-unassigned item, noting it now has two schemas to baseline rather than one.
+Then update the deferred-items list: mark Actuator + healthchecks and the `ErrorResponse` wire-contract decision as done (resolved in Phase 2 — ProblemDetail with a `code` property, duplicated per service), move idempotency keys under Phase 3, and leave Flyway as the one still-unassigned item, noting it now has two schemas to baseline rather than one.
 
 - [ ] **Step 12: Commit**
 
@@ -2699,7 +2699,7 @@ BODY
 
 ## Verification Checklist
 
-Before calling this plan done, confirm each of these by running the command and reading the output — not by assuming:
+Before calling this phase done, confirm each of these by running the command and reading the output — not by assuming:
 
 - [ ] `./mvnw -B test` passes for both modules (this is what CI runs)
 - [ ] `docker compose down -v && docker compose up --build -d` brings all three containers to `(healthy)`
