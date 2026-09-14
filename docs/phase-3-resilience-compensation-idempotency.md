@@ -3053,7 +3053,14 @@ public class CompensationScheduler implements SchedulingConfigurer {
         Instant cutoff = Instant.now().minus(properties.pendingStaleAfter());
         List<Transfer> stale = transferRepository.findByStatusAndCreatedAtBefore(TransferStatus.PENDING, cutoff);
         for (Transfer transfer : stale) {
-            reconcileDebit(transfer);
+            try {
+                reconcileDebit(transfer);
+            } catch (RuntimeException unexpected) {
+                // Same reasoning as drainCompensationRequired's catch: isolate one row's save()
+                // failure so it cannot block the rest of this sweep's batch.
+                log.error("Transfer {} unexpected failure during stale-PENDING recovery, will retry next sweep",
+                        transfer.getId(), unexpected);
+            }
         }
     }
 
@@ -3192,8 +3199,12 @@ class CompensationSchedulerTest {
     }
 
     private Transfer stalePendingTransfer() {
-        Transfer transfer = new Transfer(FROM, TO, AMOUNT);
-        ReflectionTestUtils.setField(transfer, "id", TRANSFER_ID);
+        return stalePendingTransfer(TRANSFER_ID, FROM, TO);
+    }
+
+    private Transfer stalePendingTransfer(UUID id, UUID from, UUID to) {
+        Transfer transfer = new Transfer(from, to, AMOUNT);
+        ReflectionTestUtils.setField(transfer, "id", id);
         return transfer;
     }
 
@@ -3330,6 +3341,22 @@ class CompensationSchedulerTest {
 
         assertThat(transfer.getStatus()).isEqualTo(TransferStatus.PENDING);
         verify(transferRepository, never()).save(any());
+    }
+
+    @Test
+    void aStaleSweepUnexpectedSaveFailureDoesNotBlockOtherTransfersInTheBatch() {
+        Transfer failing = stalePendingTransfer();
+        Transfer succeeding = stalePendingTransfer(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
+        when(transferRepository.findByStatusAndCreatedAtBefore(eq(TransferStatus.PENDING), any()))
+                .thenReturn(List.of(failing, succeeding));
+        when(transferRepository.save(failing)).thenThrow(new OptimisticLockingFailureException("stale row"));
+        when(transferRepository.save(succeeding)).thenReturn(succeeding);
+        // debit(...) succeeds for both (void mock, no stubbing needed).
+
+        scheduler.sweepStalePending();
+
+        assertThat(succeeding.getStatus()).isEqualTo(TransferStatus.COMPENSATION_REQUIRED);
+        verify(transferRepository).save(succeeding);
     }
 }
 ```

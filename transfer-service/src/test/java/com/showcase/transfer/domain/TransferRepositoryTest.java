@@ -5,11 +5,14 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.math.BigDecimal;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -63,5 +66,20 @@ class TransferRepositoryTest {
         List<Transfer> found = transferRepository.findByStatus(TransferStatus.COMPENSATION_REQUIRED);
 
         assertThat(found).extracting(Transfer::getId).contains(stranded.getId());
+    }
+
+    @Test
+    void findsStalePendingTransfersOlderThanTheCutoff() {
+        Transfer stale = new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("25.00"));
+        ReflectionTestUtils.setField(stale, "createdAt", Instant.now().minus(Duration.ofMinutes(10)));
+        transferRepository.saveAndFlush(stale);
+        Transfer recent = transferRepository.saveAndFlush(
+                new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("25.00")));
+
+        List<Transfer> found = transferRepository.findByStatusAndCreatedAtBefore(
+                TransferStatus.PENDING, Instant.now().minus(Duration.ofSeconds(120)));
+
+        assertThat(found).extracting(Transfer::getId).contains(stale.getId());
+        assertThat(found).extracting(Transfer::getId).doesNotContain(recent.getId());
     }
 }
