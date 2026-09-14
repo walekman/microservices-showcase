@@ -76,8 +76,8 @@ Transfer needs no new `TransferFailureCode` for `IDEMPOTENCY_KEY_CONFLICT` — `
 | `domain/AccountOperation.java` (new) | Entity: `idempotencyKey` (unique), `accountId`, `operation` (`DEBIT`/`CREDIT`), `amount`, `balanceAfter`, `createdAt` |
 | `domain/AccountOperationRepository.java` (new) | Spring Data repository, lookup by `idempotencyKey` |
 | `service/AccountService.java` (modified) | `debit`/`credit` check for an existing `AccountOperation` first; on the race between two duplicate inserts, catch the constraint violation and re-read rather than fail |
-| `api/AccountController.java` (modified) | `debit`/`credit` require `@RequestHeader("Idempotency-Key")` |
-| `api/ApiExceptionHandler.java` (modified) | Maps missing header → `VALIDATION_FAILED`; mismatched replay → `IDEMPOTENCY_KEY_CONFLICT` |
+| `api/AccountController.java` (modified) | `debit`/`credit` require `@RequestHeader("Idempotency-Key")`, `@NotBlank @Size(max = 255)` via class-level `@Validated` |
+| `api/ApiExceptionHandler.java` (modified) | Maps missing header → `VALIDATION_FAILED`; blank/overlong header (`ConstraintViolationException`) → `VALIDATION_FAILED`; mismatched replay → `IDEMPOTENCY_KEY_CONFLICT` |
 
 **Transfer Service (modified):**
 
@@ -86,10 +86,10 @@ Transfer needs no new `TransferFailureCode` for `IDEMPOTENCY_KEY_CONFLICT` — `
 | `client/AccountClient.java` (modified) | `debit`/`credit` take an `idempotencyKey` parameter, sent as the `Idempotency-Key` header; `@CircuitBreaker`/`@Retry` on all three public methods; catches `CallNotPermittedException` → `AccountServiceUnavailableException` |
 | `service/TransferService.java` (modified) | Passes `"{transferId}:debit"` / `"{transferId}:credit"` as the idempotency key on each call — otherwise unchanged |
 | `service/CompensationScheduler.java` (new) | `drainCompensationRequired()` and `sweepStalePending()`, each `@Scheduled` |
-| `service/CompensationProperties.java` (new) | `sweep-interval` (default 15s), `pending-stale-after` (default 120s — see Design Decisions) |
+| `service/CompensationProperties.java` (new) | `sweep-interval` (default 15s), `pending-stale-after` (default 120s — see Design Decisions), `sweep-batch-size` (default 500, bounds each sweep's batch) |
 | `domain/TransferStatus.java` (modified) | Adds `COMPENSATED`, `COMPENSATION_FAILED` |
-| `domain/Transfer.java` (modified) | `requirePending()` generalizes to `requireStatus(TransferStatus...)`; `markCompleted()` now also accepts `COMPENSATION_REQUIRED` as a pre-state; new `markCompensated(...)`, `markCompensationFailed(...)`, both requiring `COMPENSATION_REQUIRED` |
-| `domain/TransferRepository.java` (modified) | New `findByStatusAndCreatedAtBefore(TransferStatus, Instant)` |
+| `domain/Transfer.java` (modified) | `requirePending()` generalizes to `requireStatus(TransferStatus...)`; `markCompleted()` now also accepts `COMPENSATION_REQUIRED` as a pre-state, clearing `failureCode`/`failureReason`; new `markCompensated(...)`, `markCompensationFailed(...)`, both requiring `COMPENSATION_REQUIRED` |
+| `domain/TransferRepository.java` (modified) | New `findByStatus(TransferStatus, Limit)`, `findByStatusAndCreatedAtBefore(TransferStatus, Instant, Limit)` |
 
 **Infrastructure (modified):** `transfer-service/pom.xml` (resilience4j dependency), both services' `application.yml` (resilience4j config, compensation properties), `docs/roadmap.md`.
 
@@ -637,6 +637,15 @@ public class AccountService {
             // current state is returned rather than reconstructing the exact historical
             // balance. AccountOperation.balanceAfter still holds the authoritative figure
             // for whenever an audit/history read is built on top of this table.
+            //
+            // KNOWN LIMITATION (Phase 3 final-review, see docs/roadmap.md): this still does
+            // an independent account lookup, so a replay for an account that no longer
+            // exists would 404 here -- turning an already-applied operation into a false
+            // rejection. Deliberately left as-is: no delete/archival capability exists
+            // anywhere in this app, so the account row present when the operation was first
+            // recorded cannot vanish before a replay. Revisit this branch (the response
+            // cannot carry a full Account body without one -- ownerName/current balance are
+            // not stored on AccountOperation) if a future phase adds one.
             return accountRepository.findById(id).orElseThrow(() -> new AccountNotFoundException(id));
         }
 
@@ -676,7 +685,10 @@ package com.showcase.account.api;
 import com.showcase.account.domain.Account;
 import com.showcase.account.service.AccountService;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -689,8 +701,13 @@ import java.net.URI;
 import java.util.List;
 import java.util.UUID;
 
+// @Validated turns on method-parameter validation (constraints directly on @RequestHeader/
+// @PathVariable params, as opposed to @Valid on a @RequestBody object) -- without it, a
+// blank or overlong Idempotency-Key reaches AccountOperation's constructor guard as an
+// uncaught IllegalArgumentException, surfacing as a generic 500 instead of a 400.
 @RestController
 @RequestMapping("/accounts")
+@Validated
 public class AccountController {
 
     private final AccountService accountService;
@@ -720,13 +737,13 @@ public class AccountController {
 
     @PostMapping("/{id}/debit")
     public AccountResponse debit(@PathVariable UUID id, @Valid @RequestBody AmountRequest request,
-                                  @RequestHeader("Idempotency-Key") String idempotencyKey) {
+                                  @RequestHeader("Idempotency-Key") @NotBlank @Size(max = 255) String idempotencyKey) {
         return AccountResponse.from(accountService.debit(id, request.amount(), idempotencyKey));
     }
 
     @PostMapping("/{id}/credit")
     public AccountResponse credit(@PathVariable UUID id, @Valid @RequestBody AmountRequest request,
-                                   @RequestHeader("Idempotency-Key") String idempotencyKey) {
+                                   @RequestHeader("Idempotency-Key") @NotBlank @Size(max = 255) String idempotencyKey) {
         return AccountResponse.from(accountService.credit(id, request.amount(), idempotencyKey));
     }
 }
@@ -741,6 +758,8 @@ package com.showcase.account.api;
 import com.showcase.account.domain.AccountNotFoundException;
 import com.showcase.account.domain.AccountOperationConflictException;
 import com.showcase.account.domain.InsufficientFundsException;
+import jakarta.validation.ConstraintViolationException;
+import jakarta.validation.Path;
 import org.springframework.beans.TypeMismatchException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -781,6 +800,30 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(AccountOperationConflictException.class)
     public ProblemDetail handleIdempotencyConflict(AccountOperationConflictException ex) {
         return Problems.of(HttpStatus.CONFLICT, "IDEMPOTENCY_KEY_CONFLICT", "Idempotency key conflict", ex.getMessage());
+    }
+
+    /**
+     * @Validated on the controller (see its javadoc) routes a constraint on an
+     * @RequestHeader/@PathVariable method parameter through Spring's AOP-based
+     * MethodValidationInterceptor, which throws this -- not the @Valid-on-@RequestBody path
+     * MethodArgumentNotValidException covers below. Without this handler, a blank or overlong
+     * Idempotency-Key fell through to the generic Exception handler as a 500.
+     */
+    @ExceptionHandler(ConstraintViolationException.class)
+    public ProblemDetail handleConstraintViolation(ConstraintViolationException ex) {
+        String detail = ex.getConstraintViolations().stream()
+                .findFirst()
+                .map(violation -> lastPathSegment(violation.getPropertyPath()) + " " + violation.getMessage())
+                .orElse("Validation failed");
+        return Problems.of(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "Validation failed", detail);
+    }
+
+    private static String lastPathSegment(Path path) {
+        String last = "request";
+        for (Path.Node node : path) {
+            last = node.getName();
+        }
+        return last;
     }
 
     @ExceptionHandler(Exception.class)
@@ -1195,8 +1238,15 @@ resilience4j:
   circuitbreaker:
     instances:
       accountService:
-        sliding-window-size: 10
-        minimum-number-of-calls: 5
+        # Scaled by retry.instances.accountService's max-attempts (3): @Retry is the outer
+        # decorator, so each retried call is recorded as up to 3 separate circuit-breaker
+        # calls, not one. Unscaled (window 10 / minimum 5), a full Account Service outage
+        # tripped the circuit after just ~2 failed logical calls (2 * 3 = 6 >= 5) -- observed
+        # live during Phase 3's own verification. These numbers restore the original design
+        # intent -- 5 failed logical calls out of a window of 10 -- once the x3 retry
+        # multiplier is accounted for: 15 physical calls (5 * 3) out of a window of 30 (10 * 3).
+        sliding-window-size: 30
+        minimum-number-of-calls: 15
         failure-rate-threshold: 50
         wait-duration-in-open-state: 10s
         permitted-number-of-calls-in-half-open-state: 3
@@ -1341,6 +1391,18 @@ public class AccountClient {
 
     private void rejected(HttpRequest request, ClientHttpResponse response) {
         AccountProblem problem = readProblem(response);
+        if ("CONCURRENT_MODIFICATION".equals(problem.code())) {
+            // Account's own optimistic-lock conflict (its @Version check losing a race) is
+            // genuinely transient, not a business rejection -- unlike every other 4xx this
+            // method handles. Surfacing it as AccountRejectedException would make the live
+            // saga abort permanently and, worse, make CompensationScheduler read a routine
+            // version conflict during a sweep as a definitive rejection and reverse a
+            // transfer that never actually failed (see docs/roadmap.md's Phase 3 review
+            // findings). AccountServiceUnavailableException instead lets Resilience4j's
+            // @Retry retry it live, and lets the compensator's sweep retry it next pass.
+            throw new AccountServiceUnavailableException(
+                    "Account Service reported a transient conflict: " + problem.detail());
+        }
         throw new AccountRejectedException(problem.code(), problem.detail());
     }
 
@@ -2437,6 +2499,11 @@ public class Transfer {
     public void markCompleted() {
         requireStatus(TransferStatus.PENDING, TransferStatus.COMPENSATION_REQUIRED);
         this.status = TransferStatus.COMPLETED;
+        // From COMPENSATION_REQUIRED, markCompensationRequired() already set both fields to
+        // the stranding's diagnostics. The transfer just reconciled as genuinely completed,
+        // so an API response for it must not go on reporting a failure that did not happen.
+        this.failureCode = null;
+        this.failureReason = null;
         this.settledAt = Instant.now();
     }
 
@@ -2511,13 +2578,19 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import java.time.Duration;
 
 @ConfigurationProperties(prefix = "transfer.compensation")
-public record CompensationProperties(Duration sweepInterval, Duration pendingStaleAfter) {
+public record CompensationProperties(Duration sweepInterval, Duration pendingStaleAfter, Integer sweepBatchSize) {
 
     // See AccountClientProperties for why these are defaulted here rather than trusted to
-    // always be set: Boot's binder skips a null Duration silently.
+    // always be set: Boot's binder skips a null Duration/Integer silently.
     public CompensationProperties {
         sweepInterval = (sweepInterval != null) ? sweepInterval : Duration.ofSeconds(15);
         pendingStaleAfter = (pendingStaleAfter != null) ? pendingStaleAfter : Duration.ofSeconds(120);
+        // Fine at this project's scale unbounded, but each sweep previously fetched every
+        // matching row with no limit at all -- bounded here so a future spike in transfer
+        // volume cannot turn one sweep tick into an unbounded query and an unbounded batch
+        // of outbound Account Service calls. See docs/roadmap.md's Phase 3 final-review
+        // finding.
+        sweepBatchSize = (sweepBatchSize != null) ? sweepBatchSize : 500;
     }
 }
 ```
@@ -2528,6 +2601,7 @@ transfer:
   compensation:
     sweep-interval: 15s
     pending-stale-after: 120s
+    sweep-batch-size: 500
 ```
 
 - [ ] **Step 7: Enable scheduling**
@@ -2875,6 +2949,7 @@ git commit -m "feat(transfer): COMPENSATED/COMPENSATION_FAILED states and the co
 // transfer-service/src/main/java/com/showcase/transfer/domain/TransferRepository.java
 package com.showcase.transfer.domain;
 
+import org.springframework.data.domain.Limit;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.time.Instant;
@@ -2883,9 +2958,13 @@ import java.util.UUID;
 
 public interface TransferRepository extends JpaRepository<Transfer, UUID> {
 
+    /** Unbounded: used by the {@code GET /transfers?status=} listing endpoint. */
     List<Transfer> findByStatus(TransferStatus status);
 
-    List<Transfer> findByStatusAndCreatedAtBefore(TransferStatus status, Instant cutoff);
+    /** Limit-bounded: used by CompensationScheduler's sweeps, see its javadoc. */
+    List<Transfer> findByStatus(TransferStatus status, Limit limit);
+
+    List<Transfer> findByStatusAndCreatedAtBefore(TransferStatus status, Instant cutoff, Limit limit);
 }
 ```
 
@@ -3000,6 +3079,7 @@ import com.showcase.transfer.domain.TransferRepository;
 import com.showcase.transfer.domain.TransferStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.Limit;
 import org.springframework.scheduling.annotation.SchedulingConfigurer;
 import org.springframework.scheduling.config.ScheduledTaskRegistrar;
 import org.springframework.stereotype.Component;
@@ -3046,7 +3126,12 @@ public class CompensationScheduler implements SchedulingConfigurer {
     // Package-private so CompensationSchedulerTest can invoke it directly, without going
     // through the scheduler registration machinery.
     void drainCompensationRequired() {
-        List<Transfer> stranded = transferRepository.findByStatus(TransferStatus.COMPENSATION_REQUIRED);
+        // Limit-bounded: fine unbounded at this project's scale, but a spike in stranded
+        // transfers should not turn one sweep tick into an unbounded batch of outbound
+        // Account Service calls. A row still stranded past this batch is picked up by the
+        // next sweep -- see docs/roadmap.md's Phase 3 final-review finding.
+        List<Transfer> stranded = transferRepository.findByStatus(
+                TransferStatus.COMPENSATION_REQUIRED, Limit.of(properties.sweepBatchSize()));
         for (Transfer transfer : stranded) {
             try {
                 reconcileCredit(transfer);
@@ -3064,7 +3149,9 @@ public class CompensationScheduler implements SchedulingConfigurer {
 
     void sweepStalePending() {
         Instant cutoff = Instant.now().minus(properties.pendingStaleAfter());
-        List<Transfer> stale = transferRepository.findByStatusAndCreatedAtBefore(TransferStatus.PENDING, cutoff);
+        // Same batch-size reasoning as drainCompensationRequired() above.
+        List<Transfer> stale = transferRepository.findByStatusAndCreatedAtBefore(
+                TransferStatus.PENDING, cutoff, Limit.of(properties.sweepBatchSize()));
         for (Transfer transfer : stale) {
             try {
                 reconcileDebit(transfer);
