@@ -4,6 +4,7 @@ import com.showcase.transfer.client.AccountClient;
 import com.showcase.transfer.client.AccountRejectedException;
 import com.showcase.transfer.client.AccountServiceUnavailableException;
 import com.showcase.transfer.domain.Transfer;
+import com.showcase.transfer.domain.TransferFailureCode;
 import com.showcase.transfer.domain.TransferRepository;
 import com.showcase.transfer.domain.TransferStatus;
 import org.slf4j.Logger;
@@ -12,13 +13,14 @@ import org.springframework.scheduling.annotation.SchedulingConfigurer;
 import org.springframework.scheduling.config.ScheduledTaskRegistrar;
 import org.springframework.stereotype.Component;
 
+import java.time.Instant;
 import java.util.List;
 
 /**
  * Automatically resolves the ambiguity Phase 2 deliberately left open: COMPENSATION_REQUIRED
- * transfers (drainCompensationRequired, this task) and stale PENDING transfers
- * (sweepStalePending, the next task) are periodically reconciled against Account Service by
- * replaying the ambiguous call with its original idempotency key rather than guessing -- see
+ * transfers (drainCompensationRequired) and stale PENDING transfers (sweepStalePending) are
+ * periodically reconciled against Account Service by replaying the ambiguous call with its
+ * original idempotency key rather than guessing -- see
  * docs/phase-3-resilience-compensation-idempotency.md's Design Decisions.
  *
  * <p>Registered via {@link SchedulingConfigurer} rather than
@@ -45,7 +47,9 @@ public class CompensationScheduler implements SchedulingConfigurer {
 
     @Override
     public void configureTasks(ScheduledTaskRegistrar registrar) {
-        registrar.addFixedDelayTask(this::drainCompensationRequired, properties.sweepInterval().toMillis());
+        long intervalMillis = properties.sweepInterval().toMillis();
+        registrar.addFixedDelayTask(this::drainCompensationRequired, intervalMillis);
+        registrar.addFixedDelayTask(this::sweepStalePending, intervalMillis);
     }
 
     // Package-private so CompensationSchedulerTest can invoke it directly, without going
@@ -62,6 +66,21 @@ public class CompensationScheduler implements SchedulingConfigurer {
                 // a delay, not data loss: the row is still COMPENSATION_REQUIRED, so the next
                 // sweep picks it up again, and the credit call itself is idempotent either way.
                 log.error("Transfer {} unexpected failure during reconciliation, will retry next sweep",
+                        transfer.getId(), unexpected);
+            }
+        }
+    }
+
+    void sweepStalePending() {
+        Instant cutoff = Instant.now().minus(properties.pendingStaleAfter());
+        List<Transfer> stale = transferRepository.findByStatusAndCreatedAtBefore(TransferStatus.PENDING, cutoff);
+        for (Transfer transfer : stale) {
+            try {
+                reconcileDebit(transfer);
+            } catch (RuntimeException unexpected) {
+                // Same reasoning as drainCompensationRequired's catch: isolate one row's save()
+                // failure so it cannot block the rest of this sweep's batch.
+                log.error("Transfer {} unexpected failure during stale-PENDING recovery, will retry next sweep",
                         transfer.getId(), unexpected);
             }
         }
@@ -101,6 +120,34 @@ public class CompensationScheduler implements SchedulingConfigurer {
             log.error("Transfer {} destination rejected [{}] but crediting the source back is still unavailable, "
                             + "will retry next sweep: {}",
                     transfer.getId(), rejectionDetail, stillUnavailable.getMessage());
+        }
+    }
+
+    /**
+     * Resolves only the debit leg. It never independently re-checks the credit leg: if the
+     * debit is confirmed landed, the row is promoted to COMPENSATION_REQUIRED via the same
+     * markCompensationRequired() the live saga's own strand() uses, and reconcileCredit()
+     * resolves it on a later pass. One consequence worth remembering, not a bug: a stale
+     * PENDING row where BOTH legs actually landed (only the final save failed) still passes
+     * through COMPENSATION_REQUIRED for one extra sweep before self-correcting to COMPLETED.
+     */
+    private void reconcileDebit(Transfer transfer) {
+        try {
+            accountClient.debit(transfer.getFromAccountId(), transfer.getAmount(), transfer.getId() + ":debit");
+            transfer.markCompensationRequired(TransferFailureCode.UNEXPECTED_ERROR,
+                    "Recovered from a stale PENDING row: the debit leg is confirmed landed, the credit leg is unresolved");
+            transferRepository.save(transfer);
+            log.info("Transfer {} promoted from stale PENDING to COMPENSATION_REQUIRED: debit confirmed landed",
+                    transfer.getId());
+        } catch (AccountRejectedException definitivelyRejected) {
+            transfer.markFailed(TransferFailureCode.fromAccountCode(definitivelyRejected.getCode()),
+                    definitivelyRejected.getDetail());
+            transferRepository.save(transfer);
+            log.info("Transfer {} recovered from stale PENDING as FAILED: debit never landed [{}]",
+                    transfer.getId(), definitivelyRejected.getDetail());
+        } catch (AccountServiceUnavailableException stillUnavailable) {
+            log.error("Transfer {} still stale PENDING, debit leg still unresolved, will retry next sweep: {}",
+                    transfer.getId(), stillUnavailable.getMessage());
         }
     }
 }

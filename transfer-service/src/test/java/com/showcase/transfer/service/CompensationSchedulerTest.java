@@ -61,6 +61,16 @@ class CompensationSchedulerTest {
         return transfer;
     }
 
+    private Transfer stalePendingTransfer() {
+        return stalePendingTransfer(TRANSFER_ID, FROM, TO);
+    }
+
+    private Transfer stalePendingTransfer(UUID id, UUID from, UUID to) {
+        Transfer transfer = new Transfer(from, to, AMOUNT);
+        ReflectionTestUtils.setField(transfer, "id", id);
+        return transfer;
+    }
+
     @Test
     void reconciledSuccessMarksTheTransferCompleted() {
         Transfer transfer = strandedTransfer();
@@ -149,6 +159,66 @@ class CompensationSchedulerTest {
         scheduler.drainCompensationRequired();
 
         assertThat(succeeding.getStatus()).isEqualTo(TransferStatus.COMPLETED);
+        verify(transferRepository).save(succeeding);
+    }
+
+    @Test
+    void staleDebitRejectedMarksTheTransferFailed() {
+        Transfer transfer = stalePendingTransfer();
+        when(transferRepository.findByStatusAndCreatedAtBefore(eq(TransferStatus.PENDING), any()))
+                .thenReturn(List.of(transfer));
+        when(transferRepository.save(transfer)).thenReturn(transfer);
+        doThrow(new AccountRejectedException("ACCOUNT_NOT_FOUND", "Account not found: " + FROM))
+                .when(accountClient).debit(FROM, AMOUNT, TRANSFER_ID + ":debit");
+
+        scheduler.sweepStalePending();
+
+        assertThat(transfer.getStatus()).isEqualTo(TransferStatus.FAILED);
+        assertThat(transfer.getFailureCode()).isEqualTo(TransferFailureCode.ACCOUNT_NOT_FOUND);
+        verify(accountClient, never()).credit(any(), any(), any());
+    }
+
+    @Test
+    void staleDebitConfirmedLandedPromotesToCompensationRequired() {
+        Transfer transfer = stalePendingTransfer();
+        when(transferRepository.findByStatusAndCreatedAtBefore(eq(TransferStatus.PENDING), any()))
+                .thenReturn(List.of(transfer));
+        when(transferRepository.save(transfer)).thenReturn(transfer);
+        // debit(...) succeeds by default (void mock, no stubbing needed).
+
+        scheduler.sweepStalePending();
+
+        assertThat(transfer.getStatus()).isEqualTo(TransferStatus.COMPENSATION_REQUIRED);
+        verify(accountClient, never()).credit(any(), any(), any());
+    }
+
+    @Test
+    void staleDebitStillAmbiguousStaysPending() {
+        Transfer transfer = stalePendingTransfer();
+        when(transferRepository.findByStatusAndCreatedAtBefore(eq(TransferStatus.PENDING), any()))
+                .thenReturn(List.of(transfer));
+        doThrow(new AccountServiceUnavailableException("read timed out"))
+                .when(accountClient).debit(FROM, AMOUNT, TRANSFER_ID + ":debit");
+
+        scheduler.sweepStalePending();
+
+        assertThat(transfer.getStatus()).isEqualTo(TransferStatus.PENDING);
+        verify(transferRepository, never()).save(any());
+    }
+
+    @Test
+    void aStaleSweepUnexpectedSaveFailureDoesNotBlockOtherTransfersInTheBatch() {
+        Transfer failing = stalePendingTransfer();
+        Transfer succeeding = stalePendingTransfer(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
+        when(transferRepository.findByStatusAndCreatedAtBefore(eq(TransferStatus.PENDING), any()))
+                .thenReturn(List.of(failing, succeeding));
+        when(transferRepository.save(failing)).thenThrow(new OptimisticLockingFailureException("stale row"));
+        when(transferRepository.save(succeeding)).thenReturn(succeeding);
+        // debit(...) succeeds for both (void mock, no stubbing needed).
+
+        scheduler.sweepStalePending();
+
+        assertThat(succeeding.getStatus()).isEqualTo(TransferStatus.COMPENSATION_REQUIRED);
         verify(transferRepository).save(succeeding);
     }
 }
