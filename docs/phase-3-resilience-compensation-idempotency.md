@@ -1251,6 +1251,16 @@ import java.util.function.Supplier;
  * these methods — it is handled by the fallback methods below instead, which remap it
  * onto {@link AccountServiceUnavailableException} so an open circuit looks, correctly,
  * exactly like Account being unavailable to every caller of this class.
+ *
+ * <p><b>Verified live, not just assumed:</b> once a {@code fallbackMethod} is specified,
+ * Resilience4j's Spring AOP routes every exception the decorated method throws through it
+ * — including ones listed in {@code ignoreExceptions} — not only retried-and-exhausted or
+ * circuit-open failures. Without the explicit passthrough in the fallback methods below, a
+ * definitively rejected request (e.g. {@code ACCOUNT_NOT_FOUND}) was silently
+ * miscategorized as {@link AccountServiceUnavailableException}. Unit tests that mock this
+ * class entirely (as {@code CompensationSchedulerTest} does) cannot catch this — mocking
+ * bypasses the AOP proxy, so the fallback method is never exercised. Only running the real,
+ * annotated bean surfaced it.
  */
 public class AccountClient {
 
@@ -1357,21 +1367,24 @@ public class AccountClient {
     }
 
     /**
-     * Invoked by Resilience4j instead of getAccount's body once retries are exhausted or the
-     * circuit is open. AccountRejectedException never reaches here — it is an ignored
-     * exception (see application.yml), so it propagates straight past Resilience4j
-     * untouched, exactly as it did before this class had any resilience wrapping.
+     * Invoked by Resilience4j instead of getAccount's body -- not only once retries are
+     * exhausted or the circuit is open, but for every exception the body can throw,
+     * {@link AccountRejectedException} included (see the class javadoc). Rethrown
+     * unchanged so a business rejection still reaches the caller as a rejection.
      */
     private AccountView getAccountFallback(UUID accountId, Throwable t) {
-        throw asUnavailable(t);
+        throw rethrow(t);
     }
 
     /** Shared fallback for debit and credit — both have the same (UUID, BigDecimal, String) shape. */
     private void debitCreditFallback(UUID accountId, BigDecimal amount, String idempotencyKey, Throwable t) {
-        throw asUnavailable(t);
+        throw rethrow(t);
     }
 
-    private static AccountServiceUnavailableException asUnavailable(Throwable t) {
+    private static RuntimeException rethrow(Throwable t) {
+        if (t instanceof AccountRejectedException rejected) {
+            return rejected;
+        }
         if (t instanceof AccountServiceUnavailableException already) {
             return already;
         }
@@ -3474,10 +3487,146 @@ the first, fails to get back a definitive answer. Either way, this state is term
 
 (Remove the "Idempotency keys for debit/credit — Phase 3 item" line entirely — it's done, not deferred.)
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 3: Run the phase's live Verification Checklist (below), and fix what it finds**
+
+This is where a real, serious bug surfaced — not from a code review, from actually running
+`docker compose up` and forcing a live `COMPENSATION_REQUIRED` scenario end-to-end (debit a
+real account for real, insert the corresponding `Transfer` row, let the real scheduled sweep
+discover and process it). The scheduler fired correctly every `sweep-interval`, but looped
+"still cannot reconcile the credit leg, will retry next sweep" forever instead of reversing
+the stranded debit.
+
+Root cause: once a Resilience4j `fallbackMethod` is specified on `@Retry`, it is invoked for
+**every** exception the decorated method throws — including ones listed in
+`ignoreExceptions`. `AccountRejectedException` is configured as ignored (see Task 3), so it
+was expected to propagate through Resilience4j untouched. Instead it was being routed into
+`AccountClient`'s fallback methods and silently converted into
+`AccountServiceUnavailableException`, which broke `CompensationScheduler.compensateSource()`
+— that branch requires a genuine `AccountRejectedException` to fire, and it never did.
+
+No unit test could have caught this: `CompensationSchedulerTest` mocks `AccountClient`
+entirely, and `AccountClientTest`/`AccountClientResilienceTest` construct `AccountClient`
+directly rather than through Spring — none of them exercise the actual AOP proxy or its
+fallback methods. Fix `AccountClient`'s fallback methods to pass `AccountRejectedException`
+through unchanged (full corrected file already reflected in Task 3 above — re-sync it if
+implementing from an earlier copy), then add the regression test below, which boots the
+*real*, Spring-managed bean:
+
+```java
+// transfer-service/src/test/java/com/showcase/transfer/client/AccountClientFallbackIT.java
+package com.showcase.transfer.client;
+
+import com.sun.net.httpserver.HttpServer;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+
+import java.io.IOException;
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+/**
+ * Boots the real, Spring-managed {@link AccountClient} bean -- @CircuitBreaker/@Retry
+ * annotations active, fallback methods wired -- unlike AccountClientTest and
+ * AccountClientResilienceTest, which construct AccountClient directly and so never
+ * exercise the AOP proxy at all. Points account-service.base-url at a tiny real JDK
+ * HttpServer (no new test dependency, and no fragile Spring bean-override needed to get
+ * MockRestServiceServer bound to whatever RestClient.Builder the real bean actually uses
+ * -- a first attempt using MockRestServiceServer plus a @Primary RestClient.Builder
+ * override passed in isolation but was flaky under the full module test run, a real
+ * "Connection refused" some runs, not a false negative to shrug off).
+ *
+ * <p>This exists because a real bug (found via live docker compose verification, not by
+ * writing this test first) could not have been caught any other way:
+ * {@code CompensationSchedulerTest} mocks AccountClient entirely, so it never touched the
+ * fallback methods either. Resilience4j's fallbackMethod, once specified, is invoked for
+ * every exception the decorated method throws -- including AccountRejectedException,
+ * which is configured as an ignored exception in application.yml and was expected to
+ * propagate untouched. Without AccountClient's explicit passthrough, a definitive
+ * rejection was silently miscategorized as AccountServiceUnavailableException, which
+ * broke CompensationScheduler's compensateSource() branch: it never fired, so a stranded
+ * debit was never reversed -- the scheduler just logged "will retry next sweep" forever.
+ */
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
+@Testcontainers
+class AccountClientFallbackIT {
+
+    @Container
+    @ServiceConnection
+    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+
+    private static final UUID ACCOUNT_ID = UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+    private static HttpServer fakeAccountService;
+
+    @DynamicPropertySource
+    static void accountServiceUrl(DynamicPropertyRegistry registry) throws IOException {
+        fakeAccountService = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        fakeAccountService.createContext("/accounts/" + ACCOUNT_ID, exchange -> {
+            byte[] body = ("""
+                    {"type":"https://showcase.example/errors/account-not-found","title":"Account not found",
+                     "status":404,"detail":"Account not found: %s","code":"ACCOUNT_NOT_FOUND",
+                     "timestamp":"2026-09-10T12:00:00Z"}
+                    """.formatted(ACCOUNT_ID)).getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/problem+json");
+            exchange.sendResponseHeaders(404, body.length);
+            try (OutputStream os = exchange.getResponseBody()) {
+                os.write(body);
+            }
+        });
+        fakeAccountService.start();
+        registry.add("account-service.base-url",
+                () -> "http://localhost:" + fakeAccountService.getAddress().getPort());
+    }
+
+    @AfterAll
+    static void stopFakeAccountService() {
+        if (fakeAccountService != null) {
+            fakeAccountService.stop(0);
+        }
+    }
+
+    @Autowired
+    private AccountClient accountClient;
+
+    @Test
+    void aDefinitiveRejectionPassesThroughTheRealAopProxyUnchanged() {
+        // Asserting the exact type and code is itself conclusive proof the fake backend was
+        // reached: a real connection failure would surface as
+        // AccountServiceUnavailableException instead, never this specific rejection code.
+        assertThatThrownBy(() -> accountClient.getAccount(ACCOUNT_ID))
+                .asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.type(AccountRejectedException.class))
+                .extracting(AccountRejectedException::getCode)
+                .isEqualTo("ACCOUNT_NOT_FOUND");
+    }
+}
+```
+
+Verify this test is a genuine regression guard, not a false positive: temporarily revert
+`AccountClient`'s `rethrow(...)` to skip the `AccountRejectedException` passthrough and
+confirm this test fails (against the full module suite, not just in isolation — that is
+exactly how the first, MockRestServiceServer-based attempt at this test slipped past); then
+restore the fix, confirm it passes, and run the whole suite twice more to rule out
+flakiness.
+
+Run: `./mvnw -pl transfer-service test`
+Expected: PASS, all tests (85 across 10 classes, once this file is added).
+
+- [ ] **Step 4: Commit**
 
 ```bash
-git add README.md docs/roadmap.md
+git add README.md docs/roadmap.md transfer-service/src/main/java/com/showcase/transfer/client/AccountClient.java transfer-service/src/test/java/com/showcase/transfer/client/AccountClientFallbackIT.java
 git commit -m "docs: document automatic compensation, idempotency keys, and update the roadmap"
 ```
 

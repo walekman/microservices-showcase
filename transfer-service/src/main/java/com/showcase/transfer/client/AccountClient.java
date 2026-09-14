@@ -30,6 +30,16 @@ import java.util.function.Supplier;
  * these methods — it is handled by the fallback methods below instead, which remap it
  * onto {@link AccountServiceUnavailableException} so an open circuit looks, correctly,
  * exactly like Account being unavailable to every caller of this class.
+ *
+ * <p><b>Verified live, not just assumed:</b> once a {@code fallbackMethod} is specified,
+ * Resilience4j's Spring AOP routes every exception the decorated method throws through it
+ * — including ones listed in {@code ignoreExceptions} — not only retried-and-exhausted or
+ * circuit-open failures. Without the explicit passthrough in the fallback methods below, a
+ * definitively rejected request (e.g. {@code ACCOUNT_NOT_FOUND}) was silently
+ * miscategorized as {@link AccountServiceUnavailableException}. Unit tests that mock this
+ * class entirely (as {@code CompensationSchedulerTest} does) cannot catch this — mocking
+ * bypasses the AOP proxy, so the fallback method is never exercised. Only running the real,
+ * annotated bean surfaced it.
  */
 public class AccountClient {
 
@@ -136,21 +146,24 @@ public class AccountClient {
     }
 
     /**
-     * Invoked by Resilience4j instead of getAccount's body once retries are exhausted or the
-     * circuit is open. AccountRejectedException never reaches here — it is an ignored
-     * exception (see application.yml), so it propagates straight past Resilience4j
-     * untouched, exactly as it did before this class had any resilience wrapping.
+     * Invoked by Resilience4j instead of getAccount's body -- not only once retries are
+     * exhausted or the circuit is open, but for every exception the body can throw,
+     * {@link AccountRejectedException} included (see the class javadoc). Rethrown
+     * unchanged so a business rejection still reaches the caller as a rejection.
      */
     private AccountView getAccountFallback(UUID accountId, Throwable t) {
-        throw asUnavailable(t);
+        throw rethrow(t);
     }
 
     /** Shared fallback for debit and credit — both have the same (UUID, BigDecimal, String) shape. */
     private void debitCreditFallback(UUID accountId, BigDecimal amount, String idempotencyKey, Throwable t) {
-        throw asUnavailable(t);
+        throw rethrow(t);
     }
 
-    private static AccountServiceUnavailableException asUnavailable(Throwable t) {
+    private static RuntimeException rethrow(Throwable t) {
+        if (t instanceof AccountRejectedException rejected) {
+            return rejected;
+        }
         if (t instanceof AccountServiceUnavailableException already) {
             return already;
         }
