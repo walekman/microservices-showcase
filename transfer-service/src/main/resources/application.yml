@@ -65,3 +65,4 @@ transfer:
   compensation:
     sweep-interval: 15s
     pending-stale-after: 120s
+    sweep-batch-size: 500

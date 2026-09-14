@@ -9,6 +9,7 @@ import com.showcase.transfer.domain.TransferRepository;
 import com.showcase.transfer.domain.TransferStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.Limit;
 import org.springframework.scheduling.annotation.SchedulingConfigurer;
 import org.springframework.scheduling.config.ScheduledTaskRegistrar;
 import org.springframework.stereotype.Component;
@@ -55,7 +56,12 @@ public class CompensationScheduler implements SchedulingConfigurer {
     // Package-private so CompensationSchedulerTest can invoke it directly, without going
     // through the scheduler registration machinery.
     void drainCompensationRequired() {
-        List<Transfer> stranded = transferRepository.findByStatus(TransferStatus.COMPENSATION_REQUIRED);
+        // Limit-bounded: fine unbounded at this project's scale, but a spike in stranded
+        // transfers should not turn one sweep tick into an unbounded batch of outbound
+        // Account Service calls. A row still stranded past this batch is picked up by the
+        // next sweep -- see docs/roadmap.md's Phase 3 final-review finding.
+        List<Transfer> stranded = transferRepository.findByStatus(
+                TransferStatus.COMPENSATION_REQUIRED, Limit.of(properties.sweepBatchSize()));
         for (Transfer transfer : stranded) {
             try {
                 reconcileCredit(transfer);
@@ -73,7 +79,9 @@ public class CompensationScheduler implements SchedulingConfigurer {
 
     void sweepStalePending() {
         Instant cutoff = Instant.now().minus(properties.pendingStaleAfter());
-        List<Transfer> stale = transferRepository.findByStatusAndCreatedAtBefore(TransferStatus.PENDING, cutoff);
+        // Same batch-size reasoning as drainCompensationRequired() above.
+        List<Transfer> stale = transferRepository.findByStatusAndCreatedAtBefore(
+                TransferStatus.PENDING, cutoff, Limit.of(properties.sweepBatchSize()));
         for (Transfer transfer : stale) {
             try {
                 reconcileDebit(transfer);
