@@ -1,6 +1,7 @@
 package com.showcase.account.api;
 
 import com.showcase.account.domain.AccountNotFoundException;
+import com.showcase.account.domain.AccountOperationConflictException;
 import com.showcase.account.domain.InsufficientFundsException;
 import org.springframework.beans.TypeMismatchException;
 import org.springframework.http.HttpHeaders;
@@ -11,6 +12,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingRequestHeaderException;
+import org.springframework.web.bind.ServletRequestBindingException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
@@ -37,6 +40,11 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
                 "Account was modified concurrently, please retry");
     }
 
+    @ExceptionHandler(AccountOperationConflictException.class)
+    public ProblemDetail handleIdempotencyConflict(AccountOperationConflictException ex) {
+        return Problems.of(HttpStatus.CONFLICT, "IDEMPOTENCY_KEY_CONFLICT", "Idempotency key conflict", ex.getMessage());
+    }
+
     @ExceptionHandler(Exception.class)
     public ProblemDetail handleUnexpected(Exception ex) {
         logger.error("Unhandled exception", ex);
@@ -51,6 +59,26 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
                 .findFirst()
                 .map(error -> error.getField() + " " + error.getDefaultMessage())
                 .orElse("Validation failed");
+        return ResponseEntity.badRequest()
+                .body(Problems.of(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "Validation failed", detail));
+    }
+
+    /**
+     * {@code ResponseEntityExceptionHandler} has no dedicated hook for a missing
+     * {@code @RequestHeader} the way it does for a missing request parameter --
+     * {@link MissingRequestHeaderException} is handled through this more general one instead
+     * (it extends {@code MissingRequestValueException} extends
+     * {@link ServletRequestBindingException}). Special-cased for the header-name detail since
+     * that is the only subtype this codebase's controllers can currently trigger; any other
+     * {@code ServletRequestBindingException} falls back to a generic message rather than a
+     * missing branch.
+     */
+    @Override
+    protected ResponseEntity<Object> handleServletRequestBindingException(
+            ServletRequestBindingException ex, HttpHeaders headers, HttpStatusCode status, WebRequest request) {
+        String detail = (ex instanceof MissingRequestHeaderException missingHeader)
+                ? "Missing required header: " + missingHeader.getHeaderName()
+                : "Malformed request";
         return ResponseEntity.badRequest()
                 .body(Problems.of(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "Validation failed", detail));
     }

@@ -2,6 +2,10 @@ package com.showcase.account.service;
 
 import com.showcase.account.domain.Account;
 import com.showcase.account.domain.AccountNotFoundException;
+import com.showcase.account.domain.AccountOperation;
+import com.showcase.account.domain.AccountOperationConflictException;
+import com.showcase.account.domain.AccountOperationRepository;
+import com.showcase.account.domain.AccountOperationType;
 import com.showcase.account.domain.AccountRepository;
 import com.showcase.account.domain.InsufficientFundsException;
 import org.junit.jupiter.api.BeforeEach;
@@ -28,11 +32,14 @@ class AccountServiceTest {
     @Mock
     private AccountRepository accountRepository;
 
+    @Mock
+    private AccountOperationRepository accountOperationRepository;
+
     private AccountService accountService;
 
     @BeforeEach
     void setUp() {
-        accountService = new AccountService(accountRepository);
+        accountService = new AccountService(accountRepository, accountOperationRepository);
     }
 
     @Test
@@ -73,9 +80,10 @@ class AccountServiceTest {
         when(accountRepository.findById(id)).thenReturn(Optional.of(account));
         when(accountRepository.save(account)).thenReturn(account);
 
-        Account result = accountService.debit(id, new BigDecimal("40.00"));
+        Account result = accountService.debit(id, new BigDecimal("40.00"), "key-1");
 
         assertThat(result.getBalance()).isEqualByComparingTo("60.00");
+        verify(accountOperationRepository).saveAndFlush(any(AccountOperation.class));
     }
 
     @Test
@@ -84,9 +92,10 @@ class AccountServiceTest {
         Account account = new Account("Ada Lovelace", new BigDecimal("10.00"));
         when(accountRepository.findById(id)).thenReturn(Optional.of(account));
 
-        assertThatThrownBy(() -> accountService.debit(id, new BigDecimal("40.00")))
+        assertThatThrownBy(() -> accountService.debit(id, new BigDecimal("40.00"), "key-1"))
                 .isInstanceOf(InsufficientFundsException.class);
         verify(accountRepository, never()).save(any());
+        verify(accountOperationRepository, never()).saveAndFlush(any());
     }
 
     @Test
@@ -96,8 +105,40 @@ class AccountServiceTest {
         when(accountRepository.findById(id)).thenReturn(Optional.of(account));
         when(accountRepository.save(account)).thenReturn(account);
 
-        Account result = accountService.credit(id, new BigDecimal("25.00"));
+        Account result = accountService.credit(id, new BigDecimal("25.00"), "key-1");
 
         assertThat(result.getBalance()).isEqualByComparingTo("125.00");
+        verify(accountOperationRepository).saveAndFlush(any(AccountOperation.class));
+    }
+
+    @Test
+    void replayingAKnownIdempotencyKeyDoesNotReapplyTheDebit() {
+        UUID id = UUID.randomUUID();
+        Account account = new Account("Ada Lovelace", new BigDecimal("60.00"));
+        // Balance already reflects the FIRST application -- if this replay reapplied the
+        // debit, it would go to 20.00 instead of staying 60.00.
+        when(accountRepository.findById(id)).thenReturn(Optional.of(account));
+        when(accountOperationRepository.findById("key-1")).thenReturn(Optional.of(
+                new AccountOperation("key-1", id, AccountOperationType.DEBIT,
+                        new BigDecimal("40.00"), new BigDecimal("60.00"))));
+
+        Account result = accountService.debit(id, new BigDecimal("40.00"), "key-1");
+
+        assertThat(result.getBalance()).isEqualByComparingTo("60.00");
+        verify(accountRepository, never()).save(any());
+        verify(accountOperationRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void replayingAKeyWithDifferentParametersConflicts() {
+        UUID id = UUID.randomUUID();
+        when(accountOperationRepository.findById("key-1")).thenReturn(Optional.of(
+                new AccountOperation("key-1", id, AccountOperationType.DEBIT,
+                        new BigDecimal("40.00"), new BigDecimal("60.00"))));
+
+        assertThatThrownBy(() -> accountService.debit(id, new BigDecimal("99.00"), "key-1"))
+                .isInstanceOf(AccountOperationConflictException.class);
+        verify(accountRepository, never()).findById(any());
+        verify(accountOperationRepository, never()).saveAndFlush(any());
     }
 }

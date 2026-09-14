@@ -665,7 +665,7 @@ public class AccountService {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `./mvnw -pl account-service test -Dtest=AccountServiceTest`
-Expected: PASS, 9 tests.
+Expected: PASS, 8 tests.
 
 - [ ] **Step 5: Require the `Idempotency-Key` header on `debit`/`credit`**
 
@@ -751,6 +751,7 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingRequestHeaderException;
+import org.springframework.web.bind.ServletRequestBindingException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
@@ -800,12 +801,24 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
                 .body(Problems.of(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "Validation failed", detail));
     }
 
+    /**
+     * {@code ResponseEntityExceptionHandler} has no dedicated hook for a missing
+     * {@code @RequestHeader} the way it does for a missing request parameter --
+     * {@link MissingRequestHeaderException} is handled through this more general one instead
+     * (it extends {@code MissingRequestValueException} extends
+     * {@link ServletRequestBindingException}). Special-cased for the header-name detail since
+     * that is the only subtype this codebase's controllers can currently trigger; any other
+     * {@code ServletRequestBindingException} falls back to a generic message rather than a
+     * missing branch.
+     */
     @Override
-    protected ResponseEntity<Object> handleMissingRequestHeader(
-            MissingRequestHeaderException ex, HttpHeaders headers, HttpStatusCode status, WebRequest request) {
+    protected ResponseEntity<Object> handleServletRequestBindingException(
+            ServletRequestBindingException ex, HttpHeaders headers, HttpStatusCode status, WebRequest request) {
+        String detail = (ex instanceof MissingRequestHeaderException missingHeader)
+                ? "Missing required header: " + missingHeader.getHeaderName()
+                : "Malformed request";
         return ResponseEntity.badRequest()
-                .body(Problems.of(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "Validation failed",
-                        "Missing required header: " + ex.getHeaderName()));
+                .body(Problems.of(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "Validation failed", detail));
     }
 
     @Override
