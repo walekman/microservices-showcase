@@ -23,55 +23,6 @@ when it's brainstormed, and may reshape later rows.
 
 ## Deferred items (not their own phase — folded into whichever phase touches that area, or reassessed later)
 
-Carried over from Phase 1's final review, resolved or reassigned:
-- ~~CI workflow (build/test on push)~~ — done: `.github/workflows/ci.yml` runs `./mvnw -B test` on every PR into `master` and on push to `master` (GitHub-hosted Ubuntu runner, Docker preinstalled for Testcontainers).
-- ~~Actuator + container healthchecks~~ — done: resolved in Phase 2. Actuator `/actuator/health` endpoint wired into Docker Compose healthchecks on both Account and Transfer services.
-- ~~`ErrorResponse` wire-contract decision (stable `code` field vs. RFC 7807 `ProblemDetail`)~~ — done: resolved in Phase 2. All services return RFC 7807 `application/problem+json` with a stable `code` property, duplicated per service rather than shared through a common module.
-- ~~Swagger UI (springdoc-openapi)~~ — done for Account and Transfer Services: `springdoc-openapi-starter-webmvc-ui` 2.6.0 (pinned in root `pom.xml`'s `springdoc-openapi.version` property — this is the version that actually matches Spring Boot 3.3.4/Spring Framework 6.1.x; newer 2.7.x+ lines target Spring Framework 6.2/Boot 3.4+ and fail to start against 3.3.4 with a `NoClassDefFoundError` on `LiteWebJarsResourceResolver`), browsable at `/swagger-ui.html` on each service port. Add to each future service the same way as it's built — re-verify the pinned version against that service's actual Spring Boot version each time; don't assume the same 2.6.0 pin still applies once a service moves to a newer Boot version.
+Carried over from Phase 1's final review, not yet resolved:
 - Flyway vs. `ddl-auto` for schema management — revisit before Phase 4 or later deploys to
   three service schemas (Account + Transfer + the outbox). Currently using `ddl-auto: update`.
-
-Carried over from Phase 3's final review (an Opus subagent whole-branch pass, per
-`CLAUDE.md`'s policy of using a more capable model for this gate), resolved on
-`feature/phase-3-review-findings`:
-- ~~Critical — a transient 409 is read as a permanent rejection.~~ — done:
-  `AccountClient.rejected()` maps `CONCURRENT_MODIFICATION` to
-  `AccountServiceUnavailableException` instead of `AccountRejectedException`, so both the
-  live saga's `@Retry` and `CompensationScheduler`'s next sweep retry it instead of treating
-  a routine optimistic-lock conflict as a definitive rejection. `IDEMPOTENCY_KEY_CONFLICT`
-  (a genuine, permanent 409) is unaffected.
-- ~~High — the concurrent-duplicate-debit race's safety is unproven.~~ — done: a live
-  10-way same-`Idempotency-Key` concurrent-debit test against the real endpoint
-  (`AccountControllerIT`) proves at least one loser gets 500 and the balance reflects
-  exactly one debit, verifying the Hibernate flush-ordering assumption live instead of
-  leaving it stated but untested.
-- ~~High — the idempotent-replay path re-reads the account, not just the ledger.~~ — done
-  (documented, not changed): confirmed still unreachable (no delete/archival capability
-  exists anywhere in the app), so left as-is with an inline comment and a pinning regression
-  test (`AccountServiceTest`) as the tripwire for whichever future phase adds one.
-- ~~High — `AccountClientFallbackIT` only covers `getAccount`'s Resilience4j fallback.~~ —
-  done: extended to assert `debit`/`credit`'s `debitCreditFallback` passes a definitive
-  rejection through the real AOP proxy unchanged too; verified live by temporarily
-  reintroducing the Task 6 bug and confirming the new assertions catch it.
-- ~~Medium — `markCompleted()` from `COMPENSATION_REQUIRED` leaves stale `failureCode`/
-  `failureReason`.~~ — done: both fields are now cleared in `markCompleted()`.
-- ~~Medium — Resilience4j threshold tuning.~~ — done: `sliding-window-size`/
-  `minimum-number-of-calls` scaled by the retry multiplier (10→30, 5→15) to restore the
-  original "5 failed logical calls out of a window of 10" intent now that each logical call
-  can cost up to 3 circuit-breaker-recorded attempts.
-- ~~Medium — test coverage gaps that could hide a real-wiring bug the way the fallback bug
-  was hidden.~~ — done: `AccountClientResilienceConfigMatchesYamlIT` cross-checks the
-  hand-copied Retry/CircuitBreaker config against the real Spring-bound configuration (fails
-  if they drift, verified live); `CompensationSchedulerIT` runs the real, Spring-managed
-  `CompensationScheduler` bean against a real Postgres-backed `TransferRepository`, proving
-  the real `save()`/`@Version` path end-to-end.
-- ~~Medium — unbounded sweep batch size.~~ — done: `findByStatus`/
-  `findByStatusAndCreatedAtBefore` gained `Limit`-bounded overloads, and
-  `CompensationScheduler`'s two sweeps now pass a configurable
-  `transfer.compensation.sweep-batch-size` (default 500).
-- ~~Low — `Idempotency-Key` has no `@NotBlank`/`@Size` validation.~~ — done:
-  `AccountController`'s `debit`/`credit` endpoints now validate it (`@NotBlank @Size(max =
-  255)` via class-level `@Validated`), mapped to 400 `VALIDATION_FAILED` by a new
-  `ConstraintViolationException` handler instead of falling through to a generic 500.
-- ~~Low — README's `Idempotency-Key: demo-debit-1` examples share the global key
-  namespace.~~ — done: examples now work the account id into the key.
