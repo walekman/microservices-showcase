@@ -1,6 +1,8 @@
 package com.showcase.transfer.client;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import io.github.resilience4j.retry.annotation.Retry;
 import org.springframework.http.HttpRequest;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
@@ -18,6 +20,16 @@ import java.util.function.Supplier;
  * Calls Account Service over blocking HTTP. Every outcome collapses onto two
  * exceptions so the saga can branch on "rejected" versus "broken" without ever
  * seeing an HTTP status.
+ *
+ * <p>Wrapped in Resilience4j CircuitBreaker + Retry (see application.yml's
+ * resilience4j.* "accountService" instance): {@link AccountRejectedException} is an
+ * ignored exception (never retried, never trips the breaker — a business rejection
+ * is not infrastructure trouble), {@link AccountServiceUnavailableException} is
+ * retried. When the circuit is open, Resilience4j's own {@code CallNotPermittedException}
+ * is thrown by the AOP proxy BEFORE the method body runs, so it cannot be caught inside
+ * these methods — it is handled by the fallback methods below instead, which remap it
+ * onto {@link AccountServiceUnavailableException} so an open circuit looks, correctly,
+ * exactly like Account being unavailable to every caller of this class.
  */
 public class AccountClient {
 
@@ -29,6 +41,8 @@ public class AccountClient {
         this.objectMapper = objectMapper;
     }
 
+    @CircuitBreaker(name = "accountService")
+    @Retry(name = "accountService", fallbackMethod = "getAccountFallback")
     public AccountView getAccount(UUID accountId) {
         // A 204, or a 200 with Content-Length: 0, makes the message converter return null.
         // Without this guard the saga NPEs on account.balance() instead of branching.
@@ -45,18 +59,23 @@ public class AccountClient {
         return account;
     }
 
-    public void debit(UUID accountId, BigDecimal amount) {
-        post(accountId, amount, "debit");
+    @CircuitBreaker(name = "accountService")
+    @Retry(name = "accountService", fallbackMethod = "debitCreditFallback")
+    public void debit(UUID accountId, BigDecimal amount, String idempotencyKey) {
+        post(accountId, amount, "debit", idempotencyKey);
     }
 
-    public void credit(UUID accountId, BigDecimal amount) {
-        post(accountId, amount, "credit");
+    @CircuitBreaker(name = "accountService")
+    @Retry(name = "accountService", fallbackMethod = "debitCreditFallback")
+    public void credit(UUID accountId, BigDecimal amount, String idempotencyKey) {
+        post(accountId, amount, "credit", idempotencyKey);
     }
 
-    private void post(UUID accountId, BigDecimal amount, String operation) {
+    private void post(UUID accountId, BigDecimal amount, String operation, String idempotencyKey) {
         call(() -> restClient.post()
                 .uri("/accounts/{id}/{operation}", accountId, operation)
                 .contentType(MediaType.APPLICATION_JSON)
+                .header("Idempotency-Key", idempotencyKey)
                 .body(Map.of("amount", amount))
                 .retrieve()
                 .onStatus(HttpStatusCode::is4xxClientError, this::rejected)
@@ -114,5 +133,27 @@ public class AccountClient {
         } catch (Exception ex) {
             return new AccountProblem("UNKNOWN", "Account Service returned an unreadable error body");
         }
+    }
+
+    /**
+     * Invoked by Resilience4j instead of getAccount's body once retries are exhausted or the
+     * circuit is open. AccountRejectedException never reaches here — it is an ignored
+     * exception (see application.yml), so it propagates straight past Resilience4j
+     * untouched, exactly as it did before this class had any resilience wrapping.
+     */
+    private AccountView getAccountFallback(UUID accountId, Throwable t) {
+        throw asUnavailable(t);
+    }
+
+    /** Shared fallback for debit and credit — both have the same (UUID, BigDecimal, String) shape. */
+    private void debitCreditFallback(UUID accountId, BigDecimal amount, String idempotencyKey, Throwable t) {
+        throw asUnavailable(t);
+    }
+
+    private static AccountServiceUnavailableException asUnavailable(Throwable t) {
+        if (t instanceof AccountServiceUnavailableException already) {
+            return already;
+        }
+        return new AccountServiceUnavailableException("Account Service call failed: " + t.getMessage(), t);
     }
 }

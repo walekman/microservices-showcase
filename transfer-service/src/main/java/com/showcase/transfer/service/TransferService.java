@@ -65,7 +65,7 @@ public class TransferService {
 
             // Step 2: debit the source.
             try {
-                accountClient.debit(fromAccountId, amount);
+                accountClient.debit(fromAccountId, amount, transfer.getId() + ":debit");
             } catch (AccountRejectedException ex) {
                 // Account understood and refused. Nothing moved -- genuinely clean.
                 return fail(transfer, TransferFailureCode.fromAccountCode(ex.getCode()), ex.getDetail());
@@ -95,7 +95,7 @@ public class TransferService {
             // so business rejection and infrastructure failure have identical consequences:
             // funds are stranded and something has to put them back. Plan 3 adds that.
             try {
-                accountClient.credit(toAccountId, amount);
+                accountClient.credit(toAccountId, amount, transfer.getId() + ":credit");
             } catch (AccountRejectedException ex) {
                 return strand(transfer, TransferFailureCode.fromAccountCode(ex.getCode()), ex.getDetail());
             } catch (AccountServiceUnavailableException ex) {
