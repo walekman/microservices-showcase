@@ -137,6 +137,32 @@ class AccountControllerIT {
     }
 
     @Test
+    void rejectsADebitWithABlankIdempotencyKeyHeader() {
+        UUID id = createAccount(new BigDecimal("100.00"));
+
+        ResponseEntity<ProblemDetail> response = restTemplate.exchange(
+                "/accounts/" + id + "/debit", HttpMethod.POST,
+                amountRequest(new BigDecimal("40.00"), "   "), ProblemDetail.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(response.getBody().getProperties()).containsEntry("code", "VALIDATION_FAILED");
+    }
+
+    @Test
+    void rejectsADebitWithAnOverlongIdempotencyKeyHeader() {
+        UUID id = createAccount(new BigDecimal("100.00"));
+        // AccountOperation.idempotencyKey is @Column(length = 255).
+        String tooLong = "k".repeat(256);
+
+        ResponseEntity<ProblemDetail> response = restTemplate.exchange(
+                "/accounts/" + id + "/debit", HttpMethod.POST,
+                amountRequest(new BigDecimal("40.00"), tooLong), ProblemDetail.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(response.getBody().getProperties()).containsEntry("code", "VALIDATION_FAILED");
+    }
+
+    @Test
     void reusingAKeyWithADifferentAmountConflicts() {
         UUID id = createAccount(new BigDecimal("100.00"));
         debit(id, new BigDecimal("40.00"), "conflict-key");

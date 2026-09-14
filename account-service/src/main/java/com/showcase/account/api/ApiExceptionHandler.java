@@ -3,6 +3,8 @@ package com.showcase.account.api;
 import com.showcase.account.domain.AccountNotFoundException;
 import com.showcase.account.domain.AccountOperationConflictException;
 import com.showcase.account.domain.InsufficientFundsException;
+import jakarta.validation.ConstraintViolationException;
+import jakarta.validation.Path;
 import org.springframework.beans.TypeMismatchException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -43,6 +45,30 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(AccountOperationConflictException.class)
     public ProblemDetail handleIdempotencyConflict(AccountOperationConflictException ex) {
         return Problems.of(HttpStatus.CONFLICT, "IDEMPOTENCY_KEY_CONFLICT", "Idempotency key conflict", ex.getMessage());
+    }
+
+    /**
+     * @Validated on the controller (see its javadoc) routes a constraint on an
+     * @RequestHeader/@PathVariable method parameter through Spring's AOP-based
+     * MethodValidationInterceptor, which throws this -- not the @Valid-on-@RequestBody path
+     * MethodArgumentNotValidException covers below. Without this handler, a blank or overlong
+     * Idempotency-Key fell through to the generic Exception handler as a 500.
+     */
+    @ExceptionHandler(ConstraintViolationException.class)
+    public ProblemDetail handleConstraintViolation(ConstraintViolationException ex) {
+        String detail = ex.getConstraintViolations().stream()
+                .findFirst()
+                .map(violation -> lastPathSegment(violation.getPropertyPath()) + " " + violation.getMessage())
+                .orElse("Validation failed");
+        return Problems.of(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "Validation failed", detail);
+    }
+
+    private static String lastPathSegment(Path path) {
+        String last = "request";
+        for (Path.Node node : path) {
+            last = node.getName();
+        }
+        return last;
     }
 
     @ExceptionHandler(Exception.class)

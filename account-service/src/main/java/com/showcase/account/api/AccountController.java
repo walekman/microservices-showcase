@@ -3,7 +3,10 @@ package com.showcase.account.api;
 import com.showcase.account.domain.Account;
 import com.showcase.account.service.AccountService;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -16,8 +19,13 @@ import java.net.URI;
 import java.util.List;
 import java.util.UUID;
 
+// @Validated turns on method-parameter validation (constraints directly on @RequestHeader/
+// @PathVariable params, as opposed to @Valid on a @RequestBody object) -- without it, a
+// blank or overlong Idempotency-Key reaches AccountOperation's constructor guard as an
+// uncaught IllegalArgumentException, surfacing as a generic 500 instead of a 400.
 @RestController
 @RequestMapping("/accounts")
+@Validated
 public class AccountController {
 
     private final AccountService accountService;
@@ -47,13 +55,13 @@ public class AccountController {
 
     @PostMapping("/{id}/debit")
     public AccountResponse debit(@PathVariable UUID id, @Valid @RequestBody AmountRequest request,
-                                  @RequestHeader("Idempotency-Key") String idempotencyKey) {
+                                  @RequestHeader("Idempotency-Key") @NotBlank @Size(max = 255) String idempotencyKey) {
         return AccountResponse.from(accountService.debit(id, request.amount(), idempotencyKey));
     }
 
     @PostMapping("/{id}/credit")
     public AccountResponse credit(@PathVariable UUID id, @Valid @RequestBody AmountRequest request,
-                                   @RequestHeader("Idempotency-Key") String idempotencyKey) {
+                                   @RequestHeader("Idempotency-Key") @NotBlank @Size(max = 255) String idempotencyKey) {
         return AccountResponse.from(accountService.credit(id, request.amount(), idempotencyKey));
     }
 }
