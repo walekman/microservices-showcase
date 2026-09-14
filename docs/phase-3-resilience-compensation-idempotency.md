@@ -199,6 +199,7 @@ import jakarta.persistence.Table;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.springframework.data.domain.Persistable;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -212,12 +213,21 @@ import java.util.UUID;
  *
  * <p>Never updated after creation. A repeat of the same idempotencyKey returns this row's
  * balanceAfter instead of reapplying the operation.
+ *
+ * <p>Implements {@link Persistable} and hardcodes {@link #isNew()} to {@code true}: the
+ * {@code @Id} here is a caller-assigned String, never {@code @GeneratedValue}, so Spring
+ * Data JPA's default new-vs-existing detection (a null id means new) always sees a non-null
+ * id and would route every {@code save()} through {@code EntityManager.merge()} -- a silent
+ * upsert -- instead of {@code persist()}. That would make a duplicate idempotency key update
+ * the existing row instead of hitting the unique-constraint violation the dedup logic
+ * depends on. Since every save here is genuinely a new row, isNew() always returning true
+ * forces persist() every time.
  */
 @Entity
 @Table(name = "account_operations")
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-public class AccountOperation {
+public class AccountOperation implements Persistable<String> {
 
     @Id
     @Column(length = 255)
@@ -230,10 +240,11 @@ public class AccountOperation {
     @Column(nullable = false, updatable = false, length = 16)
     private AccountOperationType operation;
 
-    @Column(nullable = false, precision = 19, scale = 4, updatable = false)
+    // scale 2, matching Account.balance -- see the comment there.
+    @Column(nullable = false, precision = 19, scale = 2, updatable = false)
     private BigDecimal amount;
 
-    @Column(nullable = false, precision = 19, scale = 4, updatable = false)
+    @Column(nullable = false, precision = 19, scale = 2, updatable = false)
     private BigDecimal balanceAfter;
 
     @Column(nullable = false, updatable = false)
@@ -265,6 +276,16 @@ public class AccountOperation {
         return !this.accountId.equals(accountId)
                 || this.operation != operation
                 || this.amount.compareTo(amount) != 0;
+    }
+
+    @Override
+    public String getId() {
+        return idempotencyKey;
+    }
+
+    @Override
+    public boolean isNew() {
+        return true;
     }
 }
 ```
