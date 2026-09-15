@@ -1,4 +1,4 @@
-// transfer-service/src/test/java/com/showcase/transfer/service/TransferOutboxServiceTest.java
+// transfer-service/src/test/java/com/showcase/transfer/service/TransferSaveServiceTest.java
 package com.showcase.transfer.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -22,14 +22,14 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
-class TransferOutboxServiceTest {
+class TransferSaveServiceTest {
 
     @Mock
     private TransferRepository transferRepository;
     @Mock
     private OutboxEventRepository outboxEventRepository;
 
-    private TransferOutboxService service;
+    private TransferSaveService service;
 
     @BeforeEach
     void setUp() {
@@ -37,7 +37,7 @@ class TransferOutboxServiceTest {
         // module -- Spring's auto-configured bean has it registered already, but a
         // hand-built one in a unit test needs it explicitly, or toPayload() throws.
         ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
-        service = new TransferOutboxService(transferRepository, outboxEventRepository, objectMapper);
+        service = new TransferSaveService(transferRepository, outboxEventRepository, objectMapper);
     }
 
     @Test

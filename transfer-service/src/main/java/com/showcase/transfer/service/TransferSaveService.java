@@ -1,4 +1,4 @@
-// transfer-service/src/main/java/com/showcase/transfer/service/TransferOutboxService.java
+// transfer-service/src/main/java/com/showcase/transfer/service/TransferSaveService.java
 package com.showcase.transfer.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -27,13 +27,13 @@ import java.util.UUID;
  * docs/phase-2-transfer-service-saga.md's Design Decisions and this phase's own.
  */
 @Service
-public class TransferOutboxService {
+public class TransferSaveService {
 
     private final TransferRepository transferRepository;
     private final OutboxEventRepository outboxEventRepository;
     private final ObjectMapper objectMapper;
 
-    public TransferOutboxService(TransferRepository transferRepository,
+    public TransferSaveService(TransferRepository transferRepository,
                                   OutboxEventRepository outboxEventRepository,
                                   ObjectMapper objectMapper) {
         this.transferRepository = transferRepository;

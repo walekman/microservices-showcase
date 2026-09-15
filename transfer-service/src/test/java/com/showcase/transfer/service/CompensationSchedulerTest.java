@@ -44,21 +44,21 @@ class CompensationSchedulerTest {
     private AccountClient accountClient;
 
     @Mock
-    private TransferOutboxService transferOutboxService;
+    private TransferSaveService transferSaveService;
 
     private CompensationScheduler scheduler;
 
     @BeforeEach
     void setUp() {
-        // Default behavior: transferOutboxService.save() delegates to transferRepository.save()
+        // Default behavior: transferSaveService.save() delegates to transferRepository.save()
         // so that tests verifying transferRepository.save() interactions still work.
         // Use lenient() because some tests (when Account Service is unavailable) never reach save() calls.
-        lenient().when(transferOutboxService.save(any(Transfer.class))).thenAnswer(invocation -> {
+        lenient().when(transferSaveService.save(any(Transfer.class))).thenAnswer(invocation -> {
             Transfer transfer = invocation.getArgument(0);
             return transferRepository.save(transfer);
         });
         scheduler = new CompensationScheduler(transferRepository, accountClient,
-                new CompensationProperties(Duration.ofSeconds(15), Duration.ofSeconds(120), 500), transferOutboxService);
+                new CompensationProperties(Duration.ofSeconds(15), Duration.ofSeconds(120), 500), transferSaveService);
     }
 
     private Transfer strandedTransfer() {
