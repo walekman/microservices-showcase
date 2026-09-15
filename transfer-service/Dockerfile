@@ -4,6 +4,7 @@ COPY .mvn/ .mvn/
 COPY mvnw pom.xml ./
 COPY account-service/pom.xml account-service/pom.xml
 COPY transfer-service/pom.xml transfer-service/pom.xml
+COPY notification-service/pom.xml notification-service/pom.xml
 RUN chmod +x mvnw && ./mvnw -pl transfer-service -am dependency:go-offline -B
 COPY transfer-service/src transfer-service/src
 RUN ./mvnw -pl transfer-service -am package -DskipTests -B

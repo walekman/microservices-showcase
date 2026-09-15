@@ -19,6 +19,7 @@
   <modules>
     <module>account-service</module>
     <module>transfer-service</module>
+    <module>notification-service</module>
   </modules>
 
   <properties>
