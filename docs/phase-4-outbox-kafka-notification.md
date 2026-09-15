@@ -257,6 +257,7 @@ import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.Table;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -265,8 +266,15 @@ import lombok.NoArgsConstructor;
 import java.time.Instant;
 import java.util.UUID;
 
+// Index on (publishedAt, createdAt): OutboxPublisher's poll query
+// (findByPublishedAtIsNullOrderByCreatedAtAsc) runs every poll-interval (5s default) and
+// filters on publishedAt IS NULL then sorts by createdAt -- without this index it's a full
+// table scan every tick, on a table that only ever grows (nothing prunes published rows;
+// see docs/roadmap.md's deferred-items list). countByPublishedAtIsNull() (the backlog
+// gauge, scraped on every metrics poll) benefits from the same index. Added during the
+// Phase 4 final review -- see docs/roadmap.md.
 @Entity
-@Table(name = "outbox_events")
+@Table(name = "outbox_events", indexes = @Index(name = "idx_outbox_unpublished", columnList = "publishedAt, createdAt"))
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class OutboxEvent {
@@ -655,12 +663,40 @@ Run `./mvnw -pl transfer-service dependency:tree -Dincludes=org.springframework.
 ```yaml
 # transfer-service/src/main/resources/application.yml: add at top level
 spring:
+  # OutboxPublisher and CompensationScheduler's two sweeps are all SchedulingConfigurer
+  # tasks, and Spring Boot defaults task scheduling to a single-thread pool when nothing
+  # sets this -- meaning all three tasks serialize on one thread ("scheduling-1"). One
+  # thread per scheduled task (publishPending, drainCompensationRequired,
+  # sweepStalePending) so a slow/blocked tick on one cannot starve the others.
+  task:
+    scheduling:
+      pool:
+        size: 3
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
       acks: all
+      properties:
+        # KafkaProducer.send() blocks the CALLING thread synchronously (inside its
+        # metadata-wait), before it even returns a Future to call .get() on, for up to
+        # max.block.ms when the broker is unreachable -- the kafka-clients default is 60s.
+        # OutboxPublisherProperties.publishTimeout only bounds the .get() call on the
+        # Future send() eventually returns; it does nothing about this earlier blocking
+        # wait. Bounding max.block.ms here makes a down broker fail fast instead of
+        # occupying a scheduling thread for up to 500 rows * 60s per poll tick.
+        max.block.ms: 5000
+        # request.timeout.ms must be lowered too: KafkaProducer validates
+        # delivery.timeout.ms >= linger.ms + request.timeout.ms at construction time and
+        # THROWS (fails the producer bean's own creation, not just one send) if that doesn't
+        # hold -- the kafka-clients default for request.timeout.ms is 30000ms, comfortably
+        # larger than a delivery.timeout.ms of 10000ms on its own. 5000ms here (linger.ms
+        # defaults to 0) keeps 10000 >= 0 + 5000 valid with room to spare.
+        request.timeout.ms: 5000
+        # Bounds how long an already-sent-but-unacked record can sit in-flight before the
+        # Future returned by send() completes exceptionally.
+        delivery.timeout.ms: 10000
 
 transfer:
   outbox:
@@ -672,7 +708,9 @@ transfer:
       failed: transfer.failed
 ```
 
-(Note: `spring.kafka` is a new top-level key alongside the existing `spring.application`/`spring.threads`/`spring.datasource`/`spring.jpa` block — merge into the existing `spring:` block, don't duplicate the key. Same for adding `transfer.outbox` alongside the existing `transfer.compensation` block.)
+(Note: `spring.kafka`/`spring.task` are new top-level keys alongside the existing `spring.application`/`spring.threads`/`spring.datasource`/`spring.jpa` block — merge into the existing `spring:` block, don't duplicate the key. Same for adding `transfer.outbox` alongside the existing `transfer.compensation` block.)
+
+**Update, Phase 4 final review:** the `producer.properties.max.block.ms`/`request.timeout.ms`/`delivery.timeout.ms` and the top-level `spring.task.scheduling.pool.size` above were both added post-merge — the original Task 3 pass shipped without them, leaving a Kafka outage able to block the single shared scheduling thread for up to ~8 hours (500 rows × the kafka-clients default `max.block.ms` of 60s) and stall `CompensationScheduler`'s money-safety sweeps along with it. See `OutboxPublisher.java`'s own comments for how a broker-unreachable failure is distinguished from a row-specific one now that `publishPending()` stops the rest of a batch on the former. `request.timeout.ms` was not in the original fix plan — it was added only after actually running `OutboxPublisherIT` against it: `delivery.timeout.ms: 10000` alone made the producer bean fail to construct at all (`ConfigException: delivery.timeout.ms should be equal to or larger than linger.ms + request.timeout.ms`, since the kafka-clients default `request.timeout.ms` is 30000ms), which is the kind of thing "verify by checking the resulting producer's config" is worth doing for, not just reasoning about in the abstract.
 
 - [ ] **Step 3: Write the explicit Kafka producer config**
 
@@ -745,6 +783,8 @@ import com.showcase.transfer.domain.OutboxEvent;
 import com.showcase.transfer.domain.OutboxEventRepository;
 import com.showcase.transfer.domain.OutboxEventType;
 import io.micrometer.core.instrument.MeterRegistry;
+import org.apache.kafka.common.errors.DisconnectException;
+import org.apache.kafka.common.errors.NetworkException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Limit;
@@ -756,7 +796,6 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 
 /**
  * Polls OutboxEventRepository for unpublished rows and publishes each to Kafka, mirroring
@@ -787,14 +826,29 @@ public class OutboxPublisher implements SchedulingConfigurer {
         registrar.addFixedDelayTask(this::publishPending, properties.pollInterval().toMillis());
     }
 
-    // Package-private so OutboxPublisherIT can invoke it directly, without going through
-    // the scheduler registration machinery -- same reasoning as CompensationScheduler.
+    // Package-private so OutboxPublisherIT/OutboxPublisherTest can invoke it directly,
+    // without going through the scheduler registration machinery -- same reasoning as
+    // CompensationScheduler.
     void publishPending() {
         List<OutboxEvent> pending = outboxEventRepository.findByPublishedAtIsNullOrderByCreatedAtAsc(
                 Limit.of(properties.batchSize()));
-        for (OutboxEvent event : pending) {
+        for (int i = 0; i < pending.size(); i++) {
+            OutboxEvent event = pending.get(i);
             try {
                 publish(event);
+            } catch (BrokerUnavailableException brokerDown) {
+                // A broker-connectivity failure is not row-specific: every other row in this
+                // tick's batch would fail the exact same way, each burning up to
+                // publish-timeout/max.block.ms against a broker that is still down --
+                // up to 500 rows * ~5-60s apiece for no benefit. Stop this tick here instead;
+                // every row in `pending`, including this one, is still unpublished, so the
+                // next poll-interval tick retries the whole backlog once the broker recovers.
+                // Nothing is lost, only deferred. See publish()'s own comment for how this is
+                // told apart from a row-specific failure.
+                log.error("Outbox publish tick aborted: Kafka broker unreachable after {}, "
+                                + "deferring the remaining {} row(s) in this batch to the next tick",
+                        event.getId(), pending.size() - i, brokerDown.getCause());
+                break;
             } catch (RuntimeException unexpected) {
                 // One row's failure must not block the rest of this batch. The row is still
                 // unpublished, so the next tick retries it -- same reasoning as
@@ -815,7 +869,34 @@ public class OutboxPublisher implements SchedulingConfigurer {
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             log.error("Outbox event {} publish interrupted, will retry next tick", event.getId(), interrupted);
-        } catch (TimeoutException | ExecutionException failed) {
+        } catch (org.apache.kafka.common.errors.TimeoutException | java.util.concurrent.TimeoutException brokerTimeout) {
+            // Two distinct timeouts, both meaning "this producer cannot currently talk to
+            // Kafka", not "this row is bad":
+            //  - org.apache.kafka.common.errors.TimeoutException is thrown SYNCHRONOUSLY by
+            //    kafkaTemplate.send(...) itself, on the calling (scheduling) thread, before a
+            //    Future is even returned to call .get() on -- this is the path taken when the
+            //    producer cannot fetch topic metadata from the broker within max.block.ms
+            //    (application.yml), i.e. the broker is unreachable.
+            //  - java.util.concurrent.TimeoutException is our own .get(publishTimeout) bound
+            //    expiring while a Future returned by send() is still pending -- e.g. the
+            //    broker accepted the connection but never acked within delivery.timeout.ms.
+            // Every other row in this batch would hit the same wall, so this is escalated to
+            // BrokerUnavailableException rather than being treated as this row's problem.
+            throw new BrokerUnavailableException(brokerTimeout);
+        } catch (ExecutionException failed) {
+            Throwable cause = failed.getCause();
+            if (cause instanceof org.apache.kafka.common.errors.TimeoutException
+                    || cause instanceof NetworkException
+                    || cause instanceof DisconnectException) {
+                // Same broker-unreachable family as above, just surfaced asynchronously
+                // through the Future instead of thrown synchronously by send() -- e.g. the
+                // in-flight request expired (delivery.timeout.ms) or the connection dropped
+                // mid-send. Still not row-specific.
+                throw new BrokerUnavailableException(cause);
+            }
+            // Anything else reaching here is specific to this row/record (e.g. a broker-side
+            // rejection of this particular record) rather than broker connectivity -- log and
+            // let the caller move on to the next row, same as before.
             log.error("Outbox event {} failed to publish to {}, will retry next tick", event.getId(), topic, failed);
         }
     }
@@ -826,8 +907,23 @@ public class OutboxPublisher implements SchedulingConfigurer {
             case TRANSFER_FAILED -> properties.topics().failed();
         };
     }
+
+    /**
+     * Internal signal that publishPending()'s current batch should stop early because Kafka
+     * itself -- not this one row -- is unreachable. Never escapes this class: publish() throws
+     * it, publishPending() catches it and breaks the loop. Deliberately a RuntimeException
+     * subtype caught BEFORE the existing generic {@code catch (RuntimeException unexpected)},
+     * not a checked exception, so publish()'s signature doesn't have to change.
+     */
+    private static final class BrokerUnavailableException extends RuntimeException {
+        BrokerUnavailableException(Throwable cause) {
+            super(cause);
+        }
+    }
 }
 ```
+
+**Update, Phase 4 final review:** the shape above (`BrokerUnavailableException`, the index-based loop, the split of `org.apache.kafka.common.errors.TimeoutException`/`NetworkException`/`DisconnectException` from other `ExecutionException` causes) replaced the original Task 3 version, whose `catch (TimeoutException | ExecutionException failed)` only ever caught the two exceptions `.get()` itself can throw — it never caught the *synchronous* `org.apache.kafka.common.errors.TimeoutException` that `kafkaTemplate.send(...)` throws directly when the producer can't reach the broker within `max.block.ms`. That uncaught exception fell through to `publishPending()`'s generic `catch (RuntimeException unexpected)`, which logged it and moved on to the next row — meaning a fully-down broker was retried once per row, all 500 of them, every tick. See `OutboxPublisherTest.java` for the regression tests.
 
 - [ ] **Step 6: Write the failing integration test**
 
@@ -838,10 +934,16 @@ package com.showcase.transfer.service;
 import com.showcase.transfer.domain.OutboxEvent;
 import com.showcase.transfer.domain.OutboxEventRepository;
 import com.showcase.transfer.domain.OutboxEventType;
+import org.apache.kafka.clients.consumer.Consumer;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.common.serialization.StringDeserializer;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.kafka.test.utils.KafkaTestUtils;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -849,6 +951,8 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.kafka.ConfluentKafkaContainer;
 
+import java.time.Duration;
+import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -878,15 +982,40 @@ class OutboxPublisherIT {
     @Autowired
     private OutboxPublisher outboxPublisher;
 
+    @Autowired
+    private OutboxPublisherProperties outboxPublisherProperties;
+
     @Test
     void publishesAnUnpublishedEventAndMarksItPublished() {
+        UUID transferId = UUID.randomUUID();
+        String payload = "{\"status\":\"COMPLETED\"}";
         OutboxEvent event = outboxEventRepository.saveAndFlush(
-                new OutboxEvent(UUID.randomUUID(), OutboxEventType.TRANSFER_COMPLETED, "{\"status\":\"COMPLETED\"}"));
+                new OutboxEvent(transferId, OutboxEventType.TRANSFER_COMPLETED, payload));
 
         outboxPublisher.publishPending();
 
         OutboxEvent reloaded = outboxEventRepository.findById(event.getId()).orElseThrow();
         assertThat(reloaded.getPublishedAt()).isNotNull();
+
+        // Only asserting publishedAt is non-null does not prove anything about WHERE the
+        // message went or what it carried: because the test broker auto-creates topics,
+        // topicFor() routing to the wrong topic string would still leave this test green.
+        // Attach a real consumer to the topic OutboxPublisherProperties says TRANSFER_COMPLETED
+        // routes to, and prove the key/value contract directly -- this is the one thing nothing
+        // else in the suite protects.
+        String topic = outboxPublisherProperties.topics().completed();
+        var consumerProps = KafkaTestUtils.consumerProps(kafka.getBootstrapServers(), "outbox-publisher-it", "true");
+        // consumerProps() defaults to IntegerDeserializer for the key -- OutboxPublisher's
+        // producer key is the transfer id as a String (see topicFor()/publish()), so this
+        // must be overridden or the consumer throws deserializing the first record.
+        consumerProps.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+        try (Consumer<String, String> consumer = new KafkaConsumer<>(consumerProps)) {
+            consumer.subscribe(List.of(topic));
+            ConsumerRecord<String, String> record = KafkaTestUtils.getSingleRecord(consumer, topic, Duration.ofSeconds(10));
+
+            assertThat(record.key()).isEqualTo(transferId.toString());
+            assertThat(record.value()).isEqualTo(payload);
+        }
     }
 
     @Test
@@ -907,6 +1036,8 @@ class OutboxPublisherIT {
     }
 }
 ```
+
+**Update, Phase 4 final review:** the real-consumer assertion in `publishesAnUnpublishedEventAndMarksItPublished` was added post-merge. The original Task 3 version only asserted `getPublishedAt()` was non-null, which the test broker's topic auto-creation meant would stay green even if `topicFor()` routed to the wrong topic string entirely -- nothing previously proved the right topic, key, or payload actually received the message.
 
 **This test intentionally has no class-level `@Transactional`.** `OutboxPublisher` polls without a surrounding transaction in production (matching `CompensationScheduler`'s pattern) — wrapping the test in one would exercise a different code path than the real scheduler and would have hidden the `payload` LOB bug above instead of catching it. If a future edit adds `@Transactional` here to silence a similar-looking error, treat that as a regression, not a fix: find out what production code path it's masking first.
 
@@ -1121,8 +1252,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
-import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.kafka.ConfluentKafkaContainer;
@@ -1134,9 +1266,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 @ExtendWith(OutputCaptureExtension.class)
 class NotificationListenerIT {
 
+    // @ServiceConnection on ConfluentKafkaContainer throws ConnectionDetailsNotFoundException
+    // on Spring Boot 3.3.4 -- same finding as transfer-service's OutboxPublisherIT. Wire the
+    // bootstrap address manually instead.
     @Container
-    @ServiceConnection
     static ConfluentKafkaContainer kafka = new ConfluentKafkaContainer("confluentinc/cp-kafka:7.7.1");
+
+    @DynamicPropertySource
+    static void kafkaProperties(DynamicPropertyRegistry registry) {
+        registry.add("spring.kafka.bootstrap-servers", kafka::getBootstrapServers);
+    }
 
     @Autowired
     private KafkaTemplate<Object, Object> kafkaTemplate;

@@ -7,6 +7,16 @@ spring:
   threads:
     virtual:
       enabled: true
+  # OutboxPublisher and CompensationScheduler's two sweeps are all SchedulingConfigurer
+  # tasks, and Spring Boot defaults task scheduling to a single-thread pool when nothing
+  # sets this -- meaning all three tasks serialize on one thread ("scheduling-1"). One
+  # thread per scheduled task (publishPending, drainCompensationRequired,
+  # sweepStalePending) so a slow/blocked tick on one cannot starve the others -- found live
+  # during Phase 4's final review, see docs/roadmap.md.
+  task:
+    scheduling:
+      pool:
+        size: 3
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:transfer}
     username: ${DB_USER:transfer_service}
@@ -21,6 +31,29 @@ spring:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
       acks: all
+      properties:
+        # KafkaProducer.send() blocks the CALLING thread synchronously (inside its
+        # metadata-wait), before it even returns a Future to call .get() on, for up to
+        # max.block.ms when the broker is unreachable -- the kafka-clients default is 60s.
+        # OutboxPublisherProperties.publishTimeout only bounds the .get() call on the
+        # Future send() eventually returns; it does nothing about this earlier blocking
+        # wait. Bounding max.block.ms here makes a down broker fail fast instead of
+        # occupying a scheduling thread for up to 500 rows * 60s per poll tick. See
+        # OutboxPublisher's own comments for how a broker-unreachable failure is then
+        # distinguished from a row-specific one.
+        max.block.ms: 5000
+        # request.timeout.ms must be lowered too: KafkaProducer validates
+        # delivery.timeout.ms >= linger.ms + request.timeout.ms at construction time and
+        # THROWS (fails the producer bean's own creation, not just one send) if that doesn't
+        # hold -- found live verifying this fix, since the kafka-clients default for
+        # request.timeout.ms is 30000ms, comfortably larger than a delivery.timeout.ms of
+        # 10000ms on its own. 5000ms here (linger.ms defaults to 0) keeps 10000 >= 0 + 5000
+        # valid with room to spare.
+        request.timeout.ms: 5000
+        # Bounds how long an already-sent-but-unacked record can sit in-flight before the
+        # Future returned by send() completes exceptionally -- the other half of "a broker
+        # outage fails fast" alongside max.block.ms above.
+        delivery.timeout.ms: 10000
 
 management:
   endpoints:

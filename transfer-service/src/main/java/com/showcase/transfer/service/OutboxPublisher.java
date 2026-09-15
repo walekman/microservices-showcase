@@ -4,6 +4,8 @@ import com.showcase.transfer.domain.OutboxEvent;
 import com.showcase.transfer.domain.OutboxEventRepository;
 import com.showcase.transfer.domain.OutboxEventType;
 import io.micrometer.core.instrument.MeterRegistry;
+import org.apache.kafka.common.errors.DisconnectException;
+import org.apache.kafka.common.errors.NetworkException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Limit;
@@ -15,7 +17,6 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 
 /**
  * Polls OutboxEventRepository for unpublished rows and publishes each to Kafka, mirroring
@@ -46,14 +47,29 @@ public class OutboxPublisher implements SchedulingConfigurer {
         registrar.addFixedDelayTask(this::publishPending, properties.pollInterval().toMillis());
     }
 
-    // Package-private so OutboxPublisherIT can invoke it directly, without going through
-    // the scheduler registration machinery -- same reasoning as CompensationScheduler.
+    // Package-private so OutboxPublisherIT/OutboxPublisherTest can invoke it directly,
+    // without going through the scheduler registration machinery -- same reasoning as
+    // CompensationScheduler.
     void publishPending() {
         List<OutboxEvent> pending = outboxEventRepository.findByPublishedAtIsNullOrderByCreatedAtAsc(
                 Limit.of(properties.batchSize()));
-        for (OutboxEvent event : pending) {
+        for (int i = 0; i < pending.size(); i++) {
+            OutboxEvent event = pending.get(i);
             try {
                 publish(event);
+            } catch (BrokerUnavailableException brokerDown) {
+                // A broker-connectivity failure is not row-specific: every other row in this
+                // tick's batch would fail the exact same way, each burning up to
+                // publish-timeout/max.block.ms against a broker that is still down --
+                // up to 500 rows * ~5-60s apiece for no benefit. Stop this tick here instead;
+                // every row in `pending`, including this one, is still unpublished, so the
+                // next poll-interval tick retries the whole backlog once the broker recovers.
+                // Nothing is lost, only deferred. See publish()'s own comment for how this is
+                // told apart from a row-specific failure.
+                log.error("Outbox publish tick aborted: Kafka broker unreachable after {}, "
+                                + "deferring the remaining {} row(s) in this batch to the next tick",
+                        event.getId(), pending.size() - i, brokerDown.getCause());
+                break;
             } catch (RuntimeException unexpected) {
                 // One row's failure must not block the rest of this batch. The row is still
                 // unpublished, so the next tick retries it -- same reasoning as
@@ -74,7 +90,34 @@ public class OutboxPublisher implements SchedulingConfigurer {
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             log.error("Outbox event {} publish interrupted, will retry next tick", event.getId(), interrupted);
-        } catch (TimeoutException | ExecutionException failed) {
+        } catch (org.apache.kafka.common.errors.TimeoutException | java.util.concurrent.TimeoutException brokerTimeout) {
+            // Two distinct timeouts, both meaning "this producer cannot currently talk to
+            // Kafka", not "this row is bad":
+            //  - org.apache.kafka.common.errors.TimeoutException is thrown SYNCHRONOUSLY by
+            //    kafkaTemplate.send(...) itself, on the calling (scheduling) thread, before a
+            //    Future is even returned to call .get() on -- this is the path taken when the
+            //    producer cannot fetch topic metadata from the broker within max.block.ms
+            //    (application.yml), i.e. the broker is unreachable.
+            //  - java.util.concurrent.TimeoutException is our own .get(publishTimeout) bound
+            //    expiring while a Future returned by send() is still pending -- e.g. the
+            //    broker accepted the connection but never acked within delivery.timeout.ms.
+            // Every other row in this batch would hit the same wall, so this is escalated to
+            // BrokerUnavailableException rather than being treated as this row's problem.
+            throw new BrokerUnavailableException(brokerTimeout);
+        } catch (ExecutionException failed) {
+            Throwable cause = failed.getCause();
+            if (cause instanceof org.apache.kafka.common.errors.TimeoutException
+                    || cause instanceof NetworkException
+                    || cause instanceof DisconnectException) {
+                // Same broker-unreachable family as above, just surfaced asynchronously
+                // through the Future instead of thrown synchronously by send() -- e.g. the
+                // in-flight request expired (delivery.timeout.ms) or the connection dropped
+                // mid-send. Still not row-specific.
+                throw new BrokerUnavailableException(cause);
+            }
+            // Anything else reaching here is specific to this row/record (e.g. a broker-side
+            // rejection of this particular record) rather than broker connectivity -- log and
+            // let the caller move on to the next row, same as before.
             log.error("Outbox event {} failed to publish to {}, will retry next tick", event.getId(), topic, failed);
         }
     }
@@ -84,5 +127,18 @@ public class OutboxPublisher implements SchedulingConfigurer {
             case TRANSFER_COMPLETED -> properties.topics().completed();
             case TRANSFER_FAILED -> properties.topics().failed();
         };
+    }
+
+    /**
+     * Internal signal that publishPending()'s current batch should stop early because Kafka
+     * itself -- not this one row -- is unreachable. Never escapes this class: publish() throws
+     * it, publishPending() catches it and breaks the loop. Deliberately a RuntimeException
+     * subtype caught BEFORE the existing generic {@code catch (RuntimeException unexpected)},
+     * not a checked exception, so publish()'s signature doesn't have to change.
+     */
+    private static final class BrokerUnavailableException extends RuntimeException {
+        BrokerUnavailableException(Throwable cause) {
+            super(cause);
+        }
     }
 }

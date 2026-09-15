@@ -54,6 +54,16 @@ Each stateful service owns its data exclusively — no service queries another's
 6. A scheduled **outbox publisher** (polling, not Debezium — keeps deployment footprint manageable) reads unpublished outbox rows, publishes `TransferCompleted`/`TransferFailed` to Kafka, marks them published.
 7. Notification Service consumes the Kafka event, logs a "notification sent."
 
+> **Settled in Phase 4** (see `docs/phase-4-outbox-kafka-notification.md`): two Kafka topics,
+> `transfer.completed` and `transfer.failed` — one per event type, not one combined topic.
+> `TransferCompleted`/`TransferFailed` above are the two outbox event *types*, not the only two
+> `Transfer` statuses that reach them: `FAILED`, and the two compensation-outcome statuses Phase
+> 3 added (`COMPENSATED`, `COMPENSATION_FAILED`), all publish to `transfer.failed`, distinguished
+> by a `status` field in the JSON payload (which also carries `transferId`, `fromAccountId`,
+> `toAccountId`, `amount`, `failureCode`, `failureReason`, `settledAt`). Plain JSON over the
+> Kafka topics — no Avro, no schema registry, consistent with "keeps deployment footprint
+> manageable."
+
 **Failure & compensation paths:**
 - **Fraud rejects the transfer:** compensate by calling Account Service to credit the source account back (reversing step 2). Mark `Transfer` `FAILED`. Emit `TransferFailed` via the same outbox mechanism (for observability/notification).
 - **Compensation call itself fails** (the credit-back to the source account fails after Fraud rejected): this is the one case that can't simply retry-and-move-on. Mark the `Transfer` `COMPENSATION_FAILED` and route it to a manual-review/dead-letter path rather than silently leaving the ledger inconsistent. This path exists specifically to demonstrate the realistic edge case of saga design, not to be resolved automatically.
@@ -87,4 +97,4 @@ A seed script creates demo accounts with starting balances so a transfer can be 
 
 ## 8. Open Items for Implementation Planning
 
-None blocking — design is complete for this scope. Implementation planning should sequence service build-out (likely: Account → Transfer w/ saga → Fraud → Notification → Gateway/Auth → observability wiring → Docker Compose integration) and decide exact Kafka topic names/event schemas, REST API contracts between services, and the Resilience4j threshold values.
+None blocking — design is complete for this scope. Implementation planning should sequence service build-out (the roadmap's actual order was Account → Transfer w/ saga → Resilience/Compensation → outbox/Kafka/Notification → Fraud → Gateway/Auth → observability wiring, folding Notification in earlier than this section's original guess) and decide REST API contracts between services and the Resilience4j threshold values. Kafka topic names/event schemas were decided in Phase 4 — see §4's note above and `docs/phase-4-outbox-kafka-notification.md`.
