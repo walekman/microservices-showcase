@@ -24,6 +24,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -42,12 +43,22 @@ class CompensationSchedulerTest {
     @Mock
     private AccountClient accountClient;
 
+    @Mock
+    private TransferOutboxService transferOutboxService;
+
     private CompensationScheduler scheduler;
 
     @BeforeEach
     void setUp() {
+        // Default behavior: transferOutboxService.save() delegates to transferRepository.save()
+        // so that tests verifying transferRepository.save() interactions still work.
+        // Use lenient() because some tests (when Account Service is unavailable) never reach save() calls.
+        lenient().when(transferOutboxService.save(any(Transfer.class))).thenAnswer(invocation -> {
+            Transfer transfer = invocation.getArgument(0);
+            return transferRepository.save(transfer);
+        });
         scheduler = new CompensationScheduler(transferRepository, accountClient,
-                new CompensationProperties(Duration.ofSeconds(15), Duration.ofSeconds(120), 500));
+                new CompensationProperties(Duration.ofSeconds(15), Duration.ofSeconds(120), 500), transferOutboxService);
     }
 
     private Transfer strandedTransfer() {
