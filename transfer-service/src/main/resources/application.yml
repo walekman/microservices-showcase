@@ -15,6 +15,12 @@ spring:
     hibernate:
       ddl-auto: update
     open-in-view: false
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
 
 management:
   endpoints:
@@ -66,3 +72,10 @@ transfer:
     sweep-interval: 15s
     pending-stale-after: 120s
     sweep-batch-size: 500
+  outbox:
+    poll-interval: 5s
+    batch-size: 500
+    publish-timeout: 5s
+    topics:
+      completed: transfer.completed
+      failed: transfer.failed

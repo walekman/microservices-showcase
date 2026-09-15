@@ -257,7 +257,6 @@ import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.Id;
-import jakarta.persistence.Lob;
 import jakarta.persistence.Table;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -283,8 +282,15 @@ public class OutboxEvent {
     @Column(nullable = false, length = 32, updatable = false)
     private OutboxEventType eventType;
 
-    @Lob
-    @Column(nullable = false, updatable = false)
+    // Plain TEXT, not @Lob: Hibernate maps @Lob String on Postgres to the native Large
+    // Object (oid) type by default, which requires an active transaction to read. The
+    // real OutboxPublisher polls without a surrounding transaction (matching
+    // CompensationScheduler's pattern), so an @Lob payload would throw
+    // "Large Objects may not be used in auto-commit mode" on every publish attempt --
+    // found live during Task 3's own verification (docs/phase-4-outbox-kafka-notification.md's
+    // implementation), masked in this task's own tests only because @DataJpaTest is
+    // transactional by default.
+    @Column(nullable = false, updatable = false, columnDefinition = "TEXT")
     private String payload;
 
     @Column(nullable = false, updatable = false)
@@ -836,6 +842,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -853,9 +861,16 @@ class OutboxPublisherIT {
     @ServiceConnection
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
+    // @ServiceConnection on ConfluentKafkaContainer throws ConnectionDetailsNotFoundException
+    // on Spring Boot 3.3.4 -- found live during Task 3's implementation. Wire the bootstrap
+    // address manually instead; Spring Boot's own Kafka autoconfiguration takes it from there.
     @Container
-    @ServiceConnection
     static ConfluentKafkaContainer kafka = new ConfluentKafkaContainer("confluentinc/cp-kafka:7.7.1");
+
+    @DynamicPropertySource
+    static void kafkaProperties(DynamicPropertyRegistry registry) {
+        registry.add("spring.kafka.bootstrap-servers", kafka::getBootstrapServers);
+    }
 
     @Autowired
     private OutboxEventRepository outboxEventRepository;
@@ -878,16 +893,22 @@ class OutboxPublisherIT {
     void leavesAnAlreadyPublishedEventAlone() {
         OutboxEvent event = new OutboxEvent(UUID.randomUUID(), OutboxEventType.TRANSFER_FAILED, "{}");
         event.markPublished();
-        OutboxEvent saved = outboxEventRepository.saveAndFlush(event);
-        var publishedAtBefore = saved.getPublishedAt();
+        outboxEventRepository.saveAndFlush(event);
+        // Reload rather than using the in-memory instance's timestamp: without a surrounding
+        // transaction (deliberately -- see OutboxPublisher's own javadoc), this test's second
+        // read is a genuinely separate persistence context, so the in-memory Instant.now() and
+        // the database's stored microsecond-precision value are not the same object.
+        var publishedAtBefore = outboxEventRepository.findById(event.getId()).orElseThrow().getPublishedAt();
 
         outboxPublisher.publishPending();
 
-        OutboxEvent reloaded = outboxEventRepository.findById(saved.getId()).orElseThrow();
+        OutboxEvent reloaded = outboxEventRepository.findById(event.getId()).orElseThrow();
         assertThat(reloaded.getPublishedAt()).isEqualTo(publishedAtBefore);
     }
 }
 ```
+
+**This test intentionally has no class-level `@Transactional`.** `OutboxPublisher` polls without a surrounding transaction in production (matching `CompensationScheduler`'s pattern) — wrapping the test in one would exercise a different code path than the real scheduler and would have hidden the `payload` LOB bug above instead of catching it. If a future edit adds `@Transactional` here to silence a similar-looking error, treat that as a regression, not a fix: find out what production code path it's masking first.
 
 - [ ] **Step 7: Run it to verify it fails**
 

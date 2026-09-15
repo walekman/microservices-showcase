@@ -6,7 +6,6 @@ import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.Id;
-import jakarta.persistence.Lob;
 import jakarta.persistence.Table;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -32,8 +31,7 @@ public class OutboxEvent {
     @Column(nullable = false, length = 32, updatable = false)
     private OutboxEventType eventType;
 
-    @Lob
-    @Column(nullable = false, updatable = false)
+    @Column(nullable = false, updatable = false, columnDefinition = "TEXT")
     private String payload;
 
     @Column(nullable = false, updatable = false)
