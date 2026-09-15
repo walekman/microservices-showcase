@@ -145,6 +145,11 @@ Look for lines like:
 - `Notification sent: transfer completed {...}` for successful transfers
 - `Notification sent: transfer failed {...}` for failed transfers
 
+Delivery is at-least-once: if the publisher crashes after Kafka acknowledges a message but
+before the outbox row is marked published, the same event is republished on the next poll. The
+Notification Service just logs, so a duplicate log line is the entire blast radius — this is an
+accepted characteristic of the outbox pattern, not a bug.
+
 The Notification Service health endpoint is available at:
 
     curl http://localhost:8083/actuator/health

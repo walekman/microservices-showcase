@@ -1121,8 +1121,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
-import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.kafka.ConfluentKafkaContainer;
@@ -1134,9 +1135,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 @ExtendWith(OutputCaptureExtension.class)
 class NotificationListenerIT {
 
+    // @ServiceConnection on ConfluentKafkaContainer throws ConnectionDetailsNotFoundException
+    // on Spring Boot 3.3.4 -- same finding as transfer-service's OutboxPublisherIT. Wire the
+    // bootstrap address manually instead.
     @Container
-    @ServiceConnection
     static ConfluentKafkaContainer kafka = new ConfluentKafkaContainer("confluentinc/cp-kafka:7.7.1");
+
+    @DynamicPropertySource
+    static void kafkaProperties(DynamicPropertyRegistry registry) {
+        registry.add("spring.kafka.bootstrap-servers", kafka::getBootstrapServers);
+    }
 
     @Autowired
     private KafkaTemplate<Object, Object> kafkaTemplate;
