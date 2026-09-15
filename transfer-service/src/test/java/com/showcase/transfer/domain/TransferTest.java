@@ -63,6 +63,10 @@ class TransferTest {
 
         assertThat(transfer.getStatus()).isEqualTo(TransferStatus.COMPLETED);
         assertThat(transfer.getSettledAt()).isNotNull();
+        // The transfer genuinely completed -- an API response for it must not still carry
+        // the stranding's stale diagnostics.
+        assertThat(transfer.getFailureCode()).isNull();
+        assertThat(transfer.getFailureReason()).isNull();
     }
 
     @Test

@@ -77,6 +77,11 @@ public class Transfer {
     public void markCompleted() {
         requireStatus(TransferStatus.PENDING, TransferStatus.COMPENSATION_REQUIRED);
         this.status = TransferStatus.COMPLETED;
+        // From COMPENSATION_REQUIRED, markCompensationRequired() already set both fields to
+        // the stranding's diagnostics. The transfer just reconciled as genuinely completed,
+        // so an API response for it must not go on reporting a failure that did not happen.
+        this.failureCode = null;
+        this.failureReason = null;
         this.settledAt = Instant.now();
     }
 

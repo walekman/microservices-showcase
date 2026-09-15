@@ -47,7 +47,7 @@ class CompensationSchedulerTest {
     @BeforeEach
     void setUp() {
         scheduler = new CompensationScheduler(transferRepository, accountClient,
-                new CompensationProperties(Duration.ofSeconds(15), Duration.ofSeconds(120)));
+                new CompensationProperties(Duration.ofSeconds(15), Duration.ofSeconds(120), 500));
     }
 
     private Transfer strandedTransfer() {
@@ -74,7 +74,7 @@ class CompensationSchedulerTest {
     @Test
     void reconciledSuccessMarksTheTransferCompleted() {
         Transfer transfer = strandedTransfer();
-        when(transferRepository.findByStatus(TransferStatus.COMPENSATION_REQUIRED)).thenReturn(List.of(transfer));
+        when(transferRepository.findByStatus(eq(TransferStatus.COMPENSATION_REQUIRED), any())).thenReturn(List.of(transfer));
         when(transferRepository.save(transfer)).thenReturn(transfer);
         // credit(...) succeeds by default (void mock, no stubbing needed) -- the destination
         // had actually already received the money.
@@ -90,7 +90,7 @@ class CompensationSchedulerTest {
     @Test
     void definitiveRejectionThenSuccessfulReversalMarksCompensated() {
         Transfer transfer = strandedTransfer();
-        when(transferRepository.findByStatus(TransferStatus.COMPENSATION_REQUIRED)).thenReturn(List.of(transfer));
+        when(transferRepository.findByStatus(eq(TransferStatus.COMPENSATION_REQUIRED), any())).thenReturn(List.of(transfer));
         when(transferRepository.save(transfer)).thenReturn(transfer);
         doThrow(new AccountRejectedException("ACCOUNT_NOT_FOUND", "Account not found: " + TO))
                 .when(accountClient).credit(TO, AMOUNT, TRANSFER_ID + ":credit");
@@ -105,7 +105,7 @@ class CompensationSchedulerTest {
     @Test
     void definitiveRejectionThenReversalAlsoRejectedMarksCompensationFailed() {
         Transfer transfer = strandedTransfer();
-        when(transferRepository.findByStatus(TransferStatus.COMPENSATION_REQUIRED)).thenReturn(List.of(transfer));
+        when(transferRepository.findByStatus(eq(TransferStatus.COMPENSATION_REQUIRED), any())).thenReturn(List.of(transfer));
         when(transferRepository.save(transfer)).thenReturn(transfer);
         doThrow(new AccountRejectedException("ACCOUNT_NOT_FOUND", "Account not found: " + TO))
                 .when(accountClient).credit(TO, AMOUNT, TRANSFER_ID + ":credit");
@@ -121,7 +121,7 @@ class CompensationSchedulerTest {
     @Test
     void stillUnavailableLeavesTheTransferAwaitingTheNextSweep() {
         Transfer transfer = strandedTransfer();
-        when(transferRepository.findByStatus(TransferStatus.COMPENSATION_REQUIRED)).thenReturn(List.of(transfer));
+        when(transferRepository.findByStatus(eq(TransferStatus.COMPENSATION_REQUIRED), any())).thenReturn(List.of(transfer));
         doThrow(new AccountServiceUnavailableException("read timed out"))
                 .when(accountClient).credit(TO, AMOUNT, TRANSFER_ID + ":credit");
 
@@ -134,7 +134,7 @@ class CompensationSchedulerTest {
     @Test
     void destinationRejectedButSourceReversalStillUnavailableLeavesAwaitingTheNextSweep() {
         Transfer transfer = strandedTransfer();
-        when(transferRepository.findByStatus(TransferStatus.COMPENSATION_REQUIRED)).thenReturn(List.of(transfer));
+        when(transferRepository.findByStatus(eq(TransferStatus.COMPENSATION_REQUIRED), any())).thenReturn(List.of(transfer));
         doThrow(new AccountRejectedException("ACCOUNT_NOT_FOUND", "Account not found: " + TO))
                 .when(accountClient).credit(TO, AMOUNT, TRANSFER_ID + ":credit");
         doThrow(new AccountServiceUnavailableException("read timed out"))
@@ -150,7 +150,7 @@ class CompensationSchedulerTest {
     void anUnexpectedSaveFailureDoesNotBlockOtherTransfersInTheBatch() {
         Transfer failing = strandedTransfer();
         Transfer succeeding = strandedTransfer(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
-        when(transferRepository.findByStatus(TransferStatus.COMPENSATION_REQUIRED))
+        when(transferRepository.findByStatus(eq(TransferStatus.COMPENSATION_REQUIRED), any()))
                 .thenReturn(List.of(failing, succeeding));
         when(transferRepository.save(failing)).thenThrow(new OptimisticLockingFailureException("stale row"));
         when(transferRepository.save(succeeding)).thenReturn(succeeding);
@@ -165,7 +165,7 @@ class CompensationSchedulerTest {
     @Test
     void staleDebitRejectedMarksTheTransferFailed() {
         Transfer transfer = stalePendingTransfer();
-        when(transferRepository.findByStatusAndCreatedAtBefore(eq(TransferStatus.PENDING), any()))
+        when(transferRepository.findByStatusAndCreatedAtBefore(eq(TransferStatus.PENDING), any(), any()))
                 .thenReturn(List.of(transfer));
         when(transferRepository.save(transfer)).thenReturn(transfer);
         doThrow(new AccountRejectedException("ACCOUNT_NOT_FOUND", "Account not found: " + FROM))
@@ -181,7 +181,7 @@ class CompensationSchedulerTest {
     @Test
     void staleDebitConfirmedLandedPromotesToCompensationRequired() {
         Transfer transfer = stalePendingTransfer();
-        when(transferRepository.findByStatusAndCreatedAtBefore(eq(TransferStatus.PENDING), any()))
+        when(transferRepository.findByStatusAndCreatedAtBefore(eq(TransferStatus.PENDING), any(), any()))
                 .thenReturn(List.of(transfer));
         when(transferRepository.save(transfer)).thenReturn(transfer);
         // debit(...) succeeds by default (void mock, no stubbing needed).
@@ -195,7 +195,7 @@ class CompensationSchedulerTest {
     @Test
     void staleDebitStillAmbiguousStaysPending() {
         Transfer transfer = stalePendingTransfer();
-        when(transferRepository.findByStatusAndCreatedAtBefore(eq(TransferStatus.PENDING), any()))
+        when(transferRepository.findByStatusAndCreatedAtBefore(eq(TransferStatus.PENDING), any(), any()))
                 .thenReturn(List.of(transfer));
         doThrow(new AccountServiceUnavailableException("read timed out"))
                 .when(accountClient).debit(FROM, AMOUNT, TRANSFER_ID + ":debit");
@@ -210,7 +210,7 @@ class CompensationSchedulerTest {
     void aStaleSweepUnexpectedSaveFailureDoesNotBlockOtherTransfersInTheBatch() {
         Transfer failing = stalePendingTransfer();
         Transfer succeeding = stalePendingTransfer(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
-        when(transferRepository.findByStatusAndCreatedAtBefore(eq(TransferStatus.PENDING), any()))
+        when(transferRepository.findByStatusAndCreatedAtBefore(eq(TransferStatus.PENDING), any(), any()))
                 .thenReturn(List.of(failing, succeeding));
         when(transferRepository.save(failing)).thenThrow(new OptimisticLockingFailureException("stale row"));
         when(transferRepository.save(succeeding)).thenReturn(succeeding);

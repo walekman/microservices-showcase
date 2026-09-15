@@ -5,6 +5,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.data.domain.Limit;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -77,9 +78,38 @@ class TransferRepositoryTest {
                 new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("25.00")));
 
         List<Transfer> found = transferRepository.findByStatusAndCreatedAtBefore(
-                TransferStatus.PENDING, Instant.now().minus(Duration.ofSeconds(120)));
+                TransferStatus.PENDING, Instant.now().minus(Duration.ofSeconds(120)), Limit.unlimited());
 
         assertThat(found).extracting(Transfer::getId).contains(stale.getId());
         assertThat(found).extracting(Transfer::getId).doesNotContain(recent.getId());
+    }
+
+    @Test
+    void findByStatusHonoursTheLimit() {
+        Transfer first = new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("25.00"));
+        first.markCompensationRequired(TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, "credit failed");
+        transferRepository.saveAndFlush(first);
+        Transfer second = new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("25.00"));
+        second.markCompensationRequired(TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, "credit failed");
+        transferRepository.saveAndFlush(second);
+
+        List<Transfer> found = transferRepository.findByStatus(TransferStatus.COMPENSATION_REQUIRED, Limit.of(1));
+
+        assertThat(found).hasSize(1);
+    }
+
+    @Test
+    void findByStatusAndCreatedAtBeforeHonoursTheLimit() {
+        Transfer first = new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("25.00"));
+        ReflectionTestUtils.setField(first, "createdAt", Instant.now().minus(Duration.ofMinutes(10)));
+        transferRepository.saveAndFlush(first);
+        Transfer second = new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("25.00"));
+        ReflectionTestUtils.setField(second, "createdAt", Instant.now().minus(Duration.ofMinutes(10)));
+        transferRepository.saveAndFlush(second);
+
+        List<Transfer> found = transferRepository.findByStatusAndCreatedAtBefore(
+                TransferStatus.PENDING, Instant.now().minus(Duration.ofSeconds(120)), Limit.of(1));
+
+        assertThat(found).hasSize(1);
     }
 }
