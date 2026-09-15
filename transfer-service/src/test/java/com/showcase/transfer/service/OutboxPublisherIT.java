@@ -9,7 +9,6 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.transaction.annotation.Transactional;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -21,7 +20,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest
 @Testcontainers
-@Transactional
 class OutboxPublisherIT {
 
     @Container
@@ -57,12 +55,14 @@ class OutboxPublisherIT {
     void leavesAnAlreadyPublishedEventAlone() {
         OutboxEvent event = new OutboxEvent(UUID.randomUUID(), OutboxEventType.TRANSFER_FAILED, "{}");
         event.markPublished();
-        OutboxEvent saved = outboxEventRepository.saveAndFlush(event);
-        var publishedAtBefore = saved.getPublishedAt();
+        outboxEventRepository.saveAndFlush(event);
+        // Reload to get database-persisted precision (Postgres microseconds)
+        var publishedAtBefore = outboxEventRepository.findById(event.getId()).orElseThrow().getPublishedAt();
 
         outboxPublisher.publishPending();
 
-        OutboxEvent reloaded = outboxEventRepository.findById(saved.getId()).orElseThrow();
+        OutboxEvent reloaded = outboxEventRepository.findById(event.getId()).orElseThrow();
+        // Verify it wasn't republished: timestamp should remain unchanged
         assertThat(reloaded.getPublishedAt()).isEqualTo(publishedAtBefore);
     }
 }
