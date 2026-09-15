@@ -33,10 +33,13 @@ public class TransferService {
 
     private final TransferRepository transferRepository;
     private final AccountClient accountClient;
+    private final TransferSaveService transferSaveService;
 
-    public TransferService(TransferRepository transferRepository, AccountClient accountClient) {
+    public TransferService(TransferRepository transferRepository, AccountClient accountClient,
+                            TransferSaveService transferSaveService) {
         this.transferRepository = transferRepository;
         this.accountClient = accountClient;
+        this.transferSaveService = transferSaveService;
     }
 
     public Transfer execute(UUID fromAccountId, UUID toAccountId, BigDecimal amount) {
@@ -104,7 +107,7 @@ public class TransferService {
 
             transfer.markCompleted();
             log.info("Transfer {} completed", transfer.getId());
-            return transferRepository.save(transfer);
+            return transferSaveService.save(transfer);
         } catch (RuntimeException ex) {
             // Anything the two client exceptions do not cover -- a DataAccessException or an
             // optimistic-lock failure from a save, a bug. Without this the row is orphaned in
@@ -136,7 +139,7 @@ public class TransferService {
     private Transfer fail(Transfer transfer, TransferFailureCode code, String reason) {
         transfer.markFailed(code, reason);
         log.info("Transfer {} failed [{}]: {}", transfer.getId(), code, reason);
-        return transferRepository.save(transfer);
+        return transferSaveService.save(transfer);
     }
 
     private Transfer strand(Transfer transfer, TransferFailureCode code, String reason) {
@@ -144,6 +147,6 @@ public class TransferService {
         log.error("Transfer {} needs compensation: {} was debited {} but {} was not credited [{}]: {}",
                 transfer.getId(), transfer.getFromAccountId(), transfer.getAmount(),
                 transfer.getToAccountId(), code, reason);
-        return transferRepository.save(transfer);
+        return transferSaveService.save(transfer);
     }
 }

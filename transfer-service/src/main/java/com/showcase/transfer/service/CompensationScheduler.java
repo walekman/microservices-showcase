@@ -38,12 +38,14 @@ public class CompensationScheduler implements SchedulingConfigurer {
     private final TransferRepository transferRepository;
     private final AccountClient accountClient;
     private final CompensationProperties properties;
+    private final TransferSaveService transferSaveService;
 
     public CompensationScheduler(TransferRepository transferRepository, AccountClient accountClient,
-                                  CompensationProperties properties) {
+                                  CompensationProperties properties, TransferSaveService transferSaveService) {
         this.transferRepository = transferRepository;
         this.accountClient = accountClient;
         this.properties = properties;
+        this.transferSaveService = transferSaveService;
     }
 
     @Override
@@ -100,7 +102,7 @@ public class CompensationScheduler implements SchedulingConfigurer {
             // The credit actually landed -- Transfer just did not know it yet. Nothing to
             // reverse; this transfer genuinely completed.
             transfer.markCompleted();
-            transferRepository.save(transfer);
+            transferSaveService.save(transfer);
             log.info("Transfer {} reconciled as COMPLETED: the credit had already landed", transfer.getId());
         } catch (AccountRejectedException definitivelyRejected) {
             compensateSource(transfer, definitivelyRejected.getDetail());
@@ -114,14 +116,14 @@ public class CompensationScheduler implements SchedulingConfigurer {
         try {
             accountClient.credit(transfer.getFromAccountId(), transfer.getAmount(), transfer.getId() + ":compensate");
             transfer.markCompensated();
-            transferRepository.save(transfer);
+            transferSaveService.save(transfer);
             log.info("Transfer {} COMPENSATED: source credited back after destination definitively rejected [{}]",
                     transfer.getId(), rejectionDetail);
         } catch (AccountRejectedException sourceAlsoRejected) {
             transfer.markCompensationFailed(
                     "Destination rejected [%s], and crediting the source back also failed [%s] -- manual review required"
                             .formatted(rejectionDetail, sourceAlsoRejected.getDetail()));
-            transferRepository.save(transfer);
+            transferSaveService.save(transfer);
             log.error("Transfer {} COMPENSATION_FAILED: manual review required. Destination [{}], source credit-back [{}]",
                     transfer.getId(), rejectionDetail, sourceAlsoRejected.getDetail());
         } catch (AccountServiceUnavailableException stillUnavailable) {
@@ -144,13 +146,13 @@ public class CompensationScheduler implements SchedulingConfigurer {
             accountClient.debit(transfer.getFromAccountId(), transfer.getAmount(), transfer.getId() + ":debit");
             transfer.markCompensationRequired(TransferFailureCode.UNEXPECTED_ERROR,
                     "Recovered from a stale PENDING row: the debit leg is confirmed landed, the credit leg is unresolved");
-            transferRepository.save(transfer);
+            transferSaveService.save(transfer);
             log.info("Transfer {} promoted from stale PENDING to COMPENSATION_REQUIRED: debit confirmed landed",
                     transfer.getId());
         } catch (AccountRejectedException definitivelyRejected) {
             transfer.markFailed(TransferFailureCode.fromAccountCode(definitivelyRejected.getCode()),
                     definitivelyRejected.getDetail());
-            transferRepository.save(transfer);
+            transferSaveService.save(transfer);
             log.info("Transfer {} recovered from stale PENDING as FAILED: debit never landed [{}]",
                     transfer.getId(), definitivelyRejected.getDetail());
         } catch (AccountServiceUnavailableException stillUnavailable) {

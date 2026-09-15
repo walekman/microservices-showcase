@@ -4,7 +4,7 @@
 
 **Goal:** Give Transfer Service a transactional outbox that records every terminal transfer outcome, a scheduled poller that publishes those outcomes to Kafka (KRaft mode), and a new stateless Notification Service that consumes them and logs a "notification sent" — closing the loop the design doc calls out as the project's asynchronous-eventing demonstration.
 
-**Architecture:** A single new choke-point service, `TransferOutboxService`, becomes the only place `transfer-service` persists a `Transfer` after a status transition; it derives whether an outbox row is needed from the status alone (`OutboxEventType.forStatus`), so neither `TransferService` (the live saga) nor `CompensationScheduler` (the async sweep) has to separately reason about which of the six call sites across those two classes are "event-worthy." A second scheduled poller, `OutboxPublisher`, drains unpublished rows to two Kafka topics (`transfer.completed`, `transfer.failed`) using the exact `SchedulingConfigurer` + `@ConfigurationProperties` pattern `CompensationScheduler` already established. A new `notification-service` module consumes both topics and logs.
+**Architecture:** A single new choke-point service, `TransferSaveService`, becomes the only place `transfer-service` persists a `Transfer` after a status transition; it derives whether an outbox row is needed from the status alone (`OutboxEventType.forStatus`), so neither `TransferService` (the live saga) nor `CompensationScheduler` (the async sweep) has to separately reason about which of the six call sites across those two classes are "event-worthy." A second scheduled poller, `OutboxPublisher`, drains unpublished rows to two Kafka topics (`transfer.completed`, `transfer.failed`) using the exact `SchedulingConfigurer` + `@ConfigurationProperties` pattern `CompensationScheduler` already established. A new `notification-service` module consumes both topics and logs.
 
 **Tech Stack (additions):** `spring-kafka` (version inherited from the `spring-boot-starter-parent` 3.3.4 BOM — no explicit pin, unlike resilience4j/springdoc, but verify the resolved version once via `mvn dependency:tree` in Task 3), `org.testcontainers:kafka` (version inherited from the root POM's pinned `testcontainers.version`), `apache/kafka` Docker image (KRaft mode, no Zookeeper) for Compose.
 
@@ -24,7 +24,7 @@
 
 ## Scope Boundary
 
-**In scope:** the outbox table + `TransferOutboxService` choke point in `transfer-service`; converting every terminal-state save in `TransferService`/`CompensationScheduler` to go through it; the Kafka producer config and `OutboxPublisher` poller; the outbox-backlog gauge; the new `notification-service` module (Kafka consumer only, no persistence); Docker Compose wiring for Kafka (`apache/kafka`, KRaft) and the new service; README/roadmap updates.
+**In scope:** the outbox table + `TransferSaveService` choke point in `transfer-service`; converting every terminal-state save in `TransferService`/`CompensationScheduler` to go through it; the Kafka producer config and `OutboxPublisher` poller; the outbox-backlog gauge; the new `notification-service` module (Kafka consumer only, no persistence); Docker Compose wiring for Kafka (`apache/kafka`, KRaft) and the new service; README/roadmap updates.
 
 **Explicitly out of scope** — each is a named follow-up, not an oversight:
 
@@ -40,11 +40,11 @@
 
 ## Design Decisions Worth Knowing Before You Start
 
-**Why a single choke-point service instead of per-call-site outbox writes.** The design doc (written before Phase 3) only named one outbox-write site: the live saga's `COMPLETED` branch. Phase 3 added `COMPENSATED`/`COMPENSATION_FAILED`, reachable only from `CompensationScheduler`, not the saga. Counting `TransferService.fail()`/the completed branch and `CompensationScheduler`'s four terminal-transition branches, there are **six** places a `Transfer` reaches a terminal state across two classes. Asking each one to independently decide "does this status need an outbox event" is exactly the kind of distributed reasoning that caused Phase 2/3's review findings (a missed edge case in one of several similar-looking branches). `TransferOutboxService.save()` collapses this to one lookup table, `OutboxEventType.forStatus()`; every call site just calls `transferOutboxService.save(transfer)` after any `mark*()` call, terminal or not, and the status alone decides whether a row gets written.
+**Why a single choke-point service instead of per-call-site outbox writes.** The design doc (written before Phase 3) only named one outbox-write site: the live saga's `COMPLETED` branch. Phase 3 added `COMPENSATED`/`COMPENSATION_FAILED`, reachable only from `CompensationScheduler`, not the saga. Counting `TransferService.fail()`/the completed branch and `CompensationScheduler`'s four terminal-transition branches, there are **six** places a `Transfer` reaches a terminal state across two classes. Asking each one to independently decide "does this status need an outbox event" is exactly the kind of distributed reasoning that caused Phase 2/3's review findings (a missed edge case in one of several similar-looking branches). `TransferSaveService.save()` collapses this to one lookup table, `OutboxEventType.forStatus()`; every call site just calls `transferSaveService.save(transfer)` after any `mark*()` call, terminal or not, and the status alone decides whether a row gets written.
 
-**Why this doesn't reopen "the saga must not be `@Transactional`."** `TransferService.execute()` has no `@Transactional` because a DB transaction can't span the HTTP calls into Account (see `docs/phase-2-transfer-service-saga.md`'s Design Decisions). `TransferOutboxService.save()` is `@Transactional`, but it wraps exactly one repository save plus (at most) one insert — no HTTP calls, no network round-trip, nothing that a transaction spanning it would hold open. It is the same shape as `TransferRepository.save()` itself, which is already implicitly transactional via Spring Data. If a reviewer flags this as a regression of the non-transactional-saga rule, point them here: the saga orchestrator (`TransferService.execute()`) is still not `@Transactional`; only the narrow persistence step is.
+**Why this doesn't reopen "the saga must not be `@Transactional`."** `TransferService.execute()` has no `@Transactional` because a DB transaction can't span the HTTP calls into Account (see `docs/phase-2-transfer-service-saga.md`'s Design Decisions). `TransferSaveService.save()` is `@Transactional`, but it wraps exactly one repository save plus (at most) one insert — no HTTP calls, no network round-trip, nothing that a transaction spanning it would hold open. It is the same shape as `TransferRepository.save()` itself, which is already implicitly transactional via Spring Data. If a reviewer flags this as a regression of the non-transactional-saga rule, point them here: the saga orchestrator (`TransferService.execute()`) is still not `@Transactional`; only the narrow persistence step is.
 
-**Why every `mark*()`-then-save call site converts, not just the "obviously terminal" ones.** It would be tempting to only convert `markCompleted()`/`markFailed()`/`markCompensated()`/`markCompensationFailed()` call sites and leave `markCompensationRequired()`'s save calls (in `TransferService.strand()` and `CompensationScheduler.reconcileDebit()`'s "promoted" branch) untouched, since `COMPENSATION_REQUIRED` never produces an event. Convert those too. `OutboxEventType.forStatus(COMPENSATION_REQUIRED)` returns `null`, so `TransferOutboxService.save()` writes no row for them — but routing them through the same method means nobody has to remember which of eight call sites are the exceptions. One save() method every terminal-or-not status write goes through, one place that decides.
+**Why every `mark*()`-then-save call site converts, not just the "obviously terminal" ones.** It would be tempting to only convert `markCompleted()`/`markFailed()`/`markCompensated()`/`markCompensationFailed()` call sites and leave `markCompensationRequired()`'s save calls (in `TransferService.strand()` and `CompensationScheduler.reconcileDebit()`'s "promoted" branch) untouched, since `COMPENSATION_REQUIRED` never produces an event. Convert those too. `OutboxEventType.forStatus(COMPENSATION_REQUIRED)` returns `null`, so `TransferSaveService.save()` writes no row for them — but routing them through the same method means nobody has to remember which of eight call sites are the exceptions. One save() method every terminal-or-not status write goes through, one place that decides.
 
 **At-least-once delivery is accepted, not a bug.** A crash between `kafkaTemplate.send(...)` succeeding and `OutboxEvent.markPublished()` committing re-publishes that row on the next poll tick. Notification Service only logs, so a duplicate log line is the entire blast radius — document this the way Phase 3 named its own known gaps (e.g. the `ACCOUNT_SERVICE_UNAVAILABLE`-on-debit reconciliation gap) instead of treating it as implicit.
 
@@ -57,9 +57,9 @@
 | `domain/OutboxEventType.java` (new) | Two-value enum + `forStatus(TransferStatus)` lookup — the single terminal/non-terminal decision point |
 | `domain/OutboxEvent.java` (new) | Entity: transfer id, event type, JSON payload, created/published timestamps |
 | `domain/OutboxEventRepository.java` (new) | `findByPublishedAtIsNullOrderByCreatedAtAsc(Limit)`, `countByPublishedAtIsNull()` |
-| `service/TransferOutboxService.java` (new) | The choke point: `@Transactional Transfer save(Transfer)` |
-| `service/TransferService.java` (modified) | Constructor takes `TransferOutboxService`; three `transferRepository.save(transfer)` calls become `transferOutboxService.save(transfer)` |
-| `service/CompensationScheduler.java` (modified) | Constructor takes `TransferOutboxService`; five `transferRepository.save(transfer)` calls become `transferOutboxService.save(transfer)` |
+| `service/TransferSaveService.java` (new) | The choke point: `@Transactional Transfer save(Transfer)` |
+| `service/TransferService.java` (modified) | Constructor takes `TransferSaveService`; three `transferRepository.save(transfer)` calls become `transferSaveService.save(transfer)` |
+| `service/CompensationScheduler.java` (modified) | Constructor takes `TransferSaveService`; five `transferRepository.save(transfer)` calls become `transferSaveService.save(transfer)` |
 | `service/OutboxPublisherProperties.java` (new) | `@ConfigurationProperties("transfer.outbox")`: poll interval, batch size, publish timeout, topic names |
 | `service/OutboxPublisher.java` (new) | `SchedulingConfigurer` poller + outbox-backlog gauge |
 | `config/KafkaProducerConfig.java` (new) | Explicit `ProducerFactory<String,String>`/`KafkaTemplate<String,String>` beans |
@@ -91,7 +91,7 @@
 
 **Interfaces:**
 - Consumes: `TransferStatus` (existing, unchanged).
-- Produces: `OutboxEventType.forStatus(TransferStatus)` returning `TRANSFER_COMPLETED`/`TRANSFER_FAILED`/`null`; `OutboxEvent(UUID transferId, OutboxEventType eventType, String payload)` constructor + `markPublished()`; `OutboxEventRepository` with `findByPublishedAtIsNullOrderByCreatedAtAsc(Limit)` and `countByPublishedAtIsNull()`. Task 2's `TransferOutboxService` and Task 3's `OutboxPublisher` use all of these.
+- Produces: `OutboxEventType.forStatus(TransferStatus)` returning `TRANSFER_COMPLETED`/`TRANSFER_FAILED`/`null`; `OutboxEvent(UUID transferId, OutboxEventType eventType, String payload)` constructor + `markPublished()`; `OutboxEventRepository` with `findByPublishedAtIsNullOrderByCreatedAtAsc(Limit)` and `countByPublishedAtIsNull()`. Task 2's `TransferSaveService` and Task 3's `OutboxPublisher` use all of these.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -232,7 +232,7 @@ public enum OutboxEventType {
     TRANSFER_FAILED;
 
     /**
-     * Maps a Transfer's status onto the event TransferOutboxService writes, or null for a
+     * Maps a Transfer's status onto the event TransferSaveService writes, or null for a
      * non-terminal status. FAILED, COMPENSATED, and COMPENSATION_FAILED all resolve to
      * TRANSFER_FAILED -- the payload's own status field is what lets a consumer tell them
      * apart; see docs/phase-4-outbox-kafka-notification.md's Design Decisions.
@@ -336,22 +336,22 @@ git commit -m "feat(transfer): outbox event domain model"
 ```
 
 ---
-### Task 2: `TransferOutboxService` and call-site conversion
+### Task 2: `TransferSaveService` and call-site conversion
 
 **Files:**
-- Create: `transfer-service/src/main/java/com/showcase/transfer/service/TransferOutboxService.java`
-- Test: `transfer-service/src/test/java/com/showcase/transfer/service/TransferOutboxServiceTest.java`
+- Create: `transfer-service/src/main/java/com/showcase/transfer/service/TransferSaveService.java`
+- Test: `transfer-service/src/test/java/com/showcase/transfer/service/TransferSaveServiceTest.java`
 - Modify: `transfer-service/src/main/java/com/showcase/transfer/service/TransferService.java`
 - Modify: `transfer-service/src/main/java/com/showcase/transfer/service/CompensationScheduler.java`
 
 **Interfaces:**
 - Consumes: `TransferRepository`, `OutboxEventRepository`, `OutboxEventType.forStatus`, `Transfer` getters (from Task 1 and existing code), a Spring-managed `ObjectMapper` (auto-configured, has `JavaTimeModule` registered — required to serialize `Instant settledAt`).
-- Produces: `TransferOutboxService.save(Transfer)` returning the saved `Transfer`, used by `TransferService` and `CompensationScheduler` in place of `transferRepository.save(transfer)`.
+- Produces: `TransferSaveService.save(Transfer)` returning the saved `Transfer`, used by `TransferService` and `CompensationScheduler` in place of `transferRepository.save(transfer)`.
 
 - [ ] **Step 1: Write the failing test**
 
 ```java
-// transfer-service/src/test/java/com/showcase/transfer/service/TransferOutboxServiceTest.java
+// transfer-service/src/test/java/com/showcase/transfer/service/TransferSaveServiceTest.java
 package com.showcase.transfer.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -375,14 +375,14 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
-class TransferOutboxServiceTest {
+class TransferSaveServiceTest {
 
     @Mock
     private TransferRepository transferRepository;
     @Mock
     private OutboxEventRepository outboxEventRepository;
 
-    private TransferOutboxService service;
+    private TransferSaveService service;
 
     @BeforeEach
     void setUp() {
@@ -390,7 +390,7 @@ class TransferOutboxServiceTest {
         // module -- Spring's auto-configured bean has it registered already, but a
         // hand-built one in a unit test needs it explicitly, or toPayload() throws.
         ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
-        service = new TransferOutboxService(transferRepository, outboxEventRepository, objectMapper);
+        service = new TransferSaveService(transferRepository, outboxEventRepository, objectMapper);
     }
 
     @Test
@@ -434,13 +434,13 @@ class TransferOutboxServiceTest {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `./mvnw -pl transfer-service test -Dtest=TransferOutboxServiceTest`
-Expected: FAIL — compilation error, `TransferOutboxService` does not exist.
+Run: `./mvnw -pl transfer-service test -Dtest=TransferSaveServiceTest`
+Expected: FAIL — compilation error, `TransferSaveService` does not exist.
 
-- [ ] **Step 3: Create `TransferOutboxService`**
+- [ ] **Step 3: Create `TransferSaveService`**
 
 ```java
-// transfer-service/src/main/java/com/showcase/transfer/service/TransferOutboxService.java
+// transfer-service/src/main/java/com/showcase/transfer/service/TransferSaveService.java
 package com.showcase.transfer.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -469,13 +469,13 @@ import java.util.UUID;
  * docs/phase-2-transfer-service-saga.md's Design Decisions and this phase's own.
  */
 @Service
-public class TransferOutboxService {
+public class TransferSaveService {
 
     private final TransferRepository transferRepository;
     private final OutboxEventRepository outboxEventRepository;
     private final ObjectMapper objectMapper;
 
-    public TransferOutboxService(TransferRepository transferRepository,
+    public TransferSaveService(TransferRepository transferRepository,
                                   OutboxEventRepository outboxEventRepository,
                                   ObjectMapper objectMapper) {
         this.transferRepository = transferRepository;
@@ -519,7 +519,7 @@ public class TransferOutboxService {
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `./mvnw -pl transfer-service test -Dtest=TransferOutboxServiceTest`
+Run: `./mvnw -pl transfer-service test -Dtest=TransferSaveServiceTest`
 Expected: PASS, 3 tests.
 
 - [ ] **Step 5: Convert `TransferService`'s call sites**
@@ -529,26 +529,26 @@ Add the constructor dependency and replace its three `transferRepository.save(tr
 ```java
 // transfer-service/src/main/java/com/showcase/transfer/service/TransferService.java
 // 1. Add the field and constructor parameter:
-    private final TransferOutboxService transferOutboxService;
+    private final TransferSaveService transferSaveService;
 
     public TransferService(TransferRepository transferRepository, AccountClient accountClient,
-                            TransferOutboxService transferOutboxService) {
+                            TransferSaveService transferSaveService) {
         this.transferRepository = transferRepository;
         this.accountClient = accountClient;
-        this.transferOutboxService = transferOutboxService;
+        this.transferSaveService = transferSaveService;
     }
 
 // 2. In execute()'s happy path, after transfer.markCompleted():
 //    replace  return transferRepository.save(transfer);
-//    with     return transferOutboxService.save(transfer);
+//    with     return transferSaveService.save(transfer);
 
 // 3. In fail(transfer, code, reason), after transfer.markFailed(...):
 //    replace  return transferRepository.save(transfer);
-//    with     return transferOutboxService.save(transfer);
+//    with     return transferSaveService.save(transfer);
 
 // 4. In strand(transfer, code, reason), after transfer.markCompensationRequired(...):
 //    replace  return transferRepository.save(transfer);
-//    with     return transferOutboxService.save(transfer);
+//    with     return transferSaveService.save(transfer);
 ```
 
 - [ ] **Step 6: Convert `CompensationScheduler`'s call sites**
@@ -558,42 +558,42 @@ Same pattern — add the constructor dependency, then replace all five `transfer
 ```java
 // transfer-service/src/main/java/com/showcase/transfer/service/CompensationScheduler.java
 // 1. Add the field and constructor parameter:
-    private final TransferOutboxService transferOutboxService;
+    private final TransferSaveService transferSaveService;
 
     public CompensationScheduler(TransferRepository transferRepository, AccountClient accountClient,
-                                  CompensationProperties properties, TransferOutboxService transferOutboxService) {
+                                  CompensationProperties properties, TransferSaveService transferSaveService) {
         this.transferRepository = transferRepository;
         this.accountClient = accountClient;
         this.properties = properties;
-        this.transferOutboxService = transferOutboxService;
+        this.transferSaveService = transferSaveService;
     }
 
 // 2. reconcileCredit(), after transfer.markCompleted():
 //    replace  transferRepository.save(transfer);
-//    with     transferOutboxService.save(transfer);
+//    with     transferSaveService.save(transfer);
 
 // 3. compensateSource(), after transfer.markCompensated():
 //    replace  transferRepository.save(transfer);
-//    with     transferOutboxService.save(transfer);
+//    with     transferSaveService.save(transfer);
 
 // 4. compensateSource()'s catch(AccountRejectedException), after transfer.markCompensationFailed(...):
 //    replace  transferRepository.save(transfer);
-//    with     transferOutboxService.save(transfer);
+//    with     transferSaveService.save(transfer);
 
 // 5. reconcileDebit(), after transfer.markCompensationRequired(...) (the "promoted" branch):
 //    replace  transferRepository.save(transfer);
-//    with     transferOutboxService.save(transfer);
+//    with     transferSaveService.save(transfer);
 
 // 6. reconcileDebit()'s catch(AccountRejectedException), after transfer.markFailed(...):
 //    replace  transferRepository.save(transfer);
-//    with     transferOutboxService.save(transfer);
+//    with     transferSaveService.save(transfer);
 ```
 
-`transferRepository` stays a field on both classes — `TransferService` still reads through it (`getTransfer`, `listTransfers`), and `CompensationScheduler` still queries through it (`findByStatus`, `findByStatusAndCreatedAtBefore`). Only the post-`mark*()` **writes** move to `transferOutboxService.save(...)`.
+`transferRepository` stays a field on both classes — `TransferService` still reads through it (`getTransfer`, `listTransfers`), and `CompensationScheduler` still queries through it (`findByStatus`, `findByStatusAndCreatedAtBefore`). Only the post-`mark*()` **writes** move to `transferSaveService.save(...)`.
 
 - [ ] **Step 7: Update the existing tests that construct these classes**
 
-`TransferServiceTest`/`TransferServiceIT` (if any) and `CompensationSchedulerTest`/`CompensationSchedulerIT` construct these classes directly — search for `new TransferService(` and `new CompensationScheduler(` across `transfer-service/src/test` and add a mocked or real `TransferOutboxService` argument to each. Where a test currently asserts on `transferRepository.save(...)` being called with a particular status, keep that assertion (it's still true) but do not assume `transferOutboxService` interactions unless the test is specifically about outbox behavior.
+`TransferServiceTest`/`TransferServiceIT` (if any) and `CompensationSchedulerTest`/`CompensationSchedulerIT` construct these classes directly — search for `new TransferService(` and `new CompensationScheduler(` across `transfer-service/src/test` and add a mocked or real `TransferSaveService` argument to each. Where a test currently asserts on `transferRepository.save(...)` being called with a particular status, keep that assertion (it's still true) but do not assume `transferSaveService` interactions unless the test is specifically about outbox behavior.
 
 - [ ] **Step 8: Run the whole module test suite**
 
@@ -604,7 +604,7 @@ Expected: PASS, all tests, including the ones fixed in Step 7.
 
 ```bash
 git add transfer-service/src/main/java/com/showcase/transfer/service transfer-service/src/test/java/com/showcase/transfer/service
-git commit -m "feat(transfer): TransferOutboxService as the single terminal-state persistence choke point"
+git commit -m "feat(transfer): TransferSaveService as the single terminal-state persistence choke point"
 ```
 
 ---
@@ -1326,7 +1326,7 @@ Expected: Kafka comes up clean on a fresh start too — a stale `CLUSTER_ID` or 
 
 ```markdown
 <!-- docs/roadmap.md: update Phase 4's row -->
-| 4 | [Transactional outbox + Kafka + Notification](phase-4-outbox-kafka-notification.md) | ✅ Done | Outbox table + TransferOutboxService choke point in Transfer Service; OutboxPublisher polling publisher to `transfer.completed`/`transfer.failed` (Kafka, KRaft mode via `apache/kafka`); Notification Service (stateless) consuming both and logging |
+| 4 | [Transactional outbox + Kafka + Notification](phase-4-outbox-kafka-notification.md) | ✅ Done | Outbox table + TransferSaveService choke point in Transfer Service; OutboxPublisher polling publisher to `transfer.completed`/`transfer.failed` (Kafka, KRaft mode via `apache/kafka`); Notification Service (stateless) consuming both and logging |
 ```
 
 ```markdown
@@ -1349,8 +1349,8 @@ git commit -m "feat: wire Kafka and notification-service into Docker Compose"
 
 Before considering this phase done, dispatch a whole-branch review using a more capable model than the per-task implementer/reviewer subagents (per CLAUDE.md's subagent model policy) — Phase 3's equivalent review caught a money-creation bug six per-task reviews had missed. Give it an explicit checklist:
 
-- Every `transferRepository.save(transfer)` call that follows a `mark*()` call in `TransferService` and `CompensationScheduler` has been converted to `transferOutboxService.save(transfer)` — none missed. (Grep both files for `transferRepository.save(transfer)`; only the initial `execute()` creation-save should remain.)
-- `TransferOutboxService.save()` is `@Transactional`; `TransferService.execute()` is still not.
+- Every `transferRepository.save(transfer)` call that follows a `mark*()` call in `TransferService` and `CompensationScheduler` has been converted to `transferSaveService.save(transfer)` — none missed. (Grep both files for `transferRepository.save(transfer)`; only the initial `execute()` creation-save should remain.)
+- `TransferSaveService.save()` is `@Transactional`; `TransferService.execute()` is still not.
 - `OutboxEventType.forStatus()` covers all six `TransferStatus` values (a missing `case` is a compile error thanks to the exhaustive `switch`, but confirm the mapping matches the Design Decisions section, not just that it compiles).
 - `OutboxPublisher.publishPending()` isolates each row's failure in its own try/catch, matching `CompensationScheduler`'s loops.
 - Both new Dockerfiles (`account-service`, `transfer-service`) got the `notification-service` pom COPY line; the new `notification-service/Dockerfile` copies all three.

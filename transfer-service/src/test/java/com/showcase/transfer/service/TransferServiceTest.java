@@ -52,6 +52,9 @@ class TransferServiceTest {
     @Mock
     private AccountClient accountClient;
 
+    @Mock
+    private TransferSaveService transferSaveService;
+
     private TransferService transferService;
 
     /**
@@ -66,7 +69,7 @@ class TransferServiceTest {
 
     @BeforeEach
     void setUp() {
-        transferService = new TransferService(transferRepository, accountClient);
+        transferService = new TransferService(transferRepository, accountClient, transferSaveService);
     }
 
     // Called per-test rather than from setUp: the self-transfer test never reaches the
@@ -79,6 +82,15 @@ class TransferServiceTest {
                 ReflectionTestUtils.setField(saved, "id", TRANSFER_ID);
             }
             statusesAtSaveTime.add(saved.getStatus());
+            return saved;
+        });
+        when(transferSaveService.save(any(Transfer.class))).thenAnswer(invocation -> {
+            Transfer saved = invocation.getArgument(0);
+            if (saved.getId() == null) {
+                ReflectionTestUtils.setField(saved, "id", TRANSFER_ID);
+            }
+            statusesAtSaveTime.add(saved.getStatus());
+            // Return the transfer without calling transferRepository.save() to avoid double-capture
             return saved;
         });
     }
@@ -266,6 +278,7 @@ class TransferServiceTest {
                     return saved;
                 })
                 .thenThrow(boom);
+        when(transferSaveService.save(any(Transfer.class))).thenThrow(boom);
         bothAccountsExist();
 
         // The entity is already COMPLETED in memory, so re-marking it would throw
