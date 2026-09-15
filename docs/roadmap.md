@@ -61,3 +61,9 @@ closing the phase; these Minor ones were not, deliberately):
   `transfer.failed` topics, the `TransferEventPayload` shape with a `status` field
   distinguishing sub-cases), but the design doc's own prose wasn't touched to reflect it beyond
   what this fix wave updated. Give it a full pass alongside Phase 5's design doc updates.
+- `outbox_events` has no pruning: nothing deletes a row once it's published, so the table grows
+  with total transfer history forever. The final review's index fix (`idx_outbox_unpublished`
+  on `publishedAt, createdAt`) keeps the poll query and the backlog gauge cheap regardless of
+  table size, but disk growth itself is untouched — deliberately out of scope for the review-fix
+  pass. Revisit with a retention policy (e.g. delete published rows older than N days) once
+  Flyway lands and can carry the migration.

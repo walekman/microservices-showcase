@@ -1,5 +1,7 @@
 package com.showcase.transfer.service;
 
+import com.showcase.transfer.domain.OutboxEvent;
+import com.showcase.transfer.domain.OutboxEventRepository;
 import com.showcase.transfer.domain.Transfer;
 import com.showcase.transfer.domain.TransferFailureCode;
 import com.showcase.transfer.domain.TransferRepository;
@@ -10,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.data.domain.Limit;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -21,6 +24,7 @@ import java.io.OutputStream;
 import java.math.BigDecimal;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -79,6 +83,9 @@ class CompensationSchedulerIT {
     @Autowired
     private CompensationScheduler scheduler;
 
+    @Autowired
+    private OutboxEventRepository outboxEventRepository;
+
     @Test
     void drainingARealStrandedTransferReconcilesItToCompletedAndPersistsThroughTheRealVersionedSave() {
         Transfer transfer = new Transfer(FROM, TO, new BigDecimal("40.00"));
@@ -96,5 +103,14 @@ class CompensationSchedulerIT {
         assertThat(reconciled.getFailureCode()).isNull();
         assertThat(reconciled.getFailureReason()).isNull();
         assertThat(creditRequestsToDestination.get()).isGreaterThanOrEqualTo(1);
+
+        // This is the one test in the suite where TransferSaveService is the real,
+        // Spring-managed bean (not a mock) running against a real database -- the strongest
+        // proof available that reconcileCredit()'s transferSaveService.save(transfer) call
+        // actually wrote an outbox row end-to-end, not just that the Transfer's own status
+        // changed. No Kafka container runs in this test, so nothing could have published (and
+        // thus unpublished-marked-null) this row out from under the assertion.
+        List<OutboxEvent> unpublished = outboxEventRepository.findByPublishedAtIsNullOrderByCreatedAtAsc(Limit.of(10));
+        assertThat(unpublished).extracting(OutboxEvent::getTransferId).contains(transfer.getId());
     }
 }

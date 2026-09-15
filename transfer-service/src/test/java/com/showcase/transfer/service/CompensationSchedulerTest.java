@@ -96,6 +96,12 @@ class CompensationSchedulerTest {
         verify(accountClient).credit(TO, AMOUNT, TRANSFER_ID + ":credit");
         verify(accountClient, never()).credit(eq(FROM), any(), any());
         verify(transferRepository).save(transfer);
+        // Proves reconcileCredit's success branch actually routes its terminal write through
+        // the outbox choke point rather than transferRepository directly -- without this, a
+        // regression back to a direct transferRepository.save(transfer) call here would leave
+        // every assertion in this test still green (the setUp() stub makes
+        // transferSaveService.save() delegate to transferRepository.save() either way).
+        verify(transferSaveService).save(transfer);
     }
 
     @Test
@@ -111,6 +117,8 @@ class CompensationSchedulerTest {
 
         assertThat(transfer.getStatus()).isEqualTo(TransferStatus.COMPENSATED);
         verify(accountClient).credit(FROM, AMOUNT, TRANSFER_ID + ":compensate");
+        // Proves compensateSource's success branch routes through the outbox choke point.
+        verify(transferSaveService).save(transfer);
     }
 
     @Test
@@ -127,6 +135,9 @@ class CompensationSchedulerTest {
 
         assertThat(transfer.getStatus()).isEqualTo(TransferStatus.COMPENSATION_FAILED);
         assertThat(transfer.getFailureReason()).contains("manual review required");
+        // Proves compensateSource's catch(AccountRejectedException) branch routes through the
+        // outbox choke point.
+        verify(transferSaveService).save(transfer);
     }
 
     @Test
@@ -187,6 +198,9 @@ class CompensationSchedulerTest {
         assertThat(transfer.getStatus()).isEqualTo(TransferStatus.FAILED);
         assertThat(transfer.getFailureCode()).isEqualTo(TransferFailureCode.ACCOUNT_NOT_FOUND);
         verify(accountClient, never()).credit(any(), any(), any());
+        // Proves reconcileDebit's catch(AccountRejectedException) branch routes through the
+        // outbox choke point.
+        verify(transferSaveService).save(transfer);
     }
 
     @Test

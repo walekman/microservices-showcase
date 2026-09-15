@@ -120,6 +120,12 @@ class TransferServiceTest {
         inOrder.verify(transferRepository).save(any(Transfer.class));
         inOrder.verify(accountClient).debit(eq(FROM), eq(AMOUNT), any());
         assertThat(statusesAtSaveTime).containsExactly(TransferStatus.PENDING, TransferStatus.COMPLETED);
+        // Proves execute()'s happy-path completion routes its terminal write through the
+        // outbox choke point, not straight to transferRepository -- without this, a
+        // regression back to transferRepository.save(transfer) here would leave every other
+        // assertion in this test green (repositoryEchoesSaves() stubs both mocks to behave
+        // the same way).
+        verify(transferSaveService).save(any(Transfer.class));
     }
 
     @Test
@@ -134,6 +140,8 @@ class TransferServiceTest {
         assertThat(result.getFailureCode()).isEqualTo(TransferFailureCode.ACCOUNT_NOT_FOUND);
         verify(accountClient, never()).debit(any(), any(), any());
         verify(accountClient, never()).credit(any(), any(), any());
+        // Proves fail()'s terminal write routes through the outbox choke point.
+        verify(transferSaveService).save(any(Transfer.class));
     }
 
     @Test
@@ -208,6 +216,9 @@ class TransferServiceTest {
         assertThat(result.getStatus()).isEqualTo(TransferStatus.COMPENSATION_REQUIRED);
         assertThat(result.getFailureCode()).isEqualTo(TransferFailureCode.ACCOUNT_NOT_FOUND);
         verify(accountClient).debit(eq(FROM), eq(AMOUNT), any());
+        // Proves strand()'s terminal write routes through the outbox choke point (even though
+        // COMPENSATION_REQUIRED itself writes no outbox row, per OutboxEventType.forStatus).
+        verify(transferSaveService).save(any(Transfer.class));
     }
 
     @Test
