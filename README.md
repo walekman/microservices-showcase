@@ -20,7 +20,7 @@ Then:
 
     docker compose up --build
 
-This starts Postgres, Account Service (8081) and Transfer Service (8082).
+This starts Postgres, Account Service (8081), Transfer Service (8082), Kafka, and Notification Service (8083).
 More services land in later phases.
 
 ## Try it (Swagger UI)
@@ -130,3 +130,21 @@ replays the same idempotency key, so a merely-lost response gets confirmed withi
 saga itself); this only remains open for the rarer case where every retry attempt, not just
 the first, fails to get back a definitive answer. Either way, this state is terminal
 (`FAILED`, not `PENDING`), so it is not touched by either sweep above.
+
+## Kafka and Notification Service
+
+Transfer outcomes (completed or failed) are published to Kafka topics (`transfer.completed` and
+`transfer.failed`) via an outbox table and polling publisher in Transfer Service.
+
+The Notification Service (port 8083) is a stateless consumer that listens to both topics and
+logs transfer notifications. To watch notifications as they arrive:
+
+    docker compose logs -f notification-service
+
+Look for lines like:
+- `Notification sent: transfer completed {...}` for successful transfers
+- `Notification sent: transfer failed {...}` for failed transfers
+
+The Notification Service health endpoint is available at:
+
+    curl http://localhost:8083/actuator/health
