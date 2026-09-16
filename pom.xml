@@ -20,6 +20,7 @@
     <module>account-service</module>
     <module>transfer-service</module>
     <module>notification-service</module>
+    <module>fraud-service</module>
   </modules>
 
   <properties>
