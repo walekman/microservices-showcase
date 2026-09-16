@@ -255,8 +255,9 @@ class CompensationSchedulerTest {
 
     @Test
     void destinationBlockedCompensatesWithoutEverAttemptingCredit() {
-        // Stranded for an ordinary UNEXPECTED_ERROR reason (not a fraud-tagged one) -- proves the
-        // destination fraud gate runs unconditionally, not only for DESTINATION_*-tagged rows.
+        // Stranded for an ordinary ACCOUNT_SERVICE_UNAVAILABLE reason ("credit leg timed out",
+        // not a fraud-tagged one) -- proves the destination fraud gate runs unconditionally,
+        // not only for DESTINATION_*-tagged rows.
         Transfer transfer = strandedTransfer();
         when(transferRepository.findByStatus(eq(TransferStatus.COMPENSATION_REQUIRED), any())).thenReturn(List.of(transfer));
         when(transferRepository.save(transfer)).thenReturn(transfer);

@@ -88,14 +88,24 @@ class FraudClientTest {
     }
 
     @Test
-    void checkThrowsRejectedWithFallbackDetailWhenTheErrorBodyIsNotAProblem() {
+    void checkThrowsUnavailableWhenTheErrorBodyIsNotAProblem() {
         server.expect(requestToUriTemplate(BASE_URL + "/fraud-check?accountId={id}", ACCOUNT_ID))
                 .andRespond(withStatus(HttpStatus.BAD_REQUEST)
                         .contentType(MediaType.TEXT_HTML)
                         .body("<html>gateway says no</html>"));
 
         assertThatThrownBy(() -> fraudClient.check(ACCOUNT_ID))
-                .isInstanceOf(FraudRejectedException.class);
+                .isInstanceOf(FraudServiceUnavailableException.class);
+        server.verify();
+    }
+
+    @Test
+    void checkThrowsUnavailableWhenTheProblemCodeIsNotAccountBlocked() {
+        server.expect(requestToUriTemplate(BASE_URL + "/fraud-check?accountId={id}", ACCOUNT_ID))
+                .andRespond(problem(HttpStatus.NOT_FOUND, "SOME_OTHER_CODE", "not what we expected"));
+
+        assertThatThrownBy(() -> fraudClient.check(ACCOUNT_ID))
+                .isInstanceOf(FraudServiceUnavailableException.class);
         server.verify();
     }
 
