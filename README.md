@@ -20,7 +20,7 @@ Then:
 
     docker compose up --build
 
-This starts Postgres, Account Service (8081), Transfer Service (8082), Fraud Service (8084), Kafka, and Notification Service (8083).
+This starts Postgres, Account Service (8081), Transfer Service (8082), Fraud Service (8084), Kafka, Notification Service (8083), and the API Gateway (8080).
 
 ## Try it (Swagger UI)
 
@@ -29,6 +29,20 @@ All three APIs are browsable and callable straight from a browser:
 - Account Service — http://localhost:8081/swagger-ui.html
 - Transfer Service — http://localhost:8082/swagger-ui.html
 - Fraud Service — http://localhost:8084/swagger-ui.html
+
+## API Gateway
+
+A single entry point at `http://localhost:8080` routes to the two client-facing services:
+
+- `/transfers/**` → Transfer Service (full API)
+- `POST /accounts`, `GET /accounts`, `GET /accounts/{id}` → Account Service
+
+Account's `/accounts/{id}/debit` and `/accounts/{id}/credit` are intentionally **not** routed
+— they're internal saga calls Transfer Service makes directly on the Docker network, and stay
+unreachable from outside it. Every other example in this README still targets each service's
+own port directly (8081/8082/8083/8084); the Gateway doesn't replace those, it adds a second,
+narrower way in. There is no authentication yet (see `docs/roadmap.md` Phase 7) — anyone who
+can reach port 8080 can reach the routed paths, same as reaching 8081/8082 directly today.
 
 ## Try it (curl)
 

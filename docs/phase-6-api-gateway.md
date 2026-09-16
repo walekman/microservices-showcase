@@ -6,13 +6,13 @@
 
 **Architecture:** A new stateless `gateway-service` module built on Spring Cloud Gateway **Server MVC** — the blocking, Servlet-based flavor of Spring Cloud Gateway (as opposed to the original WebFlux/Reactor-based one), matching the project's stated "Spring MVC, not WebFlux" stack choice and its virtual-threads convention. Routes are declared as `RouterFunction<ServerResponse>` beans (or equivalent) with explicit path predicates — only the paths a client should reach get a route; there is no blocklist filter to bypass or misconfigure, because the forbidden paths simply have no route.
 
-**Tech Stack:** Spring Boot 3.3.4 / Java 21 (same as every other service), `spring-cloud-starter-gateway-server-webmvc`, Spring Cloud BOM `2023.0.5` (the 2023.0 release train adds explicit Spring Boot 3.3.x support; `2023.0.5` — released 2025-01-10 — is the pinned patch, verified present on Maven Central during this brainstorm). No database, no Kafka, no Spring Security. springdoc-openapi is not added to this module — a gateway has no business logic of its own to document; its Swagger surface is whatever Transfer/Account already publish.
+**Tech Stack:** Spring Boot 3.3.8 / Java 21 (same as every other service — Boot bumped project-wide from 3.3.4 during implementation; see Design Decisions), `spring-cloud-starter-gateway-mvc`, Spring Cloud BOM `2023.0.5` (the 2023.0 release train adds explicit Spring Boot 3.3.x support; `2023.0.5` — released 2025-01-10 — is the pinned patch, verified present on Maven Central during this brainstorm). No database, no Kafka, no Spring Security. springdoc-openapi is not added to this module — a gateway has no business logic of its own to document; its Swagger surface is whatever Transfer/Account already publish.
 
 **Spec:** This document (brainstormed with the user on 2026-09-16) and [docs/microservices-showcase-design.md](microservices-showcase-design.md) §2–§4, §7 (component table, tech stack, deployment — describes the Gateway generically and bundles it with Auth; this phase's Scope Boundary supersedes that bundling by splitting Auth into its own Phase 7).
 
 ## Global Constraints
 
-- Java 21 floor; Spring Boot 3.3.4. Use `C:\dev\openjdk-21.0.2` and set `JAVA_HOME` before running Maven. (CLAUDE.md)
+- Java 21 floor; Spring Boot 3.3.8 (bumped from 3.3.4 during this phase — see Design Decisions). Use `C:\dev\openjdk-21.0.2` and set `JAVA_HOME` before running Maven. (CLAUDE.md)
 - Spring MVC (blocking), not WebFlux; virtual threads enabled — `gateway-service` follows the same `spring.threads.virtual.enabled: true` convention as the other four services. Spring Cloud Gateway Server MVC (not the classic reactive Gateway) is a hard requirement of this phase, not a preference — see Design Decisions.
 - No Spring Security, no JWT validation, no Keycloak wiring in this phase. Do not add auth machinery "while we're in here" — it lands in Phase 7 as its own reviewed unit.
 - No database, no Kafka — `gateway-service` is stateless, same as Fraud/Notification.
@@ -29,6 +29,10 @@
 **Why Fraud and Notification get no routes.** Neither has ever had a client-facing use case (design doc: Fraud and Notification are both internal, `stateless`, consumed only by Transfer Service / Kafka respectively). Adding routes for them would be speculative — nothing in this phase or the roadmap calls for external access to either.
 
 **Why response bodies pass through unchanged.** Transfer and Account already return RFC 7807 `application/problem+json` with a stable `code` property. The Gateway does no response rewriting, so that contract reaches the client exactly as the origin service produced it — a client written against Transfer/Account's existing error contract doesn't need to know a Gateway is in front of it at all. A request to a path with no matching route predicate gets a plain 404 from the Gateway itself (not problem+json) — there's no upstream service to describe an error on behalf of; the path simply doesn't exist at this boundary, same as any other unmapped Spring MVC route.
+
+**Why Boot bumped to 3.3.8, and why `spring-cloud-starter-gateway-mvc` not `-server-webmvc`.** Both were found during implementation, not brainstorming, and both were verified against the actually-resolved jars (`javap` + sources), not assumed from docs — current Spring Cloud Gateway docs describe the *latest* API (renamed starter, `http()` + `BeforeFilterFunctions.uri()`), which is only accurate from gateway 4.3.x (Spring Cloud 2024.0.x+) onward, not the 4.1.x line this phase's 2023.0.5 BOM actually resolves. Two consequences:
+- The correct starter for this release train is `spring-cloud-starter-gateway-mvc` (no `-server-webmvc` suffix, no `-server-mvc` middle) — that name is a 4.3.x-era rename that doesn't exist as a resolvable artifact for 4.1.x.
+- `spring-cloud-gateway-server-mvc:4.1.6` calls `HttpHeaders.headerSet()` (added in Spring Framework 6.1.15) from its internal proxy handler, but Boot 3.3.4 ships Spring Framework 6.1.13 — a `NoSuchMethodError` on every proxied request, caught by `GatewayRoutingIT` (Task 2), not by `GatewayRoutesConfigTest`'s route-matching test (which never invokes a handler, so it can't see this class of bug). User-approved fix: bump the root `pom.xml`'s Boot parent to `3.3.8` (latest 3.3.x patch) project-wide, rather than pin Framework jars separately or drop Gateway Server MVC. `GatewayRoutesConfig` itself uses the 2-arg `GatewayRouterFunctions.route(RequestPredicate, HandlerFunction)` plus `HandlerFunctions.http(String)` — 4.1.x's equivalent of the newer `route(routeId).route(predicate, http()).before(uri(baseUrl)).build()` shape, confirmed by reading `HandlerFunctions`'s source: both forms set the same `MvcUtils.GATEWAY_REQUEST_URL_ATTR` and delegate to the same `ProxyExchangeHandlerFunction`.
 
 ## Gateway Service
 
@@ -167,7 +171,7 @@ to:
     </dependency>
     <dependency>
       <groupId>org.springframework.cloud</groupId>
-      <artifactId>spring-cloud-starter-gateway-server-webmvc</artifactId>
+      <artifactId>spring-cloud-starter-gateway-mvc</artifactId>
     </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>
@@ -359,7 +363,6 @@ import org.springframework.web.servlet.function.RequestPredicate;
 import org.springframework.web.servlet.function.RouterFunction;
 import org.springframework.web.servlet.function.ServerResponse;
 
-import static org.springframework.cloud.gateway.server.mvc.filter.BeforeFilterFunctions.uri;
 import static org.springframework.cloud.gateway.server.mvc.handler.GatewayRouterFunctions.route;
 import static org.springframework.cloud.gateway.server.mvc.handler.HandlerFunctions.http;
 import static org.springframework.web.servlet.function.RequestPredicates.GET;
@@ -377,10 +380,7 @@ public class GatewayRoutesConfig {
 
     @Bean
     public RouterFunction<ServerResponse> transferRoutes(TransferServiceProperties properties) {
-        return route("transfer_service")
-                .route(path("/transfers/**"), http())
-                .before(uri(properties.baseUrl()))
-                .build();
+        return route(path("/transfers/**"), http(properties.baseUrl()));
     }
 
     @Bean
@@ -388,13 +388,20 @@ public class GatewayRoutesConfig {
         RequestPredicate accountPaths = POST("/accounts")
                 .or(GET("/accounts"))
                 .or(GET("/accounts/{id}"));
-        return route("account_service")
-                .route(accountPaths, http())
-                .before(uri(properties.baseUrl()))
-                .build();
+        return route(accountPaths, http(properties.baseUrl()));
     }
 }
 ```
+
+**Re-synced from the merged source (see Design Decisions below for why):** the plan as originally
+written used `GatewayRouterFunctions.route(routeId).route(predicate, http()).before(uri(baseUrl)).build()`
+— the current (post-4.3.x) Gateway Server MVC API. The actual dependency resolved for this
+release train is `spring-cloud-gateway-server-mvc:4.1.6`, whose `HandlerFunctions` has no no-arg
+`http()`/`BeforeFilterFunctions.uri()` pair; verified via `javap` against the resolved jar. The
+2-arg static `GatewayRouterFunctions.route(RequestPredicate, HandlerFunction)` plus
+`HandlerFunctions.http(String)` used above is 4.1.6's equivalent, not a workaround: reading
+`HandlerFunctions`'s source shows `http(String)` sets the same `MvcUtils.GATEWAY_REQUEST_URL_ATTR`
+and delegates to the same `ProxyExchangeHandlerFunction` as the newer no-arg form.
 
 - [ ] **Step 9: Run the test to verify it passes**
 

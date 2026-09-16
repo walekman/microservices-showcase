@@ -9,7 +9,7 @@ Phases 1 and 2 are implemented and merged to `master`:
 - **Account Service** (`account-service/`, port 8081) — accounts and balances, debit/credit with optimistic locking.
 - **Transfer Service** (`transfer-service/`, port 8082) — orchestrates the transfer saga over synchronous HTTP into Account Service.
 
-Both are Spring Boot 3.3.4 / Java 21, JPA on Postgres (database-per-service), Testcontainers-tested, Lombok, and reachable via `docker compose up`. Both return RFC 7807 `application/problem+json` errors carrying a stable `code` property.
+Both are Spring Boot 3.3.8 / Java 21, JPA on Postgres (database-per-service), Testcontainers-tested, Lombok, and reachable via `docker compose up`. Both return RFC 7807 `application/problem+json` errors carrying a stable `code` property. (Boot bumped 3.3.4 → 3.3.8 in Phase 6, project-wide via the root `pom.xml`'s parent version — see `docs/phase-6-api-gateway.md`'s Design Decisions for why.)
 
 See `docs/microservices-showcase-design.md` for the architecture, and `docs/phase-1-*.md` / `docs/phase-2-*.md` for what each phase built. **Do not re-derive architecture decisions already settled in those files.**
 
