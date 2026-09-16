@@ -53,6 +53,7 @@ class CompensationSchedulerIT {
     private static final UUID TO = UUID.fromString("33333333-3333-3333-3333-333333333333");
 
     private static HttpServer fakeAccountService;
+    private static HttpServer fakeFraudService;
     private static final AtomicInteger creditRequestsToDestination = new AtomicInteger();
 
     @DynamicPropertySource
@@ -66,14 +67,28 @@ class CompensationSchedulerIT {
             exchange.close();
         });
         fakeAccountService.start();
+
+        fakeFraudService = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        // The fraud check always succeeds (200 OK, not blocklisted) for reconciliation.
+        fakeFraudService.createContext("/fraud-check", exchange -> {
+            exchange.sendResponseHeaders(200, -1);
+            exchange.close();
+        });
+        fakeFraudService.start();
+
         registry.add("account-service.base-url",
                 () -> "http://localhost:" + fakeAccountService.getAddress().getPort());
+        registry.add("fraud-service.base-url",
+                () -> "http://localhost:" + fakeFraudService.getAddress().getPort());
     }
 
     @AfterAll
     static void stopFakeAccountService() {
         if (fakeAccountService != null) {
             fakeAccountService.stop(0);
+        }
+        if (fakeFraudService != null) {
+            fakeFraudService.stop(0);
         }
     }
 

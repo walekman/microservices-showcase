@@ -3,6 +3,9 @@ package com.showcase.transfer.service;
 import com.showcase.transfer.client.AccountClient;
 import com.showcase.transfer.client.AccountRejectedException;
 import com.showcase.transfer.client.AccountServiceUnavailableException;
+import com.showcase.transfer.client.FraudClient;
+import com.showcase.transfer.client.FraudRejectedException;
+import com.showcase.transfer.client.FraudServiceUnavailableException;
 import com.showcase.transfer.domain.Transfer;
 import com.showcase.transfer.domain.TransferFailureCode;
 import com.showcase.transfer.domain.TransferRepository;
@@ -44,6 +47,9 @@ class CompensationSchedulerTest {
     private AccountClient accountClient;
 
     @Mock
+    private FraudClient fraudClient;
+
+    @Mock
     private TransferSaveService transferSaveService;
 
     private CompensationScheduler scheduler;
@@ -57,7 +63,7 @@ class CompensationSchedulerTest {
             Transfer transfer = invocation.getArgument(0);
             return transferRepository.save(transfer);
         });
-        scheduler = new CompensationScheduler(transferRepository, accountClient,
+        scheduler = new CompensationScheduler(transferRepository, accountClient, fraudClient,
                 new CompensationProperties(Duration.ofSeconds(15), Duration.ofSeconds(120), 500), transferSaveService);
     }
 
@@ -245,5 +251,63 @@ class CompensationSchedulerTest {
 
         assertThat(succeeding.getStatus()).isEqualTo(TransferStatus.COMPENSATION_REQUIRED);
         verify(transferRepository).save(succeeding);
+    }
+
+    @Test
+    void destinationBlockedCompensatesWithoutEverAttemptingCredit() {
+        // Stranded for an ordinary UNEXPECTED_ERROR reason (not a fraud-tagged one) -- proves the
+        // destination fraud gate runs unconditionally, not only for DESTINATION_*-tagged rows.
+        Transfer transfer = strandedTransfer();
+        when(transferRepository.findByStatus(eq(TransferStatus.COMPENSATION_REQUIRED), any())).thenReturn(List.of(transfer));
+        when(transferRepository.save(transfer)).thenReturn(transfer);
+        doThrow(new FraudRejectedException("Account is blocklisted: " + TO)).when(fraudClient).check(TO);
+
+        scheduler.drainCompensationRequired();
+
+        assertThat(transfer.getStatus()).isEqualTo(TransferStatus.COMPENSATED);
+        verify(accountClient, never()).credit(eq(TO), any(), any());
+        verify(accountClient).credit(FROM, AMOUNT, TRANSFER_ID + ":compensate");
+    }
+
+    @Test
+    void destinationFraudStillUnavailableLeavesTheTransferAwaitingTheNextSweep() {
+        Transfer transfer = strandedTransfer();
+        when(transferRepository.findByStatus(eq(TransferStatus.COMPENSATION_REQUIRED), any())).thenReturn(List.of(transfer));
+        doThrow(new FraudServiceUnavailableException("read timed out")).when(fraudClient).check(TO);
+
+        scheduler.drainCompensationRequired();
+
+        assertThat(transfer.getStatus()).isEqualTo(TransferStatus.COMPENSATION_REQUIRED);
+        verify(accountClient, never()).credit(any(), any(), any());
+        verify(transferRepository, never()).save(any());
+    }
+
+    @Test
+    void staleSourceBlockedMarksTheTransferFailedWithoutDebiting() {
+        Transfer transfer = stalePendingTransfer();
+        when(transferRepository.findByStatusAndCreatedAtBefore(eq(TransferStatus.PENDING), any(), any()))
+                .thenReturn(List.of(transfer));
+        when(transferRepository.save(transfer)).thenReturn(transfer);
+        doThrow(new FraudRejectedException("Account is blocklisted: " + FROM)).when(fraudClient).check(FROM);
+
+        scheduler.sweepStalePending();
+
+        assertThat(transfer.getStatus()).isEqualTo(TransferStatus.FAILED);
+        assertThat(transfer.getFailureCode()).isEqualTo(TransferFailureCode.SOURCE_ACCOUNT_BLOCKED);
+        verify(accountClient, never()).debit(any(), any(), any());
+    }
+
+    @Test
+    void staleSourceFraudStillUnavailableStaysPending() {
+        Transfer transfer = stalePendingTransfer();
+        when(transferRepository.findByStatusAndCreatedAtBefore(eq(TransferStatus.PENDING), any(), any()))
+                .thenReturn(List.of(transfer));
+        doThrow(new FraudServiceUnavailableException("read timed out")).when(fraudClient).check(FROM);
+
+        scheduler.sweepStalePending();
+
+        assertThat(transfer.getStatus()).isEqualTo(TransferStatus.PENDING);
+        verify(accountClient, never()).debit(any(), any(), any());
+        verify(transferRepository, never()).save(any());
     }
 }
