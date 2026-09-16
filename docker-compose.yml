@@ -132,5 +132,27 @@ services:
       retries: 10
       start_period: 40s
 
+  gateway-service:
+    build:
+      context: .
+      dockerfile: gateway-service/Dockerfile
+    container_name: showcase-gateway-service
+    environment:
+      ACCOUNT_SERVICE_URL: http://account-service:8081
+      TRANSFER_SERVICE_URL: http://transfer-service:8082
+    ports:
+      - "8080:8080"
+    depends_on:
+      account-service:
+        condition: service_healthy
+      transfer-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+
 volumes:
   postgres-data:

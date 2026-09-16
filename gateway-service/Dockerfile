@@ -7,14 +7,14 @@ COPY transfer-service/pom.xml transfer-service/pom.xml
 COPY notification-service/pom.xml notification-service/pom.xml
 COPY fraud-service/pom.xml fraud-service/pom.xml
 COPY gateway-service/pom.xml gateway-service/pom.xml
-RUN chmod +x mvnw && ./mvnw -pl transfer-service -am dependency:go-offline -B
-COPY transfer-service/src transfer-service/src
-RUN ./mvnw -pl transfer-service -am package -DskipTests -B
+RUN chmod +x mvnw && ./mvnw -pl gateway-service -am dependency:go-offline -B
+COPY gateway-service/src gateway-service/src
+RUN ./mvnw -pl gateway-service -am package -DskipTests -B
 
 FROM eclipse-temurin:21-jre
 RUN apt-get update && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY --from=build /app/transfer-service/target/transfer-service-*.jar app.jar
-EXPOSE 8082
+COPY --from=build /app/gateway-service/target/gateway-service-*.jar app.jar
+EXPOSE 8080
 ENTRYPOINT ["java", "-jar", "app.jar"]
