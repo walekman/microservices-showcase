@@ -21,6 +21,7 @@
     <module>transfer-service</module>
     <module>notification-service</module>
     <module>fraud-service</module>
+    <module>gateway-service</module>
   </modules>
 
   <properties>
