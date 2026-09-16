@@ -3,6 +3,9 @@ package com.showcase.transfer.service;
 import com.showcase.transfer.client.AccountClient;
 import com.showcase.transfer.client.AccountRejectedException;
 import com.showcase.transfer.client.AccountServiceUnavailableException;
+import com.showcase.transfer.client.FraudClient;
+import com.showcase.transfer.client.FraudRejectedException;
+import com.showcase.transfer.client.FraudServiceUnavailableException;
 import com.showcase.transfer.domain.Transfer;
 import com.showcase.transfer.domain.TransferFailureCode;
 import com.showcase.transfer.domain.TransferRepository;
@@ -37,13 +40,16 @@ public class CompensationScheduler implements SchedulingConfigurer {
 
     private final TransferRepository transferRepository;
     private final AccountClient accountClient;
+    private final FraudClient fraudClient;
     private final CompensationProperties properties;
     private final TransferSaveService transferSaveService;
 
     public CompensationScheduler(TransferRepository transferRepository, AccountClient accountClient,
-                                  CompensationProperties properties, TransferSaveService transferSaveService) {
+                                  FraudClient fraudClient, CompensationProperties properties,
+                                  TransferSaveService transferSaveService) {
         this.transferRepository = transferRepository;
         this.accountClient = accountClient;
+        this.fraudClient = fraudClient;
         this.properties = properties;
         this.transferSaveService = transferSaveService;
     }
@@ -98,9 +104,18 @@ public class CompensationScheduler implements SchedulingConfigurer {
 
     private void reconcileCredit(Transfer transfer) {
         try {
+            fraudClient.check(transfer.getToAccountId());
+        } catch (FraudRejectedException blocked) {
+            compensateSource(transfer, "Destination account blocklisted: " + blocked.getDetail());
+            return;
+        } catch (FraudServiceUnavailableException stillUnavailable) {
+            log.error("Transfer {} still cannot reconcile the destination fraud check, will retry next sweep: {}",
+                    transfer.getId(), stillUnavailable.getMessage());
+            return;
+        }
+
+        try {
             accountClient.credit(transfer.getToAccountId(), transfer.getAmount(), transfer.getId() + ":credit");
-            // The credit actually landed -- Transfer just did not know it yet. Nothing to
-            // reverse; this transfer genuinely completed.
             transfer.markCompleted();
             transferSaveService.save(transfer);
             log.info("Transfer {} reconciled as COMPLETED: the credit had already landed", transfer.getId());
@@ -142,6 +157,20 @@ public class CompensationScheduler implements SchedulingConfigurer {
      * through COMPENSATION_REQUIRED for one extra sweep before self-correcting to COMPLETED.
      */
     private void reconcileDebit(Transfer transfer) {
+        try {
+            fraudClient.check(transfer.getFromAccountId());
+        } catch (FraudRejectedException blocked) {
+            transfer.markFailed(TransferFailureCode.SOURCE_ACCOUNT_BLOCKED, blocked.getDetail());
+            transferSaveService.save(transfer);
+            log.info("Transfer {} recovered from stale PENDING as FAILED: source account blocklisted [{}]",
+                    transfer.getId(), blocked.getDetail());
+            return;
+        } catch (FraudServiceUnavailableException stillUnavailable) {
+            log.error("Transfer {} still stale PENDING, source fraud check still unavailable, will retry next sweep: {}",
+                    transfer.getId(), stillUnavailable.getMessage());
+            return;
+        }
+
         try {
             accountClient.debit(transfer.getFromAccountId(), transfer.getAmount(), transfer.getId() + ":debit");
             transfer.markCompensationRequired(TransferFailureCode.UNEXPECTED_ERROR,
