@@ -47,9 +47,10 @@ Each stateful service owns its data exclusively — no service queries another's
 
 **Happy path:**
 1. Transfer Service creates a `Transfer` record, status `PENDING`, in its own DB.
-2. **Sync call** → Account Service: debit the source account (optimistic locking on balance; rejects on insufficient funds). Wrapped in Resilience4j CircuitBreaker + Retry (retry only on transient errors, never on business rejections) + TimeLimiter.
-3. **Sync call** → Fraud Service: risk-check the transfer. Same resilience wrapping.
-4. Fraud passes → **sync call** → Account Service: credit the destination account.
+2b. **Sync call** → Fraud Service: screen the source account (before the debit — see docs/phase-5-fraud-service.md's Design Decisions for why the check runs twice, not once, between debit and credit). Same resilience wrapping. A block fails the transfer clean, no money moved.
+3. **Sync call** → Account Service: debit the source account (optimistic locking on balance; rejects on insufficient funds). Wrapped in Resilience4j CircuitBreaker + Retry (retry only on transient errors, never on business rejections) + TimeLimiter.
+3b. **Sync call** → Fraud Service: screen the destination account (before the credit). A block strands the transfer for compensation — the deliberate trigger for the compensation path below.
+4. Destination clears → **sync call** → Account Service: credit the destination account.
 5. Transfer Service marks the `Transfer` `COMPLETED` and writes an outbox row **in the same local DB transaction** (transactional outbox — guarantees the event and the DB state are consistent).
 6. A scheduled **outbox publisher** (polling, not Debezium — keeps deployment footprint manageable) reads unpublished outbox rows, publishes `TransferCompleted`/`TransferFailed` to Kafka, marks them published.
 7. Notification Service consumes the Kafka event, logs a "notification sent."
@@ -65,8 +66,9 @@ Each stateful service owns its data exclusively — no service queries another's
 > manageable."
 
 **Failure & compensation paths:**
-- **Fraud rejects the transfer:** compensate by calling Account Service to credit the source account back (reversing step 2). Mark `Transfer` `FAILED`. Emit `TransferFailed` via the same outbox mechanism (for observability/notification).
-- **Compensation call itself fails** (the credit-back to the source account fails after Fraud rejected): this is the one case that can't simply retry-and-move-on. Mark the `Transfer` `COMPENSATION_FAILED` and route it to a manual-review/dead-letter path rather than silently leaving the ledger inconsistent. This path exists specifically to demonstrate the realistic edge case of saga design, not to be resolved automatically.
+- **Source account blocked (pre-debit fraud screen):** transfer is marked `FAILED`. Nothing moved, nothing to compensate.
+- **Destination account blocked (pre-credit fraud screen):** the source has already been debited, so the transfer is marked `COMPENSATION_REQUIRED` and CompensationScheduler credits the source back automatically, marking the transfer `COMPENSATED`. Emit `TransferFailed` via the same outbox mechanism either way (for observability/notification).
+- **Compensation call itself fails** (the credit-back to the source account fails after Destination was blocked or after another rejection): this is the one case that can't simply retry-and-move-on. Mark the `Transfer` `COMPENSATION_FAILED` and route it to a manual-review/dead-letter path rather than silently leaving the ledger inconsistent. This path exists specifically to demonstrate the realistic edge case of saga design, not to be resolved automatically.
 - **Downstream Account/Fraud unavailable after retries exhausted:** circuit breaker is open → Transfer Service fails fast (no hang), returns a clear error (e.g. `503`), and the local `Transfer` DB transaction rolls back if the debit was never confirmed — no dangling partial state.
 
 ## 5. Observability
