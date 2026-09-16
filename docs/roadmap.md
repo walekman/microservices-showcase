@@ -17,7 +17,7 @@ when it's brainstormed, and may reshape later rows.
 | 2 | [Transfer Service + Synchronous Saga](phase-2-transfer-service-saga.md) | ✅ Done | Transfer entity/ledger, sync saga (pre-validate → debit → credit) over RestClient, RFC 7807 ProblemDetail on both services, Actuator + Compose healthchecks. No resilience, no compensation, no Kafka |
 | 3 | [Resilience4j + Compensation + Idempotency](phase-3-resilience-compensation-idempotency.md) | ✅ Done | CircuitBreaker/Retry on Transfer → Account; `AccountOperation` as the idempotency ledger backing required `Idempotency-Key` on debit/credit; `CompensationScheduler` auto-drains `COMPENSATION_REQUIRED` and stale `PENDING` via idempotent replay, resolving to `COMPLETED`, `COMPENSATED`, or the manual-review `COMPENSATION_FAILED` |
 | 4 | [Transactional outbox + Kafka + Notification](phase-4-outbox-kafka-notification.md) | ✅ Done | Outbox table + TransferSaveService choke point in Transfer Service; OutboxPublisher polling publisher to `transfer.completed`/`transfer.failed` (Kafka, KRaft mode via `apache/kafka`); Notification Service (stateless) consuming both and logging |
-| 5 | Fraud Service | Not started | Stateless rule-based risk check (amount/velocity thresholds), wired into the saga as Transfer's second sync call, with fraud rejection driving compensation |
+| 5 | Fraud Service | ✅ Done | Fraud Service (stateless account-blocklist screen, no DB); FraudClient wired into the saga as two sync calls (source before debit, destination before credit); CompensationScheduler's stale-PENDING and COMPENSATION_REQUIRED sweeps both gate on their matching fraud check before acting |
 | 6 | API Gateway + Auth | Not started | Keycloak (pre-configured realm), JWT validation at the Gateway and via Spring Security Resource Server in each service |
 | 7 | Observability + Full Compose Integration | Not started | OTel Collector, Prometheus, Grafana, Jaeger/Tempo; full trace across the sync+async hop; Spring Cloud Contract tests; end-to-end saga test module; final `docker compose up` bringing up all services + infra |
 
@@ -26,7 +26,9 @@ when it's brainstormed, and may reshape later rows.
 Carried over from Phase 1's final review, not yet resolved:
 - Flyway vs. `ddl-auto` for schema management — re-deferred again in Phase 4 (the outbox table
   was added to Transfer's existing schema via `ddl-auto: update`, no migration tooling
-  introduced). Revisit before Phase 5 or later phases add more schema surface.
+  introduced). Revisit before Phase 5 or later phases add more schema surface. Phase 5 added
+  zero schema surface (no new column, no new table) — the revisit trigger this item names was
+  not tripped by this phase.
 
 Carried over from Phase 4's final review (Critical and Important findings were fixed before
 closing the phase; these Minor ones were not, deliberately):
@@ -55,12 +57,6 @@ closing the phase; these Minor ones were not, deliberately):
   distinction — but if a later phase makes notifications customer-facing, this mapping would
   tell a customer "your transfer failed" when the real statement is "your money moved and the
   reversal needs manual review." Revisit the event-type mapping before that happens.
-- `docs/microservices-showcase-design.md` §4 still names the pre-Phase-3 `COMPENSATED`/
-  `COMPENSATION_FAILED`-unaware `TransferCompleted`/`TransferFailed` event pair informally and
-  §8 still says topic names are undecided — Phase 4 settled both (`transfer.completed`/
-  `transfer.failed` topics, the `TransferEventPayload` shape with a `status` field
-  distinguishing sub-cases), but the design doc's own prose wasn't touched to reflect it beyond
-  what this fix wave updated. Give it a full pass alongside Phase 5's design doc updates.
 - `outbox_events` has no pruning: nothing deletes a row once it's published, so the table grows
   with total transfer history forever. The final review's index fix (`idx_outbox_unpublished`
   on `publishedAt, createdAt`) keeps the poll query and the backlog gauge cheap regardless of

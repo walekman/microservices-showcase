@@ -6,6 +6,7 @@ COPY mvnw pom.xml ./
 COPY account-service/pom.xml account-service/pom.xml
 COPY transfer-service/pom.xml transfer-service/pom.xml
 COPY notification-service/pom.xml notification-service/pom.xml
+COPY fraud-service/pom.xml fraud-service/pom.xml
 RUN chmod +x mvnw && ./mvnw -pl account-service -am dependency:go-offline -B
 COPY account-service/src account-service/src
 RUN ./mvnw -pl account-service -am package -DskipTests -B

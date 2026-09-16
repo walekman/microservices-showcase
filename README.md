@@ -20,8 +20,7 @@ Then:
 
     docker compose up --build
 
-This starts Postgres, Account Service (8081), Transfer Service (8082), Kafka, and Notification Service (8083).
-More services land in later phases.
+This starts Postgres, Account Service (8081), Transfer Service (8082), Fraud Service (8084), Kafka, and Notification Service (8083).
 
 ## Try it (Swagger UI)
 
@@ -29,6 +28,7 @@ Both APIs are browsable and callable straight from a browser:
 
 - Account Service — http://localhost:8081/swagger-ui.html
 - Transfer Service — http://localhost:8082/swagger-ui.html
+- Fraud Service — http://localhost:8084/swagger-ui.html
 
 ## Try it (curl)
 
@@ -71,21 +71,27 @@ failure states below exist.
 
 Live request (`TransferService.execute()`):
 
-1. source exists → destination exists → debit succeeds → credit succeeds → `COMPLETED`
-2. source doesn't exist (or destination doesn't) → `FAILED` (`ACCOUNT_NOT_FOUND`, nothing moves)
-3. Account Service unreachable during the existence pre-check → `FAILED` (`ACCOUNT_SERVICE_UNAVAILABLE`, nothing moves)
-4. source exists → destination exists → debit rejected (e.g. `INSUFFICIENT_FUNDS`) → `FAILED` (nothing moves)
-5. source exists → destination exists → debit call unreachable (retries/circuit breaker exhausted) → `FAILED` (`ACCOUNT_SERVICE_UNAVAILABLE`) — deliberately terminal, not reconciled later: the debit's actual outcome is unknowable, and guessing `COMPENSATION_REQUIRED` risks inventing money (see "Known gap" below)
-6. debit succeeds → credit rejected (e.g. destination vanished between pre-check and credit) → `COMPENSATION_REQUIRED` → resolved by the background sweep
-7. debit succeeds → credit call unreachable → `COMPENSATION_REQUIRED` → resolved by the background sweep
-8. any unexpected exception (bug, DB error) before debit → `FAILED` (`UNEXPECTED_ERROR`)
-9. any unexpected exception after debit → `COMPENSATION_REQUIRED` (`UNEXPECTED_ERROR`) → resolved by the background sweep
-10. process crashes mid-request, the row never reaches a terminal save → stays `PENDING` → resolved by the background sweep
+| # | Path | Outcome |
+|---|---|---|
+| 1 | source exists → destination exists → source not blocked → debit succeeds → destination not blocked → credit succeeds | `COMPLETED` |
+| 2 | source or destination doesn't exist | `FAILED` (`ACCOUNT_NOT_FOUND`) |
+| 3 | Account Service unreachable during existence pre-check | `FAILED` (`ACCOUNT_SERVICE_UNAVAILABLE`) |
+| 4 | source account blocklisted | `FAILED` (`SOURCE_ACCOUNT_BLOCKED`) |
+| 5 | Fraud Service unreachable checking the source | `FAILED` (`SOURCE_FRAUD_SERVICE_UNAVAILABLE`) |
+| 6 | debit rejected (e.g. `INSUFFICIENT_FUNDS`) | `FAILED` |
+| 7 | debit call unreachable, retries/circuit breaker exhausted | `FAILED` (`ACCOUNT_SERVICE_UNAVAILABLE`) — terminal, not reconciled |
+| 8 | destination account blocklisted | `COMPENSATION_REQUIRED` (`DESTINATION_ACCOUNT_BLOCKED`) → scheduler compensates |
+| 9 | Fraud Service unreachable checking the destination | `COMPENSATION_REQUIRED` (`DESTINATION_FRAUD_SERVICE_UNAVAILABLE`) → scheduler retries |
+| 10 | credit rejected | `COMPENSATION_REQUIRED` → scheduler compensates |
+| 11 | credit call unreachable | `COMPENSATION_REQUIRED` → scheduler resolves |
+| 12 | unexpected exception before debit | `FAILED` (`UNEXPECTED_ERROR`) |
+| 13 | unexpected exception after debit | `COMPENSATION_REQUIRED` (`UNEXPECTED_ERROR`) |
+| 14 | process crashes mid-request | stays `PENDING` → scheduler resolves |
 
-Background scheduler resolution, for anything left at `PENDING` or `COMPENSATION_REQUIRED`:
+Background scheduler resolution:
 
-- stale `PENDING` → re-attempt debit (idempotent): lands → promoted to `COMPENSATION_REQUIRED`; rejected → `FAILED`; still unreachable → stays `PENDING`, retried next sweep
-- `COMPENSATION_REQUIRED` → re-attempt credit (idempotent): lands (had already landed) → `COMPLETED`; rejected → credit the source back: succeeds → `COMPENSATED`, fails → `COMPENSATION_FAILED`; still unreachable → stays `COMPENSATION_REQUIRED`, retried next sweep
+- **stale `PENDING`** → re-check source fraud: blocked → `FAILED`; unreachable → stays `PENDING`, retried next sweep; clear → (idempotent) debit attempt exactly as today (lands → promoted to `COMPENSATION_REQUIRED`; rejected → `FAILED`; unreachable → stays `PENDING`)
+- **`COMPENSATION_REQUIRED`** → re-check destination fraud, unconditionally: blocked → compensate the source (as today's rejected-credit path); unreachable → stays `COMPENSATION_REQUIRED`, retried next sweep; clear → (idempotent) credit attempt exactly as today (lands → `COMPLETED`; rejected → compensate; unreachable → stays `COMPENSATION_REQUIRED`)
 
     # Transfer money (replace the ids with two accounts you created)
     curl -X POST http://localhost:8082/transfers \
@@ -99,10 +105,22 @@ Background scheduler resolution, for anything left at `PENDING` or `COMPENSATION
     curl http://localhost:8082/transfers
     curl "http://localhost:8082/transfers?status=COMPENSATION_REQUIRED"
 
+    # Trigger a blocked-source rejection (clean failure, no money moves): set
+    # FRAUD_BLOCKLIST_ACCOUNT_IDS in .env to include an account id, restart fraud-service,
+    # then transfer FROM that account.
+    #
+    # Trigger a blocked-destination compensation (money moves, then reverses automatically):
+    # transfer TO a blocklisted account instead.
+    curl "http://localhost:8082/transfers?status=FAILED"
+
 Errors are RFC 7807 problem documents with a stable `code`:
 
     # Insufficient funds                  -> 422 INSUFFICIENT_FUNDS, no money moves
     # Unknown account                     -> 422 ACCOUNT_NOT_FOUND, no money moves
+    # Source account blocklisted        -> 422 SOURCE_ACCOUNT_BLOCKED, no money moves
+    # Destination account blocklisted   -> transfer recorded COMPENSATION_REQUIRED, source
+    #                                       is automatically credited back within
+    #                                       transfer.compensation.sweep-interval
     # Missing, blank, or overlong          -> 400 VALIDATION_FAILED (debit/credit only)
     #   Idempotency-Key header
     # Idempotency key reused with         -> 409 IDEMPOTENCY_KEY_CONFLICT (should never
