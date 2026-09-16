@@ -9,6 +9,7 @@ import org.springframework.http.client.ClientHttpResponse;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
+import java.io.IOException;
 import java.util.UUID;
 import java.util.function.Supplier;
 
@@ -54,20 +55,38 @@ public class FraudClient {
     }
 
     private void rejected(HttpRequest request, ClientHttpResponse response) {
-        throw new FraudRejectedException(readDetail(response));
+        FraudProblem problem = readProblem(response);
+        if (!"ACCOUNT_BLOCKED".equals(problem.code())) {
+            // Any 4xx that isn't a definitive block -- an unrecognised code, no code at all,
+            // a misconfigured fraud-service.base-url producing a 404, a gateway/proxy
+            // interstitial, or Fraud Service's own defensive 400s (VALIDATION_FAILED/
+            // MALFORMED_REQUEST) -- is NOT a business verdict. Treating it as one would let
+            // a misconfiguration or a future auth hop (Phase 6's Gateway) silently reverse a
+            // good transfer or terminate a transfer's recovery on a wrong answer.
+            throw new FraudServiceUnavailableException(
+                    "Fraud Service returned an unrecognised rejection [" + problem.code() + "]: " + problem.detail());
+        }
+        throw new FraudRejectedException(problem.detail());
     }
 
-    private void unavailable(HttpRequest request, ClientHttpResponse response) throws java.io.IOException {
+    private void unavailable(HttpRequest request, ClientHttpResponse response) throws IOException {
         throw new FraudServiceUnavailableException("Fraud Service returned " + response.getStatusCode().value());
     }
 
-    private String readDetail(ClientHttpResponse response) {
+    /**
+     * An error body that is not a well-formed problem document (an HTML page from a proxy,
+     * an empty body) must still produce a domain exception, never a parse error -- mirrors
+     * AccountClient.readProblem() exactly.
+     */
+    private FraudProblem readProblem(ClientHttpResponse response) {
         try {
             FraudProblem problem = objectMapper.readValue(response.getBody(), FraudProblem.class);
-            return (problem != null && problem.detail() != null)
-                    ? problem.detail() : "Fraud Service returned an unrecognised error body";
+            if (problem == null || problem.code() == null) {
+                return new FraudProblem("UNKNOWN", "Fraud Service returned an unrecognised error body");
+            }
+            return (problem.detail() != null) ? problem : new FraudProblem(problem.code(), "");
         } catch (Exception ex) {
-            return "Fraud Service returned an unreadable error body";
+            return new FraudProblem("UNKNOWN", "Fraud Service returned an unreadable error body");
         }
     }
 

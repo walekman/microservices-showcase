@@ -47,7 +47,7 @@ Each stateful service owns its data exclusively — no service queries another's
 
 **Happy path:**
 1. Transfer Service creates a `Transfer` record, status `PENDING`, in its own DB.
-2b. **Sync call** → Fraud Service: screen the source account (before the debit — see docs/phase-5-fraud-service.md's Design Decisions for why the check runs twice, not once, between debit and credit). Same resilience wrapping. A block fails the transfer clean, no money moved.
+2. **Sync call** → Fraud Service: screen the source account (before the debit — see docs/phase-5-fraud-service.md's Design Decisions for why the check runs twice, not once, between debit and credit). Same resilience wrapping. A block fails the transfer clean, no money moved.
 3. **Sync call** → Account Service: debit the source account (optimistic locking on balance; rejects on insufficient funds). Wrapped in Resilience4j CircuitBreaker + Retry (retry only on transient errors, never on business rejections) + TimeLimiter.
 3b. **Sync call** → Fraud Service: screen the destination account (before the credit). A block strands the transfer for compensation — the deliberate trigger for the compensation path below.
 4. Destination clears → **sync call** → Account Service: credit the destination account.

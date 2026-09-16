@@ -24,7 +24,7 @@ This starts Postgres, Account Service (8081), Transfer Service (8082), Fraud Ser
 
 ## Try it (Swagger UI)
 
-Both APIs are browsable and callable straight from a browser:
+All three APIs are browsable and callable straight from a browser:
 
 - Account Service — http://localhost:8081/swagger-ui.html
 - Transfer Service — http://localhost:8082/swagger-ui.html
@@ -117,10 +117,10 @@ Errors are RFC 7807 problem documents with a stable `code`:
 
     # Insufficient funds                  -> 422 INSUFFICIENT_FUNDS, no money moves
     # Unknown account                     -> 422 ACCOUNT_NOT_FOUND, no money moves
-    # Source account blocklisted        -> 422 SOURCE_ACCOUNT_BLOCKED, no money moves
-    # Destination account blocklisted   -> transfer recorded COMPENSATION_REQUIRED, source
-    #                                       is automatically credited back within
-    #                                       transfer.compensation.sweep-interval
+    # Source account blocklisted          -> 422 SOURCE_ACCOUNT_BLOCKED, no money moves
+    # Destination account blocklisted     -> transfer recorded COMPENSATION_REQUIRED, source
+    #                                         is automatically credited back within
+    #                                         transfer.compensation.sweep-interval
     # Missing, blank, or overlong          -> 400 VALIDATION_FAILED (debit/credit only)
     #   Idempotency-Key header
     # Idempotency key reused with         -> 409 IDEMPOTENCY_KEY_CONFLICT (should never
@@ -167,7 +167,11 @@ have committed despite the 503. Retry now resolves most of these on its own (a r
 replays the same idempotency key, so a merely-lost response gets confirmed within the live
 saga itself); this only remains open for the rarer case where every retry attempt, not just
 the first, fails to get back a definitive answer. Either way, this state is terminal
-(`FAILED`, not `PENDING`), so it is not touched by either sweep above.
+(`FAILED`, not `PENDING`), so it is not touched by either sweep above. The same gap exists
+for a stale-`PENDING` row recovered as `FAILED` because the source account came back
+blocklisted: that recovery never establishes whether the debit itself had already landed
+before the crash either, for the same underlying reason — no operation-lookup endpoint
+exists on Account Service to check.
 
 ## Kafka and Notification Service
 

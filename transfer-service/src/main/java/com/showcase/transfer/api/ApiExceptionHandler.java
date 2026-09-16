@@ -41,6 +41,13 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         } else if (transfer.getFailureCode() != null) {
             code = transfer.getFailureCode().name();
             title = "Transfer failed";
+            // DESTINATION_ACCOUNT_BLOCKED and DESTINATION_FRAUD_SERVICE_UNAVAILABLE are only
+            // ever set together with COMPENSATION_REQUIRED (see Transfer.markCompensationRequired
+            // via TransferService.strand()), which the `if` branch above already intercepts before
+            // this switch runs -- and this handler only fires from the synchronous POST /transfers
+            // response, before any later CompensationScheduler transition. These two arms exist
+            // only to satisfy the switch's exhaustiveness over TransferFailureCode, not because
+            // they are reachable here today.
             status = switch (transfer.getFailureCode()) {
                 case ACCOUNT_NOT_FOUND, INSUFFICIENT_FUNDS, CONCURRENT_MODIFICATION,
                      SOURCE_ACCOUNT_BLOCKED, DESTINATION_ACCOUNT_BLOCKED ->
@@ -84,6 +91,9 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         if (failureCode == null) {
             return INTERNAL_FAILURE_DETAIL;
         }
+        // Same exhaustiveness-only caveat as the switch in handleTransferFailed above:
+        // DESTINATION_ACCOUNT_BLOCKED and DESTINATION_FRAUD_SERVICE_UNAVAILABLE cannot reach
+        // this method with the given failureCode in practice.
         return switch (failureCode) {
             case ACCOUNT_NOT_FOUND, INSUFFICIENT_FUNDS, CONCURRENT_MODIFICATION,
                  SOURCE_ACCOUNT_BLOCKED, DESTINATION_ACCOUNT_BLOCKED -> failureReason;

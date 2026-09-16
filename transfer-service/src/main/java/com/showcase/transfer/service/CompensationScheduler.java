@@ -162,7 +162,9 @@ public class CompensationScheduler implements SchedulingConfigurer {
         } catch (FraudRejectedException blocked) {
             transfer.markFailed(TransferFailureCode.SOURCE_ACCOUNT_BLOCKED, blocked.getDetail());
             transferSaveService.save(transfer);
-            log.info("Transfer {} recovered from stale PENDING as FAILED: source account blocklisted [{}]",
+            log.error("Transfer {} recovered from stale PENDING as FAILED: source account blocklisted [{}]. "
+                            + "The debit's own outcome was never established by this recovery -- if it had "
+                            + "already landed before the crash, this FAILED row does not reflect that.",
                     transfer.getId(), blocked.getDetail());
             return;
         } catch (FraudServiceUnavailableException stillUnavailable) {
