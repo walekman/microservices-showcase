@@ -67,6 +67,26 @@ credits the destination, recording the outcome in its own database at each step.
 is no distributed transaction — each step commits independently, which is why the
 failure states below exist.
 
+### All saga outcomes
+
+Live request (`TransferService.execute()`):
+
+1. source exists → destination exists → debit succeeds → credit succeeds → `COMPLETED`
+2. source doesn't exist (or destination doesn't) → `FAILED` (`ACCOUNT_NOT_FOUND`, nothing moves)
+3. Account Service unreachable during the existence pre-check → `FAILED` (`ACCOUNT_SERVICE_UNAVAILABLE`, nothing moves)
+4. source exists → destination exists → debit rejected (e.g. `INSUFFICIENT_FUNDS`) → `FAILED` (nothing moves)
+5. source exists → destination exists → debit call unreachable (retries/circuit breaker exhausted) → `FAILED` (`ACCOUNT_SERVICE_UNAVAILABLE`) — deliberately terminal, not reconciled later: the debit's actual outcome is unknowable, and guessing `COMPENSATION_REQUIRED` risks inventing money (see "Known gap" below)
+6. debit succeeds → credit rejected (e.g. destination vanished between pre-check and credit) → `COMPENSATION_REQUIRED` → resolved by the background sweep
+7. debit succeeds → credit call unreachable → `COMPENSATION_REQUIRED` → resolved by the background sweep
+8. any unexpected exception (bug, DB error) before debit → `FAILED` (`UNEXPECTED_ERROR`)
+9. any unexpected exception after debit → `COMPENSATION_REQUIRED` (`UNEXPECTED_ERROR`) → resolved by the background sweep
+10. process crashes mid-request, the row never reaches a terminal save → stays `PENDING` → resolved by the background sweep
+
+Background scheduler resolution, for anything left at `PENDING` or `COMPENSATION_REQUIRED`:
+
+- stale `PENDING` → re-attempt debit (idempotent): lands → promoted to `COMPENSATION_REQUIRED`; rejected → `FAILED`; still unreachable → stays `PENDING`, retried next sweep
+- `COMPENSATION_REQUIRED` → re-attempt credit (idempotent): lands (had already landed) → `COMPLETED`; rejected → credit the source back: succeeds → `COMPENSATED`, fails → `COMPENSATION_FAILED`; still unreachable → stays `COMPENSATION_REQUIRED`, retried next sweep
+
     # Transfer money (replace the ids with two accounts you created)
     curl -X POST http://localhost:8082/transfers \
       -H "Content-Type: application/json" \
