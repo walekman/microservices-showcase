@@ -42,9 +42,11 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
             code = transfer.getFailureCode().name();
             title = "Transfer failed";
             status = switch (transfer.getFailureCode()) {
-                case ACCOUNT_NOT_FOUND, INSUFFICIENT_FUNDS, CONCURRENT_MODIFICATION ->
+                case ACCOUNT_NOT_FOUND, INSUFFICIENT_FUNDS, CONCURRENT_MODIFICATION,
+                     SOURCE_ACCOUNT_BLOCKED, DESTINATION_ACCOUNT_BLOCKED ->
                         HttpStatus.UNPROCESSABLE_ENTITY;
-                case ACCOUNT_SERVICE_UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
+                case ACCOUNT_SERVICE_UNAVAILABLE, SOURCE_FRAUD_SERVICE_UNAVAILABLE,
+                     DESTINATION_FRAUD_SERVICE_UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
                 case UNEXPECTED_ERROR -> HttpStatus.INTERNAL_SERVER_ERROR;
             };
         } else {
@@ -83,8 +85,11 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
             return INTERNAL_FAILURE_DETAIL;
         }
         return switch (failureCode) {
-            case ACCOUNT_NOT_FOUND, INSUFFICIENT_FUNDS, CONCURRENT_MODIFICATION -> failureReason;
+            case ACCOUNT_NOT_FOUND, INSUFFICIENT_FUNDS, CONCURRENT_MODIFICATION,
+                 SOURCE_ACCOUNT_BLOCKED, DESTINATION_ACCOUNT_BLOCKED -> failureReason;
             case ACCOUNT_SERVICE_UNAVAILABLE -> "Account Service is currently unavailable";
+            case SOURCE_FRAUD_SERVICE_UNAVAILABLE, DESTINATION_FRAUD_SERVICE_UNAVAILABLE ->
+                    "Fraud Service is currently unavailable";
             case UNEXPECTED_ERROR -> INTERNAL_FAILURE_DETAIL;
         };
     }

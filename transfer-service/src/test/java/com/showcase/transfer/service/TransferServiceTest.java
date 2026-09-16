@@ -4,6 +4,9 @@ import com.showcase.transfer.client.AccountClient;
 import com.showcase.transfer.client.AccountRejectedException;
 import com.showcase.transfer.client.AccountServiceUnavailableException;
 import com.showcase.transfer.client.AccountView;
+import com.showcase.transfer.client.FraudClient;
+import com.showcase.transfer.client.FraudRejectedException;
+import com.showcase.transfer.client.FraudServiceUnavailableException;
 import com.showcase.transfer.domain.SameAccountTransferException;
 import com.showcase.transfer.domain.Transfer;
 import com.showcase.transfer.domain.TransferFailureCode;
@@ -53,6 +56,9 @@ class TransferServiceTest {
     private AccountClient accountClient;
 
     @Mock
+    private FraudClient fraudClient;
+
+    @Mock
     private TransferSaveService transferSaveService;
 
     private TransferService transferService;
@@ -69,7 +75,7 @@ class TransferServiceTest {
 
     @BeforeEach
     void setUp() {
-        transferService = new TransferService(transferRepository, accountClient, transferSaveService);
+        transferService = new TransferService(transferRepository, accountClient, fraudClient, transferSaveService);
     }
 
     // Called per-test rather than from setUp: the self-transfer test never reaches the
@@ -98,6 +104,14 @@ class TransferServiceTest {
     private void bothAccountsExist() {
         when(accountClient.getAccount(FROM)).thenReturn(new AccountView(FROM, new BigDecimal("100.00")));
         when(accountClient.getAccount(TO)).thenReturn(new AccountView(TO, new BigDecimal("5.00")));
+    }
+
+    private void bothAccountsExistAndFraudClear() {
+        bothAccountsExist();
+        // Explicitly stub fraud checks to not throw by default (void methods don't throw in Mockito
+        // unless stubbed to, but this makes it explicit for strict stubbing verification).
+        // Use lenient() because this stub may be overridden by more specific stubs in individual tests.
+        org.mockito.Mockito.lenient().doNothing().when(fraudClient).check(any());
     }
 
     @Test
@@ -315,6 +329,66 @@ class TransferServiceTest {
 
         verify(accountClient).debit(FROM, AMOUNT, TRANSFER_ID + ":debit");
         verify(accountClient).credit(TO, AMOUNT, TRANSFER_ID + ":credit");
+    }
+
+    @Test
+    void failsWithoutDebitingWhenTheSourceAccountIsBlocked() {
+        repositoryEchoesSaves();
+        bothAccountsExistAndFraudClear();
+        org.mockito.Mockito.doThrow(new FraudRejectedException("Account is blocklisted: " + FROM))
+                .when(fraudClient).check(FROM);
+
+        Transfer result = transferService.execute(FROM, TO, AMOUNT);
+
+        assertThat(result.getStatus()).isEqualTo(TransferStatus.FAILED);
+        assertThat(result.getFailureCode()).isEqualTo(TransferFailureCode.SOURCE_ACCOUNT_BLOCKED);
+        verify(accountClient, never()).debit(any(), any(), any());
+        verify(fraudClient, never()).check(TO);
+    }
+
+    @Test
+    void failsWhenFraudServiceIsUnreachableCheckingTheSource() {
+        repositoryEchoesSaves();
+        bothAccountsExistAndFraudClear();
+        org.mockito.Mockito.doThrow(new FraudServiceUnavailableException("read timed out"))
+                .when(fraudClient).check(FROM);
+
+        Transfer result = transferService.execute(FROM, TO, AMOUNT);
+
+        assertThat(result.getStatus()).isEqualTo(TransferStatus.FAILED);
+        assertThat(result.getFailureCode()).isEqualTo(TransferFailureCode.SOURCE_FRAUD_SERVICE_UNAVAILABLE);
+        assertThat(result.getFailureReason()).contains("read timed out");
+        verify(accountClient, never()).debit(any(), any(), any());
+    }
+
+    @Test
+    void requiresCompensationWhenTheDestinationAccountIsBlocked() {
+        repositoryEchoesSaves();
+        bothAccountsExistAndFraudClear();
+        org.mockito.Mockito.doThrow(new FraudRejectedException("Account is blocklisted: " + TO))
+                .when(fraudClient).check(TO);
+
+        Transfer result = transferService.execute(FROM, TO, AMOUNT);
+
+        assertThat(result.getStatus()).isEqualTo(TransferStatus.COMPENSATION_REQUIRED);
+        assertThat(result.getFailureCode()).isEqualTo(TransferFailureCode.DESTINATION_ACCOUNT_BLOCKED);
+        verify(accountClient).debit(eq(FROM), eq(AMOUNT), any());
+        verify(accountClient, never()).credit(any(), any(), any());
+    }
+
+    @Test
+    void requiresCompensationWhenFraudServiceIsUnreachableCheckingTheDestination() {
+        repositoryEchoesSaves();
+        bothAccountsExistAndFraudClear();
+        org.mockito.Mockito.doThrow(new FraudServiceUnavailableException("read timed out"))
+                .when(fraudClient).check(TO);
+
+        Transfer result = transferService.execute(FROM, TO, AMOUNT);
+
+        assertThat(result.getStatus()).isEqualTo(TransferStatus.COMPENSATION_REQUIRED);
+        assertThat(result.getFailureCode()).isEqualTo(TransferFailureCode.DESTINATION_FRAUD_SERVICE_UNAVAILABLE);
+        assertThat(result.getFailureReason()).contains("read timed out");
+        verify(accountClient, never()).credit(any(), any(), any());
     }
 
     @Test
