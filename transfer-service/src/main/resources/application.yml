@@ -70,6 +70,11 @@ account-service:
   connect-timeout: 2s
   read-timeout: 5s
 
+fraud-service:
+  base-url: ${FRAUD_SERVICE_URL:http://localhost:8084}
+  connect-timeout: 2s
+  read-timeout: 5s
+
 resilience4j:
   circuitbreaker:
     instances:
@@ -90,6 +95,18 @@ resilience4j:
           - com.showcase.transfer.client.AccountServiceUnavailableException
         ignore-exceptions:
           - com.showcase.transfer.client.AccountRejectedException
+      fraudService:
+        # Same tuning as accountService (see that instance's comment for the x3 retry-attempts
+        # multiplier reasoning) -- reused rather than re-derived, since the shape is identical.
+        sliding-window-size: 30
+        minimum-number-of-calls: 15
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 3
+        record-exceptions:
+          - com.showcase.transfer.client.FraudServiceUnavailableException
+        ignore-exceptions:
+          - com.showcase.transfer.client.FraudRejectedException
   retry:
     instances:
       accountService:
@@ -99,6 +116,13 @@ resilience4j:
           - com.showcase.transfer.client.AccountServiceUnavailableException
         ignore-exceptions:
           - com.showcase.transfer.client.AccountRejectedException
+      fraudService:
+        max-attempts: 3
+        wait-duration: 200ms
+        retry-exceptions:
+          - com.showcase.transfer.client.FraudServiceUnavailableException
+        ignore-exceptions:
+          - com.showcase.transfer.client.FraudRejectedException
 
 transfer:
   compensation:
