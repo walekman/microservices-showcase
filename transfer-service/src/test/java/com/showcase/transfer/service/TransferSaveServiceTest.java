@@ -42,7 +42,7 @@ class TransferSaveServiceTest {
 
     @Test
     void writesAnOutboxRowForACompletedTransfer() {
-        Transfer transfer = new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("10.00"));
+        Transfer transfer = new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("10.00"), UUID.randomUUID());
         transfer.markCompleted();
         when(transferRepository.save(transfer)).thenReturn(transfer);
 
@@ -53,7 +53,7 @@ class TransferSaveServiceTest {
 
     @Test
     void writesNoOutboxRowForATransientStatus() {
-        Transfer transfer = new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("10.00"));
+        Transfer transfer = new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("10.00"), UUID.randomUUID());
         transfer.markCompensationRequired(TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, "credit leg timed out");
         when(transferRepository.save(transfer)).thenReturn(transfer);
 
@@ -64,9 +64,9 @@ class TransferSaveServiceTest {
 
     @Test
     void writesAnOutboxRowForEachTerminalStatus() {
-        Transfer completed = new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("10.00"));
+        Transfer completed = new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("10.00"), UUID.randomUUID());
         completed.markCompleted();
-        Transfer failed = new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("10.00"));
+        Transfer failed = new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("10.00"), UUID.randomUUID());
         failed.markFailed(TransferFailureCode.INSUFFICIENT_FUNDS, "not enough money");
         when(transferRepository.save(completed)).thenReturn(completed);
         when(transferRepository.save(failed)).thenReturn(failed);

@@ -1,5 +1,6 @@
 package com.showcase.transfer.api;
 
+import com.showcase.transfer.client.AccountServiceUnavailableException;
 import com.showcase.transfer.domain.SameAccountTransferException;
 import com.showcase.transfer.domain.Transfer;
 import com.showcase.transfer.domain.TransferFailureCode;
@@ -126,6 +127,20 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(SameAccountTransferException.class)
     public ProblemDetail handleSameAccount(SameAccountTransferException ex) {
         return Problems.of(HttpStatus.BAD_REQUEST, "SAME_ACCOUNT_TRANSFER", "Same account", ex.getMessage());
+    }
+
+    /**
+     * Only reachable from GET /transfers/{id}'s destination-owner ownership check
+     * ({@code AccountClient.isOwnedByCaller}) -- every other AccountClient call the live saga
+     * makes is already caught and turned into Transfer state inside TransferService.execute()
+     * before it can reach here. Without this handler, Account being unreachable during a read
+     * fell through to the generic 500 below instead of this project's usual 503
+     * ACCOUNT_SERVICE_UNAVAILABLE for exactly that condition. Found in code review.
+     */
+    @ExceptionHandler(AccountServiceUnavailableException.class)
+    public ProblemDetail handleAccountUnavailable(AccountServiceUnavailableException ex) {
+        return Problems.of(HttpStatus.SERVICE_UNAVAILABLE, "ACCOUNT_SERVICE_UNAVAILABLE",
+                "Account Service unavailable", "Account Service is currently unavailable");
     }
 
     @ExceptionHandler(Exception.class)

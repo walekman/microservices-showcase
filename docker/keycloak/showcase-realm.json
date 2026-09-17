@@ -21,6 +21,14 @@
         "description": "Can invoke the fraud-check endpoint"
       },
       {
+        "name": "account-admin",
+        "description": "Can list every account (GET /accounts) -- not part of the customer composite"
+      },
+      {
+        "name": "transfer-admin",
+        "description": "Can list every transfer (GET /transfers) -- not part of the customer composite"
+      },
+      {
         "name": "customer",
         "description": "Composite role for a real end user: bundles every capability a human caller needs",
         "composite": true,
@@ -89,6 +97,18 @@
       "enabled": true,
       "serviceAccountClientId": "transfer-service",
       "realmRoles": ["account-editor", "fraud-checker"]
+    },
+    {
+      "username": "admin",
+      "enabled": true,
+      "email": "admin@showcase.example",
+      "emailVerified": true,
+      "firstName": "Admin",
+      "lastName": "User",
+      "credentials": [
+        { "type": "password", "value": "password", "temporary": false }
+      ],
+      "realmRoles": ["account-admin", "transfer-admin"]
     }
   ]
 }

@@ -24,6 +24,11 @@ public class Account {
     @GeneratedValue
     private UUID id;
 
+    // The JWT `sub` of whoever created this account (see docs/phase-7b-account-ownership-authorization.md).
+    // Never client-supplied -- bound server-side from the authenticated caller at creation.
+    @Column(nullable = false)
+    private UUID ownerId;
+
     @Column(nullable = false)
     private String ownerName;
 
@@ -40,7 +45,8 @@ public class Account {
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
 
-    public Account(String ownerName, BigDecimal balance) {
+    public Account(UUID ownerId, String ownerName, BigDecimal balance) {
+        this.ownerId = ownerId;
         this.ownerName = ownerName;
         this.balance = balance;
         this.createdAt = Instant.now();

@@ -57,6 +57,10 @@ class AccountControllerIT {
         assertThat(createResponse.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         UUID id = createResponse.getBody().id();
 
+        // AccountResponse deliberately carries no ownerId (see its own javadoc) -- this GET
+        // succeeding, using the same CUSTOMER_SUBJECT token the account was created with, is
+        // the regression check that ownerId was actually bound to the caller: a mismatched
+        // binding would 404 here instead.
         ResponseEntity<AccountResponse> getResponse = restTemplate.getForEntity("/accounts/" + id, AccountResponse.class);
         assertThat(getResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(getResponse.getBody().balance()).isEqualByComparingTo("100.00");
@@ -70,12 +74,50 @@ class AccountControllerIT {
         UUID firstId = createAccount(new BigDecimal("100.00"));
         UUID secondId = createAccount(new BigDecimal("50.00"));
 
-        ResponseEntity<AccountResponse[]> response = restTemplate.getForEntity("/accounts", AccountResponse[].class);
+        // account-admin only, as of Phase 7b -- the class-wide customer token (account-reader)
+        // is no longer enough, so this request carries its own explicit admin Authorization
+        // header, which BearerAuthInterceptor is written to respect over the customer one.
+        HttpHeaders adminHeaders = new HttpHeaders();
+        adminHeaders.setBearerAuth(TestSecurityConfig.ADMIN_TOKEN);
+        ResponseEntity<AccountResponse[]> response = restTemplate.exchange(
+                "/accounts", HttpMethod.GET, new HttpEntity<>(adminHeaders), AccountResponse[].class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody())
                 .extracting(AccountResponse::id)
                 .contains(firstId, secondId);
+    }
+
+    // Real end-to-end proof of ownership denial: two DIFFERENT customer identities, both real
+    // requests through the full filter chain and AccountService against the real repository --
+    // not AccountServiceTest's mocked repository, and not AccountSecurityIT's mocked
+    // AccountService. Found missing in code review: without this, nothing actually proved a
+    // second real customer gets denied, only that a mocked service returning
+    // AccountNotFoundException maps to 404 correctly.
+    @Test
+    void aDifferentCustomerCannotReadOrDebitAnotherCustomersAccount() {
+        UUID id = createAccount(new BigDecimal("100.00"));
+
+        HttpHeaders customer2Headers = new HttpHeaders();
+        customer2Headers.setBearerAuth(TestSecurityConfig.CUSTOMER2_TOKEN);
+
+        ResponseEntity<ProblemDetail> getResponse = restTemplate.exchange(
+                "/accounts/" + id, HttpMethod.GET, new HttpEntity<>(customer2Headers), ProblemDetail.class);
+        assertThat(getResponse.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(getResponse.getBody().getProperties()).containsEntry("code", "ACCOUNT_NOT_FOUND");
+
+        HttpHeaders debitHeaders = new HttpHeaders();
+        debitHeaders.setBearerAuth(TestSecurityConfig.CUSTOMER2_TOKEN);
+        debitHeaders.set("Idempotency-Key", "cross-customer-debit-key");
+        ResponseEntity<ProblemDetail> debitResponse = restTemplate.exchange(
+                "/accounts/" + id + "/debit", HttpMethod.POST,
+                new HttpEntity<>(new AmountRequest(new BigDecimal("40.00")), debitHeaders), ProblemDetail.class);
+        assertThat(debitResponse.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(debitResponse.getBody().getProperties()).containsEntry("code", "ACCOUNT_NOT_FOUND");
+
+        // The account itself is untouched -- confirm with the OWNING customer's token.
+        ResponseEntity<AccountResponse> ownerResponse = restTemplate.getForEntity("/accounts/" + id, AccountResponse.class);
+        assertThat(ownerResponse.getBody().balance()).isEqualByComparingTo("100.00");
     }
 
     @Test

@@ -17,6 +17,7 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -47,11 +48,11 @@ public class TransferService {
         this.transferSaveService = transferSaveService;
     }
 
-    public Transfer execute(UUID fromAccountId, UUID toAccountId, BigDecimal amount) {
+    public Transfer execute(UUID fromAccountId, UUID toAccountId, BigDecimal amount, UUID initiatorId) {
         // Constructor guards reject a self-transfer before anything is persisted.
         // This save stays OUTSIDE the try below on purpose: SameAccountTransferException
         // must propagate to the caller as a 400, not be swallowed into UNEXPECTED_ERROR.
-        Transfer transfer = transferRepository.save(new Transfer(fromAccountId, toAccountId, amount));
+        Transfer transfer = transferRepository.save(new Transfer(fromAccountId, toAccountId, amount, initiatorId));
         log.info("Transfer {} started: {} -> {} amount {}", transfer.getId(), fromAccountId, toAccountId, amount);
 
         // Tracks whether the debit leg committed, so the catch-all below knows whether an
@@ -63,8 +64,8 @@ public class TransferService {
             // mistyped-id case, NOT a guarantee -- an account can still disappear between
             // here and the debit, which is why step 3 handles every rejection on its own.
             try {
-                accountClient.getAccount(fromAccountId);
-                accountClient.getAccount(toAccountId);
+                accountClient.accountExists(fromAccountId);
+                accountClient.accountExists(toAccountId);
             } catch (AccountRejectedException ex) {
                 return fail(transfer, TransferFailureCode.fromAccountCode(ex.getCode()), ex.getDetail());
             } catch (AccountServiceUnavailableException ex) {
@@ -156,8 +157,21 @@ public class TransferService {
         }
     }
 
-    public Transfer getTransfer(UUID id) {
-        return transferRepository.findById(id).orElseThrow(() -> new TransferNotFoundException(id));
+    // Scoped to the initiator or the destination account's owner -- see
+    // docs/phase-7b-account-ownership-authorization.md's Design Decisions for why the
+    // destination-owner check is a live call rather than something stored on Transfer.
+    // Objects.equals, not a raw .equals() call: ddl-auto: update cannot add a NOT NULL column
+    // over a table with existing rows, so a pre-Phase-7b row can have a null initiatorId --
+    // Objects.equals denies cleanly instead of NPE-ing into a 500.
+    public Transfer getTransfer(UUID id, UUID callerId) {
+        Transfer transfer = transferRepository.findById(id).orElseThrow(() -> new TransferNotFoundException(id));
+        if (Objects.equals(transfer.getInitiatorId(), callerId)) {
+            return transfer;
+        }
+        if (accountClient.isOwnedByCaller(transfer.getToAccountId())) {
+            return transfer;
+        }
+        throw new TransferNotFoundException(id);
     }
 
     public List<Transfer> listTransfers(TransferStatus status) {

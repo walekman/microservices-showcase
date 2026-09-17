@@ -5,6 +5,8 @@ import com.showcase.transfer.domain.TransferStatus;
 import com.showcase.transfer.service.TransferService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -28,9 +30,10 @@ public class TransferController {
     }
 
     @PostMapping
-    public ResponseEntity<TransferResponse> createTransfer(@Valid @RequestBody CreateTransferRequest request) {
+    public ResponseEntity<TransferResponse> createTransfer(@AuthenticationPrincipal Jwt jwt,
+                                                             @Valid @RequestBody CreateTransferRequest request) {
         Transfer transfer = transferService.execute(
-                request.fromAccountId(), request.toAccountId(), request.amount());
+                request.fromAccountId(), request.toAccountId(), request.amount(), UUID.fromString(jwt.getSubject()));
 
         if (transfer.getStatus() != TransferStatus.COMPLETED) {
             throw new TransferFailedException(transfer);
@@ -40,10 +43,11 @@ public class TransferController {
     }
 
     @GetMapping("/{id}")
-    public TransferResponse getTransfer(@PathVariable UUID id) {
-        return TransferResponse.from(transferService.getTransfer(id));
+    public TransferResponse getTransfer(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID id) {
+        return TransferResponse.from(transferService.getTransfer(id, UUID.fromString(jwt.getSubject())));
     }
 
+    // transfer-admin only (see SecurityConfig) -- deliberately unscoped, unlike getTransfer above.
     @GetMapping
     public List<TransferResponse> listTransfers(@RequestParam(required = false) TransferStatus status) {
         return transferService.listTransfers(status).stream()

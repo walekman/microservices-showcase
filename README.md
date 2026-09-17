@@ -12,7 +12,11 @@ First time only:
 
 If you ran an earlier version of this stack, destroy the Postgres volume first — the
 second database is created by an init script that only runs on an empty data directory
-(this discards any locally created accounts):
+(this discards any locally created accounts). This also matters if you last ran the stack
+before Phase 7b (`docs/phase-7b-account-ownership-authorization.md`): Hibernate can't add
+the new `ownerId`/`initiatorId` columns as `NOT NULL` over existing rows, so accounts/transfers
+created before that phase are left with a null value there and simply become permanently
+inaccessible (a clean 404, not an error, but confusing if you don't know why):
 
     docker compose down -v
 
@@ -27,7 +31,10 @@ This starts Postgres, Account Service (8081), Transfer Service (8082), Fraud Ser
 Every endpoint except `/actuator/health` and Swagger's own pages now needs a bearer JWT
 (see `docs/phase-7-auth-keycloak-jwt.md`). Keycloak comes up pre-configured with a `showcase`
 realm — two demo users, `ada` and `bob` (password `password` for both), each with the
-`customer` role.
+`customer` role, and a third, `admin` (password `password`), holding `account-admin` and
+`transfer-admin` instead — the two roles that gate the list-all endpoints (`GET /accounts`,
+`GET /transfers`; see `docs/phase-7b-account-ownership-authorization.md`). Swap `username=ada`
+for `username=admin` in the token request below to exercise those.
 
 Get a token (password grant — fine for this demo, since there's no login UI yet):
 
@@ -41,6 +48,14 @@ Export it once and append `-H "Authorization: Bearer $TOKEN"` to every request b
     export TOKEN=$(curl -s -X POST http://localhost:8180/realms/showcase/protocol/openid-connect/token \
       -H "Content-Type: application/x-www-form-urlencoded" \
       -d "grant_type=password&client_id=showcase-ui&username=ada&password=password" \
+      | jq -r .access_token)
+
+The two admin-only examples further down (`GET /accounts`, `GET /transfers`) need a separate
+token for the `admin` user instead:
+
+    export ADMIN_TOKEN=$(curl -s -X POST http://localhost:8180/realms/showcase/protocol/openid-connect/token \
+      -H "Content-Type: application/x-www-form-urlencoded" \
+      -d "grant_type=password&client_id=showcase-ui&username=admin&password=password" \
       | jq -r .access_token)
 
 ## Try it (Swagger UI)
@@ -62,15 +77,17 @@ A single entry point at `http://localhost:8080` routes to the two client-facing 
 Account's `/accounts/{id}/debit` and `/accounts/{id}/credit` are intentionally **not** routed
 — they're internal saga calls Transfer Service makes directly on the Docker network. That keeps
 them unreachable *through the Gateway*, but **not unreachable outright**: Account's own port
-(8081) is published for local dev, and any `customer` token can call them directly, since the
-same token has to carry `account-editor` for Transfer's saga to relay it on the caller's behalf.
-This is a known, deliberate gap in this phase — not a bypass of a bug, a consequence of the
-token-relay design — see `docs/phase-7-auth-keycloak-jwt.md`'s Known Gaps and Phase 7b
-(ownership authorization) in `docs/roadmap.md`. Every other example in this README still targets
-each service's own port directly (8081/8082/8083/8084); the Gateway doesn't replace those, it
-adds a second, narrower way in. Every routed path requires a bearer JWT with the matching
-permission, same as calling each service directly (see "Authentication" above) — the Gateway and
-the service behind it each independently check the token.
+(8081) is published for local dev, and any `customer` token can still call `credit` directly,
+since a real transfer's credit call is made with the *source* customer's own token, never the
+destination owner's — there is no ownership check that could distinguish the two (see
+`docs/phase-7b-account-ownership-authorization.md`'s Design Decisions). `debit` no longer has
+this gap: as of Phase 7b it's owner-gated, so a `customer` token can only debit an account it
+created — calling it directly against someone else's account now 404s, the same answer a
+genuinely missing account would give. Every other example in this README still targets each
+service's own port directly (8081/8082/8083/8084); the Gateway doesn't replace those, it adds a
+second, narrower way in. Every routed path requires a bearer JWT with the matching permission,
+same as calling each service directly (see "Authentication" above) — the Gateway and the service
+behind it each independently check the token.
 
 ## Try it (curl)
 
@@ -82,11 +99,13 @@ omitted here to keep the examples focused on each endpoint's own request shape.
       -H "Content-Type: application/json" \
       -d '{"ownerName": "Ada Lovelace", "initialBalance": 100.00}'
 
-    # Fetch it (replace <id> with the id from the response above)
+    # Fetch it (replace <id> with the id from the response above) -- only the account's owner
+    # can do this; using a token other than the one that created it 404s, same as a genuinely
+    # missing id (see docs/phase-7b-account-ownership-authorization.md)
     curl http://localhost:8081/accounts/<id>
 
-    # List all accounts
-    curl http://localhost:8081/accounts
+    # List all accounts -- needs the admin token (username=admin), not ada's/bob's
+    curl http://localhost:8081/accounts -H "Authorization: Bearer $ADMIN_TOKEN"
 
     # Debit it (Idempotency-Key is required -- a retry with the same key is a no-op, not a
     # second debit. The key must be unique per operation, not just per account: it is the
@@ -143,12 +162,14 @@ Background scheduler resolution:
       -H "Content-Type: application/json" \
       -d '{"fromAccountId": "<from>", "toAccountId": "<to>", "amount": 40.00}'
 
-    # Fetch one transfer
+    # Fetch one transfer -- the initiator or the destination account's owner (see
+    # docs/phase-7b-account-ownership-authorization.md)
     curl http://localhost:8082/transfers/<id>
 
-    # List transfers, optionally by status
-    curl http://localhost:8082/transfers
-    curl "http://localhost:8082/transfers?status=COMPENSATION_REQUIRED"
+    # List transfers, optionally by status -- needs the admin token (username=admin), not
+    # ada's/bob's
+    curl http://localhost:8082/transfers -H "Authorization: Bearer $ADMIN_TOKEN"
+    curl "http://localhost:8082/transfers?status=COMPENSATION_REQUIRED" -H "Authorization: Bearer $ADMIN_TOKEN"
 
     # Trigger a blocked-source rejection (clean failure, no money moves): set
     # FRAUD_BLOCKLIST_ACCOUNT_IDS in .env to include an account id, restart fraud-service,
@@ -156,7 +177,7 @@ Background scheduler resolution:
     #
     # Trigger a blocked-destination compensation (money moves, then reverses automatically):
     # transfer TO a blocklisted account instead.
-    curl "http://localhost:8082/transfers?status=FAILED"
+    curl "http://localhost:8082/transfers?status=FAILED" -H "Authorization: Bearer $ADMIN_TOKEN"
 
 Errors are RFC 7807 problem documents with a stable `code`:
 
@@ -202,9 +223,9 @@ A separate sweep (`transfer.compensation.pending-stale-after`, default 120s) rec
 transfers stuck at `PENDING` — e.g. the process crashed mid-saga — the same way, starting
 from the debit leg.
 
-    curl "http://localhost:8082/transfers?status=COMPENSATION_REQUIRED"
-    curl "http://localhost:8082/transfers?status=COMPENSATED"
-    curl "http://localhost:8082/transfers?status=COMPENSATION_FAILED"
+    curl "http://localhost:8082/transfers?status=COMPENSATION_REQUIRED" -H "Authorization: Bearer $ADMIN_TOKEN"
+    curl "http://localhost:8082/transfers?status=COMPENSATED" -H "Authorization: Bearer $ADMIN_TOKEN"
+    curl "http://localhost:8082/transfers?status=COMPENSATION_FAILED" -H "Authorization: Bearer $ADMIN_TOKEN"
 
 Known gap, narrower than Phase 2's: a transfer recorded `FAILED` with
 `ACCOUNT_SERVICE_UNAVAILABLE` on the debit leg still needs reconciliation — the debit may

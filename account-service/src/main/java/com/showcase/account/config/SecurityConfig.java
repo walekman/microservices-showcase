@@ -12,10 +12,11 @@ import org.springframework.security.web.SecurityFilterChain;
 
 /**
  * Independently validates every request's JWT -- never trusts that the Gateway already
- * checked it (see docs/phase-7-auth-keycloak-jwt.md). GET/list/get is gated on
- * "account-reader"; create/debit/credit ("account-editor") also covers the relayed live-saga
- * calls Transfer Service makes on a real user's behalf, and transfer-service's own
- * client-credentials token for CompensationScheduler's background sweep.
+ * checked it (see docs/phase-7-auth-keycloak-jwt.md). Single-item reads/writes stay gated on
+ * "account-reader"/"account-editor" as before -- ownership (does the caller own THIS account)
+ * is a data-dependent check that lives in the service layer instead, not expressible as a
+ * static matcher here; see docs/phase-7b-account-ownership-authorization.md. The list-all
+ * endpoint moved to "account-admin" in that same phase.
  */
 @Configuration
 public class SecurityConfig {
@@ -30,13 +31,27 @@ public class SecurityConfig {
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers("/actuator/health/**").permitAll()
                         .requestMatchers("/swagger-ui/**", "/v3/api-docs/**").permitAll()
+                        // Exact "/accounts" (the list) is admin-only -- HEAD included, since Spring MVC
+                        // serves HEAD /accounts from the same handler as GET /accounts.
+                        .requestMatchers(HttpMethod.GET, "/accounts").hasAuthority("account-admin")
+                        .requestMatchers(HttpMethod.HEAD, "/accounts").hasAuthority("account-admin")
+                        // Existence-only, no ownership -- see AccountController.accountExists. Placed
+                        // ahead of the "/accounts/*" single-segment matcher below for readability, though
+                        // the two patterns don't actually overlap (different segment counts). HEAD is
+                        // matched explicitly for the same reason as HEAD /accounts/{id} below -- Spring
+                        // MVC serves it from the same @GetMapping handler, so without this a HEAD request
+                        // fell through to anyRequest().authenticated() and any valid token, not just
+                        // account-reader, could probe existence. Found in code review.
+                        .requestMatchers(HttpMethod.GET, "/accounts/exists/*").hasAuthority("account-reader")
+                        .requestMatchers(HttpMethod.HEAD, "/accounts/exists/*").hasAuthority("account-reader")
                         // HEAD is matched explicitly, not just GET: requestMatchers(GET, ...) does not
                         // match a HEAD request, which Spring MVC still serves from the GET handler --
                         // without this, HEAD /accounts/{id} fell through to anyRequest().authenticated()
                         // and any valid token (not just account-reader) could confirm an account's
-                        // existence. Found in code review.
-                        .requestMatchers(HttpMethod.GET, "/accounts", "/accounts/*").hasAuthority("account-reader")
-                        .requestMatchers(HttpMethod.HEAD, "/accounts", "/accounts/*").hasAuthority("account-reader")
+                        // existence. Found in code review. Ownership itself is enforced in
+                        // AccountService.getAccount, which HEAD reaches too (same handler as GET).
+                        .requestMatchers(HttpMethod.GET, "/accounts/*").hasAuthority("account-reader")
+                        .requestMatchers(HttpMethod.HEAD, "/accounts/*").hasAuthority("account-reader")
                         .requestMatchers(HttpMethod.POST, "/accounts", "/accounts/*/debit", "/accounts/*/credit")
                         .hasAuthority("account-editor")
                         .anyRequest().authenticated())

@@ -33,6 +33,11 @@ public class Transfer {
     @Column(nullable = false, updatable = false)
     private UUID toAccountId;
 
+    // The JWT `sub` of whoever called POST /transfers -- captured for free, since Transfer
+    // already sees that token. See docs/phase-7b-account-ownership-authorization.md.
+    @Column(nullable = false, updatable = false)
+    private UUID initiatorId;
+
     // scale 2, matching Account.balance -- see the comment there.
     @Column(nullable = false, precision = 19, scale = 2, updatable = false)
     private BigDecimal amount;
@@ -56,7 +61,7 @@ public class Transfer {
 
     private Instant settledAt;
 
-    public Transfer(UUID fromAccountId, UUID toAccountId, BigDecimal amount) {
+    public Transfer(UUID fromAccountId, UUID toAccountId, BigDecimal amount, UUID initiatorId) {
         if (fromAccountId == null || toAccountId == null) {
             throw new IllegalArgumentException("Both account ids are required");
         }
@@ -69,6 +74,7 @@ public class Transfer {
         this.fromAccountId = fromAccountId;
         this.toAccountId = toAccountId;
         this.amount = amount;
+        this.initiatorId = initiatorId;
         this.status = TransferStatus.PENDING;
         this.createdAt = Instant.now();
     }

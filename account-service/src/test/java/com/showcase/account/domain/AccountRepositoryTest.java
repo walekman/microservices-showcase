@@ -13,6 +13,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.math.BigDecimal;
 import java.util.Optional;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -35,18 +36,20 @@ class AccountRepositoryTest {
 
     @Test
     void savesAndReloadsAnAccount() {
-        Account saved = accountRepository.save(new Account("Ada Lovelace", new BigDecimal("100.00")));
+        UUID ownerId = UUID.randomUUID();
+        Account saved = accountRepository.save(new Account(ownerId, "Ada Lovelace", new BigDecimal("100.00")));
 
         Optional<Account> found = accountRepository.findById(saved.getId());
 
         assertThat(found).isPresent();
+        assertThat(found.get().getOwnerId()).isEqualTo(ownerId);
         assertThat(found.get().getOwnerName()).isEqualTo("Ada Lovelace");
         assertThat(found.get().getBalance()).isEqualByComparingTo("100.00");
     }
 
     @Test
     void concurrentUpdatesAreRejectedByOptimisticLocking() {
-        Account saved = accountRepository.save(new Account("Ada Lovelace", new BigDecimal("100.00")));
+        Account saved = accountRepository.save(new Account(UUID.randomUUID(), "Ada Lovelace", new BigDecimal("100.00")));
         accountRepository.flush();
         entityManager.clear();
 

@@ -72,7 +72,10 @@ class CompensationSchedulerTest {
     }
 
     private Transfer strandedTransfer(UUID id, UUID from, UUID to) {
-        Transfer transfer = new Transfer(from, to, AMOUNT);
+        // The initiator is irrelevant to reconciliation -- CompensationScheduler never checks
+        // ownership, by design (it runs on transfer-service's own machine identity). Any fixed
+        // id does.
+        Transfer transfer = new Transfer(from, to, AMOUNT, UUID.randomUUID());
         ReflectionTestUtils.setField(transfer, "id", id);
         transfer.markCompensationRequired(TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, "credit leg timed out");
         return transfer;
@@ -83,7 +86,7 @@ class CompensationSchedulerTest {
     }
 
     private Transfer stalePendingTransfer(UUID id, UUID from, UUID to) {
-        Transfer transfer = new Transfer(from, to, AMOUNT);
+        Transfer transfer = new Transfer(from, to, AMOUNT, UUID.randomUUID());
         ReflectionTestUtils.setField(transfer, "id", id);
         return transfer;
     }

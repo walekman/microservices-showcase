@@ -109,7 +109,7 @@ class CompensationSchedulerIT {
 
     @Test
     void drainingARealStrandedTransferReconcilesItToCompletedAndPersistsThroughTheRealVersionedSave() {
-        Transfer transfer = new Transfer(FROM, TO, new BigDecimal("40.00"));
+        Transfer transfer = new Transfer(FROM, TO, new BigDecimal("40.00"), UUID.randomUUID());
         transfer.markCompensationRequired(TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, "credit leg timed out");
         transfer = transferRepository.save(transfer);
         long versionBeforeSweep = transfer.getVersion();

@@ -6,6 +6,8 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -28,6 +30,12 @@ import java.util.UUID;
 @Validated
 public class AccountController {
 
+    // Must match transfer-service's own Keycloak client id (the "azp" claim on its
+    // client-credentials token) -- see AuthorizationPropagatingInterceptor.SERVICE_REGISTRATION_ID
+    // in transfer-service, and docs/phase-7b-account-ownership-authorization.md's Design
+    // Decisions for why debit's ownership check exempts this caller.
+    private static final String TRUSTED_SERVICE_CLIENT_ID = "transfer-service";
+
     private final AccountService accountService;
 
     public AccountController(AccountService accountService) {
@@ -35,12 +43,16 @@ public class AccountController {
     }
 
     @PostMapping
-    public ResponseEntity<AccountResponse> createAccount(@Valid @RequestBody CreateAccountRequest request) {
-        Account account = accountService.createAccount(request.ownerName(), request.initialBalance());
+    public ResponseEntity<AccountResponse> createAccount(@AuthenticationPrincipal Jwt jwt,
+                                                           @Valid @RequestBody CreateAccountRequest request) {
+        Account account = accountService.createAccount(
+                UUID.fromString(jwt.getSubject()), request.ownerName(), request.initialBalance());
         return ResponseEntity.created(URI.create("/accounts/" + account.getId()))
                 .body(AccountResponse.from(account));
     }
 
+    // account-admin only (see SecurityConfig) -- deliberately unfiltered, unlike every other
+    // read in this controller.
     @GetMapping
     public List<AccountResponse> getAllAccounts() {
         return accountService.getAllAccounts().stream()
@@ -49,14 +61,26 @@ public class AccountController {
     }
 
     @GetMapping("/{id}")
-    public AccountResponse getAccount(@PathVariable UUID id) {
-        return AccountResponse.from(accountService.getAccount(id));
+    public AccountResponse getAccount(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID id) {
+        return AccountResponse.from(accountService.getAccount(id, UUID.fromString(jwt.getSubject())));
+    }
+
+    // Existence only, no body, no ownership check -- see docs/phase-7b-account-ownership-authorization.md.
+    // Deliberately not reused as HEAD /accounts/{id}: HEAD shares getAccount's handler, so it
+    // would inherit that endpoint's ownership check instead of staying a general probe.
+    @GetMapping("/exists/{id}")
+    public ResponseEntity<Void> accountExists(@PathVariable UUID id) {
+        accountService.requireAccountExists(id);
+        return ResponseEntity.ok().build();
     }
 
     @PostMapping("/{id}/debit")
-    public AccountResponse debit(@PathVariable UUID id, @Valid @RequestBody AmountRequest request,
+    public AccountResponse debit(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID id,
+                                  @Valid @RequestBody AmountRequest request,
                                   @RequestHeader("Idempotency-Key") @NotBlank @Size(max = 255) String idempotencyKey) {
-        return AccountResponse.from(accountService.debit(id, request.amount(), idempotencyKey));
+        UUID callerId = UUID.fromString(jwt.getSubject());
+        boolean serviceCaller = TRUSTED_SERVICE_CLIENT_ID.equals(jwt.getClaimAsString("azp"));
+        return AccountResponse.from(accountService.debit(id, request.amount(), idempotencyKey, callerId, serviceCaller));
     }
 
     @PostMapping("/{id}/credit")

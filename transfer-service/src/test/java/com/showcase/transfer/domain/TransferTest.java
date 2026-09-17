@@ -13,15 +13,17 @@ class TransferTest {
     private static final UUID FROM = UUID.randomUUID();
     private static final UUID TO = UUID.randomUUID();
     private static final BigDecimal TEN = new BigDecimal("10.00");
+    private static final UUID INITIATOR = UUID.randomUUID();
 
     @Test
     void newTransferStartsPending() {
-        Transfer transfer = new Transfer(FROM, TO, TEN);
+        Transfer transfer = new Transfer(FROM, TO, TEN, INITIATOR);
 
         assertThat(transfer.getStatus()).isEqualTo(TransferStatus.PENDING);
         assertThat(transfer.getFromAccountId()).isEqualTo(FROM);
         assertThat(transfer.getToAccountId()).isEqualTo(TO);
         assertThat(transfer.getAmount()).isEqualByComparingTo("10.00");
+        assertThat(transfer.getInitiatorId()).isEqualTo(INITIATOR);
         assertThat(transfer.getCreatedAt()).isNotNull();
         assertThat(transfer.getSettledAt()).isNull();
         assertThat(transfer.getFailureCode()).isNull();
@@ -29,21 +31,21 @@ class TransferTest {
 
     @Test
     void rejectsATransferToTheSameAccount() {
-        assertThatThrownBy(() -> new Transfer(FROM, FROM, TEN))
+        assertThatThrownBy(() -> new Transfer(FROM, FROM, TEN, INITIATOR))
                 .isInstanceOf(SameAccountTransferException.class);
     }
 
     @Test
     void rejectsANonPositiveAmount() {
-        assertThatThrownBy(() -> new Transfer(FROM, TO, BigDecimal.ZERO))
+        assertThatThrownBy(() -> new Transfer(FROM, TO, BigDecimal.ZERO, INITIATOR))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new Transfer(FROM, TO, new BigDecimal("-1.00")))
+        assertThatThrownBy(() -> new Transfer(FROM, TO, new BigDecimal("-1.00"), INITIATOR))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void markCompletedSettlesTheTransfer() {
-        Transfer transfer = new Transfer(FROM, TO, TEN);
+        Transfer transfer = new Transfer(FROM, TO, TEN, INITIATOR);
 
         transfer.markCompleted();
 
@@ -56,7 +58,7 @@ class TransferTest {
     void markCompletedAlsoSucceedsFromCompensationRequired() {
         // Reconciliation found the destination credit had already landed -- nothing to
         // reverse, the transfer genuinely completed.
-        Transfer transfer = new Transfer(FROM, TO, TEN);
+        Transfer transfer = new Transfer(FROM, TO, TEN, INITIATOR);
         transfer.markCompensationRequired(TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, "credit leg timed out");
 
         transfer.markCompleted();
@@ -71,7 +73,7 @@ class TransferTest {
 
     @Test
     void markFailedRecordsTheReason() {
-        Transfer transfer = new Transfer(FROM, TO, TEN);
+        Transfer transfer = new Transfer(FROM, TO, TEN, INITIATOR);
 
         transfer.markFailed(TransferFailureCode.INSUFFICIENT_FUNDS, "not enough money");
 
@@ -83,7 +85,7 @@ class TransferTest {
 
     @Test
     void markCompensationRequiredRecordsTheUnderlyingCause() {
-        Transfer transfer = new Transfer(FROM, TO, TEN);
+        Transfer transfer = new Transfer(FROM, TO, TEN, INITIATOR);
 
         transfer.markCompensationRequired(TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, "credit leg timed out");
 
@@ -94,7 +96,7 @@ class TransferTest {
 
     @Test
     void markCompensatedRequiresCompensationRequired() {
-        Transfer transfer = new Transfer(FROM, TO, TEN);
+        Transfer transfer = new Transfer(FROM, TO, TEN, INITIATOR);
         transfer.markCompensationRequired(TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, "credit leg timed out");
 
         transfer.markCompensated();
@@ -105,14 +107,14 @@ class TransferTest {
 
     @Test
     void markCompensatedThrowsFromPending() {
-        Transfer transfer = new Transfer(FROM, TO, TEN);
+        Transfer transfer = new Transfer(FROM, TO, TEN, INITIATOR);
 
         assertThatThrownBy(transfer::markCompensated).isInstanceOf(IllegalStateException.class);
     }
 
     @Test
     void markCompensationFailedRequiresCompensationRequired() {
-        Transfer transfer = new Transfer(FROM, TO, TEN);
+        Transfer transfer = new Transfer(FROM, TO, TEN, INITIATOR);
         transfer.markCompensationRequired(TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, "credit leg timed out");
 
         transfer.markCompensationFailed("source account no longer exists -- manual review required");
@@ -124,14 +126,14 @@ class TransferTest {
 
     @Test
     void markCompensationFailedThrowsFromPending() {
-        Transfer transfer = new Transfer(FROM, TO, TEN);
+        Transfer transfer = new Transfer(FROM, TO, TEN, INITIATOR);
 
         assertThatThrownBy(() -> transfer.markCompensationFailed("x")).isInstanceOf(IllegalStateException.class);
     }
 
     @Test
     void aSettledTransferCannotBeSettledAgain() {
-        Transfer transfer = new Transfer(FROM, TO, TEN);
+        Transfer transfer = new Transfer(FROM, TO, TEN, INITIATOR);
         transfer.markCompleted();
 
         assertThatThrownBy(transfer::markCompleted).isInstanceOf(IllegalStateException.class);
@@ -143,15 +145,15 @@ class TransferTest {
 
     @Test
     void rejectsANullAccountId() {
-        assertThatThrownBy(() -> new Transfer(null, TO, TEN))
+        assertThatThrownBy(() -> new Transfer(null, TO, TEN, INITIATOR))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new Transfer(FROM, null, TEN))
+        assertThatThrownBy(() -> new Transfer(FROM, null, TEN, INITIATOR))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void truncatesAnOverlongFailureReason() {
-        Transfer transfer = new Transfer(FROM, TO, TEN);
+        Transfer transfer = new Transfer(FROM, TO, TEN, INITIATOR);
 
         transfer.markFailed(TransferFailureCode.UNEXPECTED_ERROR, "x".repeat(600));
 
@@ -160,7 +162,7 @@ class TransferTest {
 
     @Test
     void keepsAFailureReasonOfExactlyTheColumnLength() {
-        Transfer transfer = new Transfer(FROM, TO, TEN);
+        Transfer transfer = new Transfer(FROM, TO, TEN, INITIATOR);
 
         transfer.markFailed(TransferFailureCode.UNEXPECTED_ERROR, "x".repeat(512));
 
@@ -173,7 +175,7 @@ class TransferTest {
         // 512-char boundary: high surrogate at index 511, low surrogate at index 512.
         String emoji = new String(Character.toChars(0x1F600));
         String reason = "x".repeat(511) + emoji + "y".repeat(100);
-        Transfer transfer = new Transfer(FROM, TO, TEN);
+        Transfer transfer = new Transfer(FROM, TO, TEN, INITIATOR);
 
         transfer.markFailed(TransferFailureCode.UNEXPECTED_ERROR, reason);
 
@@ -185,7 +187,7 @@ class TransferTest {
 
     @Test
     void aFailedTransferCannotBeSettledAgain() {
-        Transfer transfer = new Transfer(FROM, TO, TEN);
+        Transfer transfer = new Transfer(FROM, TO, TEN, INITIATOR);
         transfer.markFailed(TransferFailureCode.INSUFFICIENT_FUNDS, "not enough money");
 
         assertThatThrownBy(transfer::markCompleted).isInstanceOf(IllegalStateException.class);
@@ -199,7 +201,7 @@ class TransferTest {
 
     @Test
     void aTransferAwaitingCompensationCannotBeFailedOrReMarkedCompensationRequired() {
-        Transfer transfer = new Transfer(FROM, TO, TEN);
+        Transfer transfer = new Transfer(FROM, TO, TEN, INITIATOR);
         transfer.markCompensationRequired(TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, "credit leg timed out");
 
         assertThatThrownBy(() -> transfer.markFailed(TransferFailureCode.UNEXPECTED_ERROR, "x"))

@@ -3,7 +3,6 @@ package com.showcase.transfer.service;
 import com.showcase.transfer.client.AccountClient;
 import com.showcase.transfer.client.AccountRejectedException;
 import com.showcase.transfer.client.AccountServiceUnavailableException;
-import com.showcase.transfer.client.AccountView;
 import com.showcase.transfer.client.FraudClient;
 import com.showcase.transfer.client.FraudRejectedException;
 import com.showcase.transfer.client.FraudServiceUnavailableException;
@@ -43,6 +42,7 @@ class TransferServiceTest {
     private static final UUID FROM = UUID.randomUUID();
     private static final UUID TO = UUID.randomUUID();
     private static final BigDecimal AMOUNT = new BigDecimal("40.00");
+    private static final UUID INITIATOR_ID = UUID.randomUUID();
     // The mock repository below never runs real JPA id generation, so transfer.getId() would
     // otherwise stay null throughout every test -- repositoryEchoesSaves() assigns this
     // instead, the way a real save() would, so the idempotency keys TransferService builds
@@ -101,9 +101,11 @@ class TransferServiceTest {
         });
     }
 
+    // accountExists is void -- a Mockito mock's void methods are no-ops (never throw) by
+    // default, so "both accounts exist" needs no stubbing at all, unlike the old
+    // AccountView-returning getAccount this replaced.
     private void bothAccountsExist() {
-        when(accountClient.getAccount(FROM)).thenReturn(new AccountView(FROM, new BigDecimal("100.00")));
-        when(accountClient.getAccount(TO)).thenReturn(new AccountView(TO, new BigDecimal("5.00")));
+        // no-op: kept as a named no-op so every test's intent stays readable at the call site.
     }
 
     private void bothAccountsExistAndFraudClear() {
@@ -119,7 +121,7 @@ class TransferServiceTest {
         repositoryEchoesSaves();
         bothAccountsExist();
 
-        Transfer result = transferService.execute(FROM, TO, AMOUNT);
+        Transfer result = transferService.execute(FROM, TO, AMOUNT, INITIATOR_ID);
 
         assertThat(result.getStatus()).isEqualTo(TransferStatus.COMPLETED);
         assertThat(result.getSettledAt()).isNotNull();
@@ -145,10 +147,10 @@ class TransferServiceTest {
     @Test
     void failsWithoutDebitingWhenTheSourceAccountDoesNotExist() {
         repositoryEchoesSaves();
-        when(accountClient.getAccount(FROM))
-                .thenThrow(new AccountRejectedException("ACCOUNT_NOT_FOUND", "Account not found: " + FROM));
+        org.mockito.Mockito.doThrow(new AccountRejectedException("ACCOUNT_NOT_FOUND", "Account not found: " + FROM))
+                .when(accountClient).accountExists(FROM);
 
-        Transfer result = transferService.execute(FROM, TO, AMOUNT);
+        Transfer result = transferService.execute(FROM, TO, AMOUNT, INITIATOR_ID);
 
         assertThat(result.getStatus()).isEqualTo(TransferStatus.FAILED);
         assertThat(result.getFailureCode()).isEqualTo(TransferFailureCode.ACCOUNT_NOT_FOUND);
@@ -161,11 +163,15 @@ class TransferServiceTest {
     @Test
     void failsWithoutDebitingWhenTheDestinationAccountDoesNotExist() {
         repositoryEchoesSaves();
-        when(accountClient.getAccount(FROM)).thenReturn(new AccountView(FROM, new BigDecimal("100.00")));
-        when(accountClient.getAccount(TO))
-                .thenThrow(new AccountRejectedException("ACCOUNT_NOT_FOUND", "Account not found: " + TO));
+        // Both calls need an explicit stub here (unlike bothAccountsExist()'s pure no-op):
+        // accountExists(FROM) succeeds and reaches the mock unstubbed, then accountExists(TO)
+        // throws -- Mockito's strict stubbing flags that partial mix (one argument stubbed, a
+        // different one not) on the same method as a likely mistake otherwise.
+        org.mockito.Mockito.doNothing().when(accountClient).accountExists(FROM);
+        org.mockito.Mockito.doThrow(new AccountRejectedException("ACCOUNT_NOT_FOUND", "Account not found: " + TO))
+                .when(accountClient).accountExists(TO);
 
-        Transfer result = transferService.execute(FROM, TO, AMOUNT);
+        Transfer result = transferService.execute(FROM, TO, AMOUNT, INITIATOR_ID);
 
         assertThat(result.getStatus()).isEqualTo(TransferStatus.FAILED);
         assertThat(result.getFailureCode()).isEqualTo(TransferFailureCode.ACCOUNT_NOT_FOUND);
@@ -176,10 +182,10 @@ class TransferServiceTest {
     @Test
     void failsWhenAccountServiceIsUnreachableDuringPreValidation() {
         repositoryEchoesSaves();
-        when(accountClient.getAccount(FROM))
-                .thenThrow(new AccountServiceUnavailableException("connection refused"));
+        org.mockito.Mockito.doThrow(new AccountServiceUnavailableException("connection refused"))
+                .when(accountClient).accountExists(FROM);
 
-        Transfer result = transferService.execute(FROM, TO, AMOUNT);
+        Transfer result = transferService.execute(FROM, TO, AMOUNT, INITIATOR_ID);
 
         assertThat(result.getStatus()).isEqualTo(TransferStatus.FAILED);
         assertThat(result.getFailureCode()).isEqualTo(TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE);
@@ -193,7 +199,7 @@ class TransferServiceTest {
         org.mockito.Mockito.doThrow(new AccountRejectedException("INSUFFICIENT_FUNDS", "not enough money"))
                 .when(accountClient).debit(eq(FROM), eq(AMOUNT), any());
 
-        Transfer result = transferService.execute(FROM, TO, AMOUNT);
+        Transfer result = transferService.execute(FROM, TO, AMOUNT, INITIATOR_ID);
 
         assertThat(result.getStatus()).isEqualTo(TransferStatus.FAILED);
         assertThat(result.getFailureCode()).isEqualTo(TransferFailureCode.INSUFFICIENT_FUNDS);
@@ -208,7 +214,7 @@ class TransferServiceTest {
         org.mockito.Mockito.doThrow(new AccountServiceUnavailableException("read timed out"))
                 .when(accountClient).debit(eq(FROM), eq(AMOUNT), any());
 
-        Transfer result = transferService.execute(FROM, TO, AMOUNT);
+        Transfer result = transferService.execute(FROM, TO, AMOUNT, INITIATOR_ID);
 
         assertThat(result.getStatus()).isEqualTo(TransferStatus.FAILED);
         assertThat(result.getFailureCode()).isEqualTo(TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE);
@@ -225,7 +231,7 @@ class TransferServiceTest {
         org.mockito.Mockito.doThrow(new AccountRejectedException("ACCOUNT_NOT_FOUND", "Account not found: " + TO))
                 .when(accountClient).credit(eq(TO), eq(AMOUNT), any());
 
-        Transfer result = transferService.execute(FROM, TO, AMOUNT);
+        Transfer result = transferService.execute(FROM, TO, AMOUNT, INITIATOR_ID);
 
         assertThat(result.getStatus()).isEqualTo(TransferStatus.COMPENSATION_REQUIRED);
         assertThat(result.getFailureCode()).isEqualTo(TransferFailureCode.ACCOUNT_NOT_FOUND);
@@ -242,7 +248,7 @@ class TransferServiceTest {
         org.mockito.Mockito.doThrow(new AccountServiceUnavailableException("read timed out"))
                 .when(accountClient).credit(eq(TO), eq(AMOUNT), any());
 
-        Transfer result = transferService.execute(FROM, TO, AMOUNT);
+        Transfer result = transferService.execute(FROM, TO, AMOUNT, INITIATOR_ID);
 
         assertThat(result.getStatus()).isEqualTo(TransferStatus.COMPENSATION_REQUIRED);
         assertThat(result.getFailureCode()).isEqualTo(TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE);
@@ -252,10 +258,10 @@ class TransferServiceTest {
 
     @Test
     void rejectsATransferToTheSameAccount() {
-        assertThatThrownBy(() -> transferService.execute(FROM, FROM, AMOUNT))
+        assertThatThrownBy(() -> transferService.execute(FROM, FROM, AMOUNT, INITIATOR_ID))
                 .isInstanceOf(SameAccountTransferException.class);
 
-        verify(accountClient, never()).getAccount(any());
+        verify(accountClient, never()).accountExists(any());
         // Passes today only because the constructor throws while the save argument is being
         // evaluated. Worth pinning: a rejected transfer must leave no row behind.
         verify(transferRepository, never()).save(any());
@@ -264,9 +270,10 @@ class TransferServiceTest {
     @Test
     void failsWhenAnUnexpectedErrorOccursBeforeTheDebit() {
         repositoryEchoesSaves();
-        when(accountClient.getAccount(FROM)).thenThrow(new IllegalStateException("response mapper exploded"));
+        org.mockito.Mockito.doThrow(new IllegalStateException("response mapper exploded"))
+                .when(accountClient).accountExists(FROM);
 
-        Transfer result = transferService.execute(FROM, TO, AMOUNT);
+        Transfer result = transferService.execute(FROM, TO, AMOUNT, INITIATOR_ID);
 
         assertThat(result.getStatus()).isEqualTo(TransferStatus.FAILED);
         assertThat(result.getFailureCode()).isEqualTo(TransferFailureCode.UNEXPECTED_ERROR);
@@ -282,7 +289,7 @@ class TransferServiceTest {
         org.mockito.Mockito.doThrow(new IllegalStateException("response mapper exploded"))
                 .when(accountClient).credit(eq(TO), eq(AMOUNT), any());
 
-        Transfer result = transferService.execute(FROM, TO, AMOUNT);
+        Transfer result = transferService.execute(FROM, TO, AMOUNT, INITIATOR_ID);
 
         assertThat(result.getStatus()).isEqualTo(TransferStatus.COMPENSATION_REQUIRED);
         assertThat(result.getFailureCode()).isEqualTo(TransferFailureCode.UNEXPECTED_ERROR);
@@ -312,7 +319,7 @@ class TransferServiceTest {
         // id so the API can hand it back -- a row exists, still reading PENDING, and the
         // caller cannot reconcile anything without knowing which one -- and keeps the
         // original as its cause, which is the only real diagnostic.
-        assertThatThrownBy(() -> transferService.execute(FROM, TO, AMOUNT))
+        assertThatThrownBy(() -> transferService.execute(FROM, TO, AMOUNT, INITIATOR_ID))
                 .isInstanceOf(TransferPersistenceException.class)
                 .hasCause(boom);
 
@@ -325,7 +332,7 @@ class TransferServiceTest {
         repositoryEchoesSaves();
         bothAccountsExist();
 
-        transferService.execute(FROM, TO, AMOUNT);
+        transferService.execute(FROM, TO, AMOUNT, INITIATOR_ID);
 
         verify(accountClient).debit(FROM, AMOUNT, TRANSFER_ID + ":debit");
         verify(accountClient).credit(TO, AMOUNT, TRANSFER_ID + ":credit");
@@ -338,7 +345,7 @@ class TransferServiceTest {
         org.mockito.Mockito.doThrow(new FraudRejectedException("Account is blocklisted: " + FROM))
                 .when(fraudClient).check(FROM);
 
-        Transfer result = transferService.execute(FROM, TO, AMOUNT);
+        Transfer result = transferService.execute(FROM, TO, AMOUNT, INITIATOR_ID);
 
         assertThat(result.getStatus()).isEqualTo(TransferStatus.FAILED);
         assertThat(result.getFailureCode()).isEqualTo(TransferFailureCode.SOURCE_ACCOUNT_BLOCKED);
@@ -353,7 +360,7 @@ class TransferServiceTest {
         org.mockito.Mockito.doThrow(new FraudServiceUnavailableException("read timed out"))
                 .when(fraudClient).check(FROM);
 
-        Transfer result = transferService.execute(FROM, TO, AMOUNT);
+        Transfer result = transferService.execute(FROM, TO, AMOUNT, INITIATOR_ID);
 
         assertThat(result.getStatus()).isEqualTo(TransferStatus.FAILED);
         assertThat(result.getFailureCode()).isEqualTo(TransferFailureCode.SOURCE_FRAUD_SERVICE_UNAVAILABLE);
@@ -368,7 +375,7 @@ class TransferServiceTest {
         org.mockito.Mockito.doThrow(new FraudRejectedException("Account is blocklisted: " + TO))
                 .when(fraudClient).check(TO);
 
-        Transfer result = transferService.execute(FROM, TO, AMOUNT);
+        Transfer result = transferService.execute(FROM, TO, AMOUNT, INITIATOR_ID);
 
         assertThat(result.getStatus()).isEqualTo(TransferStatus.COMPENSATION_REQUIRED);
         assertThat(result.getFailureCode()).isEqualTo(TransferFailureCode.DESTINATION_ACCOUNT_BLOCKED);
@@ -383,7 +390,7 @@ class TransferServiceTest {
         org.mockito.Mockito.doThrow(new FraudServiceUnavailableException("read timed out"))
                 .when(fraudClient).check(TO);
 
-        Transfer result = transferService.execute(FROM, TO, AMOUNT);
+        Transfer result = transferService.execute(FROM, TO, AMOUNT, INITIATOR_ID);
 
         assertThat(result.getStatus()).isEqualTo(TransferStatus.COMPENSATION_REQUIRED);
         assertThat(result.getFailureCode()).isEqualTo(TransferFailureCode.DESTINATION_FRAUD_SERVICE_UNAVAILABLE);
@@ -396,7 +403,43 @@ class TransferServiceTest {
         UUID missing = UUID.randomUUID();
         when(transferRepository.findById(missing)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> transferService.getTransfer(missing))
+        assertThatThrownBy(() -> transferService.getTransfer(missing, INITIATOR_ID))
+                .isInstanceOf(TransferNotFoundException.class);
+    }
+
+    @Test
+    void getTransferReturnsItForTheInitiator() {
+        UUID id = UUID.randomUUID();
+        Transfer transfer = new Transfer(FROM, TO, AMOUNT, INITIATOR_ID);
+        when(transferRepository.findById(id)).thenReturn(Optional.of(transfer));
+
+        Transfer result = transferService.getTransfer(id, INITIATOR_ID);
+
+        assertThat(result).isSameAs(transfer);
+        verify(accountClient, never()).isOwnedByCaller(any());
+    }
+
+    @Test
+    void getTransferReturnsItForTheDestinationOwner() {
+        UUID id = UUID.randomUUID();
+        UUID destinationOwner = UUID.randomUUID();
+        Transfer transfer = new Transfer(FROM, TO, AMOUNT, INITIATOR_ID);
+        when(transferRepository.findById(id)).thenReturn(Optional.of(transfer));
+        when(accountClient.isOwnedByCaller(TO)).thenReturn(true);
+
+        Transfer result = transferService.getTransfer(id, destinationOwner);
+
+        assertThat(result).isSameAs(transfer);
+    }
+
+    @Test
+    void getTransferThrowsForACallerWhoIsNeitherTheInitiatorNorTheDestinationOwner() {
+        UUID id = UUID.randomUUID();
+        Transfer transfer = new Transfer(FROM, TO, AMOUNT, INITIATOR_ID);
+        when(transferRepository.findById(id)).thenReturn(Optional.of(transfer));
+        when(accountClient.isOwnedByCaller(TO)).thenReturn(false);
+
+        assertThatThrownBy(() -> transferService.getTransfer(id, UUID.randomUUID()))
                 .isInstanceOf(TransferNotFoundException.class);
     }
 
