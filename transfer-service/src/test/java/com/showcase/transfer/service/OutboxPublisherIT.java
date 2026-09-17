@@ -46,6 +46,18 @@ class OutboxPublisherIT {
     @DynamicPropertySource
     static void kafkaProperties(DynamicPropertyRegistry registry) {
         registry.add("spring.kafka.bootstrap-servers", kafka::getBootstrapServers);
+        // OutboxPublisher.publishPending() has no claim/lock step (single-instance deployment,
+        // see its class javadoc) -- it's only safe against ONE caller at a time. This class's
+        // tests invoke it directly (see the comment on the package-private method itself), but
+        // @SpringBootTest also boots the real, live @Scheduled tick from OutboxPublisher's own
+        // SchedulingConfigurer registration at the default 5s poll-interval. When that tick
+        // landed inside a test's own direct call, both read the same unpublished row before
+        // either had marked it published and both published it, producing two Kafka records for
+        // one event -- confirmed by reproducing it with a 50ms poll-interval, which showed two
+        // "published to" log lines for the same event id, one on the scheduling thread and one
+        // on the test thread. Pinning the interval far past this test class's runtime removes
+        // the second caller entirely, leaving the direct call as the only publisher.
+        registry.add("transfer.outbox.poll-interval", () -> "1h");
     }
 
     @Autowired
