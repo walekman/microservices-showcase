@@ -84,12 +84,14 @@ plan document, so these weren't caught by the phase's usual per-task review chec
   confirmed working, not just unit/slice-tested. What's still not automated: this proof was
   manual (curl), not turned into a Testcontainers-Keycloak-backed test — the community module
   route from the original Testing plan is still the way to make it repeatable.
-- No `Docker` was available in the session that implemented this phase, so every
-  Testcontainers-dependent test (`AccountControllerIT`, `AccountSecurityIT`, `TransferSecurityIT`,
-  and the five pre-existing full-context ITs touched by the `AuthorizationPropagatingInterceptor`
-  change) was written and compiled but never actually run there. Run `./mvnw test` with Docker
-  available to confirm these before treating the phase as fully verified — the manual
-  `docker compose up` pass above exercised the real endpoints but not these specific test classes.
+- ~~No `Docker` was available in the session that implemented this phase, so every
+  Testcontainers-dependent test was written and compiled but never actually run there.~~
+  **Resolved**: once Docker was available, `./mvnw test` was run for the full reactor — all
+  200 tests across all five services pass, including `AccountControllerIT`, `AccountSecurityIT`,
+  `TransferSecurityIT`, and the five pre-existing full-context ITs touched by
+  `AuthorizationPropagatingInterceptor`. That run itself found a fourth bug (see below), now
+  also fixed. The phase is fully verified: automated suite green, real `docker compose up`
+  round trip confirmed (see the bullet above).
 - A `@WebMvcTest` slice does not reliably include a hand-written `SecurityFilterChain` bean —
   found live via `FraudCheckControllerTest` returning 200 instead of 403 for a token with the
   wrong authority, silently falling back to Spring Boot's own "any authenticated request"
@@ -98,3 +100,13 @@ plan document, so these weren't caught by the phase's usual per-task review chec
   stayed a `@WebMvcTest` slice (it tests controller/error-mapping logic, not the authorization
   matrix) with a comment recording why. Worth keeping in mind for any future `@WebMvcTest` written
   in a service that has its own `SecurityFilterChain`.
+- `@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)` doesn't register Spring
+  Security's `HttpSecurity` bean, because that bean is only wired for a `WebApplicationContext` —
+  found live (with Docker available) when four transfer-service tests
+  (`AccountClientFallbackIT`, `AccountClientResilienceConfigMatchesYamlIT`, `FraudClientFallbackIT`,
+  `CompensationSchedulerIT`) all failed context startup with "No qualifying bean of type
+  HttpSecurity" the moment this phase's `SecurityConfig` existed, even though none of them make
+  a real HTTP call. Fixed by switching all four to the default `MOCK` web environment (no
+  behavior change for tests that only call beans directly). Worth keeping in mind for any test
+  that pairs `webEnvironment = NONE` with a service that has its own `SecurityFilterChain` —
+  the combination doesn't work regardless of what the test actually exercises.
