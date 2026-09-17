@@ -60,12 +60,17 @@ A single entry point at `http://localhost:8080` routes to the two client-facing 
 - `POST /accounts`, `GET /accounts`, `GET /accounts/{id}` → Account Service
 
 Account's `/accounts/{id}/debit` and `/accounts/{id}/credit` are intentionally **not** routed
-— they're internal saga calls Transfer Service makes directly on the Docker network, and stay
-unreachable from outside it. Every other example in this README still targets each service's
-own port directly (8081/8082/8083/8084); the Gateway doesn't replace those, it adds a second,
-narrower way in. Every routed path requires a bearer JWT with the matching permission, same as
-calling each service directly (see "Authentication" above) — the Gateway and the service behind
-it each independently check the token.
+— they're internal saga calls Transfer Service makes directly on the Docker network. That keeps
+them unreachable *through the Gateway*, but **not unreachable outright**: Account's own port
+(8081) is published for local dev, and any `customer` token can call them directly, since the
+same token has to carry `account-editor` for Transfer's saga to relay it on the caller's behalf.
+This is a known, deliberate gap in this phase — not a bypass of a bug, a consequence of the
+token-relay design — see `docs/phase-7-auth-keycloak-jwt.md`'s Known Gaps and Phase 7b
+(ownership authorization) in `docs/roadmap.md`. Every other example in this README still targets
+each service's own port directly (8081/8082/8083/8084); the Gateway doesn't replace those, it
+adds a second, narrower way in. Every routed path requires a bearer JWT with the matching
+permission, same as calling each service directly (see "Authentication" above) — the Gateway and
+the service behind it each independently check the token.
 
 ## Try it (curl)
 
@@ -75,7 +80,6 @@ omitted here to keep the examples focused on each endpoint's own request shape.
     # Create an account
     curl -X POST http://localhost:8081/accounts \
       -H "Content-Type: application/json" \
-      -H "Authorization: Bearer $TOKEN" \
       -d '{"ownerName": "Ada Lovelace", "initialBalance": 100.00}'
 
     # Fetch it (replace <id> with the id from the response above)

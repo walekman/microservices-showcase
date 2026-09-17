@@ -4,6 +4,7 @@ import org.springframework.http.HttpRequest;
 import org.springframework.http.client.ClientHttpRequestExecution;
 import org.springframework.http.client.ClientHttpRequestInterceptor;
 import org.springframework.http.client.ClientHttpResponse;
+import org.springframework.security.authentication.AnonymousAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.client.OAuth2AuthorizeRequest;
@@ -54,7 +55,19 @@ public class AuthorizationPropagatingInterceptor implements ClientHttpRequestInt
         if (authentication instanceof JwtAuthenticationToken jwtAuthentication) {
             return jwtAuthentication.getToken().getTokenValue();
         }
-        return fetchServiceToken();
+        // Only fall back to the service's own (more privileged than any single permission,
+        // holding both account-editor and fraud-checker) token when there is genuinely no
+        // request-bound identity to relay -- null (the background-sweep case this fallback
+        // exists for) or an anonymous authentication (a permitAll path, e.g. /actuator/health,
+        // where no SecurityConfig disables anonymous auth). Anything else is an authentication
+        // type this interceptor was never designed to handle; escalating it to the service
+        // token by default would silently hand out money-moving credentials to whatever that
+        // unexpected caller turns out to be. Found in code review, not written test-first.
+        if (authentication == null || authentication instanceof AnonymousAuthenticationToken) {
+            return fetchServiceToken();
+        }
+        throw new IllegalStateException("Unexpected Authentication type on the calling thread: "
+                + authentication.getClass() + " -- refusing to escalate to the transfer-service machine token");
     }
 
     private String fetchServiceToken() {

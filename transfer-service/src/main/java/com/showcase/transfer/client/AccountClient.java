@@ -118,7 +118,22 @@ public class AccountClient {
         }
     }
 
-    private void rejected(HttpRequest request, ClientHttpResponse response) {
+    private void rejected(HttpRequest request, ClientHttpResponse response) throws IOException {
+        // A 401/403 is Spring Security denying the request before it ever reaches Account's
+        // own RFC 7807 handler -- body is empty, no content-type. Before this project added
+        // JWT auth, Account could never return either status, so this check didn't exist and
+        // readProblem() below silently turned an auth/config failure into "UNKNOWN", which
+        // rejected() would then treat as a definitive business rejection (see the
+        // CONCURRENT_MODIFICATION comment below for why that's dangerous specifically for
+        // CompensationScheduler: it would stamp a transfer FAILED/COMPENSATED on the strength
+        // of a credential problem, not a real business answer, even if the debit/credit it's
+        // reasoning about actually landed). Checked on the status code directly, not the
+        // body, since there is no body to parse.
+        int status = response.getStatusCode().value();
+        if (status == 401 || status == 403) {
+            throw new AccountServiceUnavailableException(
+                    "Account Service rejected this caller's credentials (HTTP " + status + ")");
+        }
         AccountProblem problem = readProblem(response);
         if ("CONCURRENT_MODIFICATION".equals(problem.code())) {
             // Account's own optimistic-lock conflict (its @Version check losing a race) is

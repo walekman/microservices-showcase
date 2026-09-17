@@ -30,7 +30,13 @@ public class SecurityConfig {
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers("/actuator/health/**").permitAll()
                         .requestMatchers("/swagger-ui/**", "/v3/api-docs/**").permitAll()
+                        // HEAD is matched explicitly, not just GET: requestMatchers(GET, ...) does not
+                        // match a HEAD request, which Spring MVC still serves from the GET handler --
+                        // without this, HEAD /accounts/{id} fell through to anyRequest().authenticated()
+                        // and any valid token (not just account-reader) could confirm an account's
+                        // existence. Found in code review.
                         .requestMatchers(HttpMethod.GET, "/accounts", "/accounts/*").hasAuthority("account-reader")
+                        .requestMatchers(HttpMethod.HEAD, "/accounts", "/accounts/*").hasAuthority("account-reader")
                         .requestMatchers(HttpMethod.POST, "/accounts", "/accounts/*/debit", "/accounts/*/credit")
                         .hasAuthority("account-editor")
                         .anyRequest().authenticated())

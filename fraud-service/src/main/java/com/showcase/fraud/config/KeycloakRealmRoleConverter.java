@@ -25,6 +25,13 @@ public class KeycloakRealmRoleConverter implements Converter<Jwt, Collection<Gra
             return List.of();
         }
         return roles.stream()
+                // A non-String element (a malformed realm_access.roles claim -- not
+                // attacker-reachable, since the token is signed, but a protocol-mapper
+                // misconfiguration could produce one) is skipped rather than thrown on --
+                // the resulting reduced authority set still correctly denies whatever
+                // permission-gated endpoint the caller was trying to reach, instead of a
+                // ClassCastException surfacing as a 500. Found in code review.
+                .filter(String.class::isInstance)
                 .map(String.class::cast)
                 .<GrantedAuthority>map(SimpleGrantedAuthority::new)
                 .toList();
