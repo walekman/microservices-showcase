@@ -18,6 +18,10 @@ management:
       probes:
         enabled: true
 
+keycloak:
+  issuer-uri: ${KEYCLOAK_ISSUER_URI:http://localhost:8180/realms/showcase}
+  jwk-set-uri: ${KEYCLOAK_JWK_SET_URI:http://localhost:8180/realms/showcase/protocol/openid-connect/certs}
+
 fraud:
   blocklist:
     # Comma-separated account ids, e.g. "11111111-1111-1111-1111-111111111111,22222222-...".

@@ -54,6 +54,19 @@ spring:
         # Future returned by send() completes exceptionally -- the other half of "a broker
         # outage fails fast" alongside max.block.ms above.
         delivery.timeout.ms: 10000
+  security:
+    oauth2:
+      client:
+        registration:
+          # transfer-service's own machine identity -- used only when AuthorizationPropagatingInterceptor
+          # finds no inbound user token to relay (CompensationScheduler's background sweep).
+          transfer-service:
+            client-id: transfer-service
+            client-secret: ${TRANSFER_SERVICE_CLIENT_SECRET:transfer-service-secret}
+            authorization-grant-type: client_credentials
+        provider:
+          transfer-service:
+            token-uri: ${KEYCLOAK_TOKEN_URI:http://localhost:8180/realms/showcase/protocol/openid-connect/token}
 
 management:
   endpoints:
@@ -74,6 +87,10 @@ fraud-service:
   base-url: ${FRAUD_SERVICE_URL:http://localhost:8084}
   connect-timeout: 2s
   read-timeout: 5s
+
+keycloak:
+  issuer-uri: ${KEYCLOAK_ISSUER_URI:http://localhost:8180/realms/showcase}
+  jwk-set-uri: ${KEYCLOAK_JWK_SET_URI:http://localhost:8180/realms/showcase/protocol/openid-connect/certs}
 
 resilience4j:
   circuitbreaker:

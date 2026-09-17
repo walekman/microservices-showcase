@@ -25,6 +25,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -32,6 +33,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+// A @WebMvcTest slice does not reliably include a hand-written SecurityConfig's
+// SecurityFilterChain bean (see FraudCheckControllerTest's comment) -- it falls back to Spring
+// Boot's own "any authenticated request" default, so jwt() with any authority satisfies every
+// test below regardless of which authority is granted. That's fine here: this class tests
+// controller/error-mapping logic, not the authorization matrix itself -- the real
+// hasAuthority("transfer-executor") enforcement is covered by TransferSecurityIT's full context.
 @WebMvcTest(TransferController.class)
 class TransferControllerTest {
 
@@ -62,7 +69,7 @@ class TransferControllerTest {
         transfer.markCompleted();
         when(transferService.execute(FROM, TO, AMOUNT)).thenReturn(transfer);
 
-        mockMvc.perform(post("/transfers").contentType(MediaType.APPLICATION_JSON).content(requestBody()))
+        mockMvc.perform(post("/transfers").contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(jwt().authorities(() -> "transfer-executor")))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.status").value("COMPLETED"));
     }
@@ -73,7 +80,7 @@ class TransferControllerTest {
         transfer.markFailed(TransferFailureCode.INSUFFICIENT_FUNDS, "not enough money");
         when(transferService.execute(FROM, TO, AMOUNT)).thenReturn(transfer);
 
-        mockMvc.perform(post("/transfers").contentType(MediaType.APPLICATION_JSON).content(requestBody()))
+        mockMvc.perform(post("/transfers").contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(jwt().authorities(() -> "transfer-executor")))
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.code").value("INSUFFICIENT_FUNDS"))
                 .andExpect(jsonPath("$.transferStatus").value("FAILED"));
@@ -85,7 +92,7 @@ class TransferControllerTest {
         transfer.markFailed(TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, "connection refused");
         when(transferService.execute(FROM, TO, AMOUNT)).thenReturn(transfer);
 
-        mockMvc.perform(post("/transfers").contentType(MediaType.APPLICATION_JSON).content(requestBody()))
+        mockMvc.perform(post("/transfers").contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(jwt().authorities(() -> "transfer-executor")))
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(jsonPath("$.code").value("ACCOUNT_SERVICE_UNAVAILABLE"))
                 // The recorded reason can name the internal host and port of Account Service.
@@ -101,7 +108,7 @@ class TransferControllerTest {
                 "java.lang.IllegalStateException: response mapper exploded");
         when(transferService.execute(FROM, TO, AMOUNT)).thenReturn(transfer);
 
-        mockMvc.perform(post("/transfers").contentType(MediaType.APPLICATION_JSON).content(requestBody()))
+        mockMvc.perform(post("/transfers").contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(jwt().authorities(() -> "transfer-executor")))
                 .andExpect(status().isInternalServerError())
                 .andExpect(jsonPath("$.code").value("UNEXPECTED_ERROR"))
                 .andExpect(jsonPath("$.detail").value("The transfer could not be completed due to an internal error"))
@@ -117,7 +124,7 @@ class TransferControllerTest {
         // The counterpart to the two tests above: a business reason is written for the caller
         // and contains nothing internal, so blanket sanitising would throw away the one thing
         // that tells them what to do next.
-        mockMvc.perform(post("/transfers").contentType(MediaType.APPLICATION_JSON).content(requestBody()))
+        mockMvc.perform(post("/transfers").contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(jwt().authorities(() -> "transfer-executor")))
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.detail").value("Balance 10.00 is less than 40.00"));
     }
@@ -130,7 +137,7 @@ class TransferControllerTest {
         // needs to find the row and see what really happened.
         when(transferService.execute(FROM, TO, AMOUNT)).thenReturn(pendingTransfer());
 
-        mockMvc.perform(post("/transfers").contentType(MediaType.APPLICATION_JSON).content(requestBody()))
+        mockMvc.perform(post("/transfers").contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(jwt().authorities(() -> "transfer-executor")))
                 .andExpect(status().isInternalServerError())
                 .andExpect(jsonPath("$.code").value("UNEXPECTED_ERROR"))
                 .andExpect(jsonPath("$.transferStatus").value("PENDING"))
@@ -143,7 +150,7 @@ class TransferControllerTest {
         transfer.markCompensationRequired(TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, "credit failed");
         when(transferService.execute(FROM, TO, AMOUNT)).thenReturn(transfer);
 
-        mockMvc.perform(post("/transfers").contentType(MediaType.APPLICATION_JSON).content(requestBody()))
+        mockMvc.perform(post("/transfers").contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(jwt().authorities(() -> "transfer-executor")))
                 .andExpect(status().isInternalServerError())
                 .andExpect(jsonPath("$.code").value("COMPENSATION_REQUIRED"))
                 .andExpect(jsonPath("$.transferStatus").value("COMPENSATION_REQUIRED"))
@@ -161,7 +168,7 @@ class TransferControllerTest {
         when(transferService.execute(FROM, TO, AMOUNT)).thenThrow(
                 new TransferPersistenceException(id, new IllegalStateException("version conflict")));
 
-        mockMvc.perform(post("/transfers").contentType(MediaType.APPLICATION_JSON).content(requestBody()))
+        mockMvc.perform(post("/transfers").contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(jwt().authorities(() -> "transfer-executor")))
                 .andExpect(status().isInternalServerError())
                 .andExpect(jsonPath("$.code").value("INTERNAL_ERROR"))
                 .andExpect(jsonPath("$.transferId").value(id.toString()))
@@ -172,7 +179,7 @@ class TransferControllerTest {
     void returns400ForASelfTransfer() throws Exception {
         when(transferService.execute(any(), any(), any())).thenThrow(new SameAccountTransferException(FROM));
 
-        mockMvc.perform(post("/transfers").contentType(MediaType.APPLICATION_JSON).content(requestBody()))
+        mockMvc.perform(post("/transfers").contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(jwt().authorities(() -> "transfer-executor")))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("SAME_ACCOUNT_TRANSFER"));
     }
@@ -182,7 +189,7 @@ class TransferControllerTest {
         String body = objectMapper.writeValueAsString(
                 new CreateTransferRequest(FROM, TO, new BigDecimal("0.00")));
 
-        mockMvc.perform(post("/transfers").contentType(MediaType.APPLICATION_JSON).content(body))
+        mockMvc.perform(post("/transfers").contentType(MediaType.APPLICATION_JSON).content(body).with(jwt().authorities(() -> "transfer-executor")))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
     }
@@ -192,7 +199,7 @@ class TransferControllerTest {
         UUID unknown = UUID.randomUUID();
         when(transferService.getTransfer(eq(unknown))).thenThrow(new TransferNotFoundException(unknown));
 
-        mockMvc.perform(get("/transfers/" + unknown))
+        mockMvc.perform(get("/transfers/" + unknown).with(jwt().authorities(() -> "transfer-executor")))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("TRANSFER_NOT_FOUND"));
     }
@@ -204,7 +211,7 @@ class TransferControllerTest {
         UUID id = UUID.randomUUID();
         when(transferService.getTransfer(id)).thenReturn(transfer);
 
-        mockMvc.perform(get("/transfers/" + id))
+        mockMvc.perform(get("/transfers/" + id).with(jwt().authorities(() -> "transfer-executor")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("COMPLETED"))
                 .andExpect(jsonPath("$.fromAccountId").value(FROM.toString()))
@@ -217,7 +224,7 @@ class TransferControllerTest {
         transfer.markFailed(TransferFailureCode.INSUFFICIENT_FUNDS, "not enough money");
         when(transferService.listTransfers(TransferStatus.FAILED)).thenReturn(List.of(transfer));
 
-        mockMvc.perform(get("/transfers?status=FAILED"))
+        mockMvc.perform(get("/transfers?status=FAILED").with(jwt().authorities(() -> "transfer-executor")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].status").value("FAILED"))
                 .andExpect(jsonPath("$[0].failureCode").value("INSUFFICIENT_FUNDS"));
@@ -225,7 +232,7 @@ class TransferControllerTest {
 
     @Test
     void listsEveryTransferWhenNoStatusIsGiven() throws Exception {
-        mockMvc.perform(get("/transfers"))
+        mockMvc.perform(get("/transfers").with(jwt().authorities(() -> "transfer-executor")))
                 .andExpect(status().isOk());
 
         // Pins the binding, not the service: an absent ?status= must reach the service as null,
@@ -236,7 +243,7 @@ class TransferControllerTest {
 
     @Test
     void returns400ForAnUnknownStatusValue() throws Exception {
-        mockMvc.perform(get("/transfers?status=BOGUS"))
+        mockMvc.perform(get("/transfers?status=BOGUS").with(jwt().authorities(() -> "transfer-executor")))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("MALFORMED_REQUEST"));
     }
@@ -245,7 +252,7 @@ class TransferControllerTest {
     void returns405WithCodeForUnsupportedMethod() throws Exception {
         // Covers the exceptions ResponseEntityExceptionHandler handles for us: they render through
         // handleExceptionInternal, which must stamp the code/timestamp invariant on every problem body.
-        mockMvc.perform(delete("/transfers/" + UUID.randomUUID()))
+        mockMvc.perform(delete("/transfers/" + UUID.randomUUID()).with(jwt().authorities(() -> "transfer-executor")))
                 .andExpect(status().isMethodNotAllowed())
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.code").value("REQUEST_REJECTED"))

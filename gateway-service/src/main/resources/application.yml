@@ -23,3 +23,7 @@ account-service:
 
 transfer-service:
   base-url: ${TRANSFER_SERVICE_URL:http://localhost:8082}
+
+keycloak:
+  issuer-uri: ${KEYCLOAK_ISSUER_URI:http://localhost:8180/realms/showcase}
+  jwk-set-uri: ${KEYCLOAK_JWK_SET_URI:http://localhost:8180/realms/showcase/protocol/openid-connect/certs}
