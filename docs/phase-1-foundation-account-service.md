@@ -1180,6 +1180,10 @@ git commit -m "feat: wire Account Service into Docker Compose, add README"
 
 ---
 
+## Deferred / Known Gaps
+
+- **Flyway vs. `ddl-auto` for schema management.** This phase's final review raised it and deferred it; re-raised and re-deferred again in Phase 4 (the outbox table was added to Transfer's existing schema via `ddl-auto: update`, no migration tooling introduced) and in Phase 4's own Scope Boundary table ("its own phase"). Revisit before a phase adds substantial new schema surface — Phase 5 added none, so the revisit trigger wasn't tripped there.
+
 ## Next Phase
 
 Phase 2 — **Transfer + Fraud Services (the Saga)** — adds the `transfer` and `fraud` databases/services, the orchestrated saga in Transfer Service, Resilience4j-wrapped calls to Account Service, the transactional outbox, and Kafka (KRaft mode) to Docker Compose.
