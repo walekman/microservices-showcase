@@ -55,6 +55,7 @@ class AccountControllerIT {
                 "/accounts", new CreateAccountRequest("Ada Lovelace", new BigDecimal("100.00")), AccountResponse.class);
 
         assertThat(createResponse.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(createResponse.getBody().ownerId()).isEqualTo(TestSecurityConfig.CUSTOMER_SUBJECT);
         UUID id = createResponse.getBody().id();
 
         ResponseEntity<AccountResponse> getResponse = restTemplate.getForEntity("/accounts/" + id, AccountResponse.class);
@@ -70,7 +71,13 @@ class AccountControllerIT {
         UUID firstId = createAccount(new BigDecimal("100.00"));
         UUID secondId = createAccount(new BigDecimal("50.00"));
 
-        ResponseEntity<AccountResponse[]> response = restTemplate.getForEntity("/accounts", AccountResponse[].class);
+        // account-admin only, as of Phase 7b -- the class-wide customer token (account-reader)
+        // is no longer enough, so this request carries its own explicit admin Authorization
+        // header, which BearerAuthInterceptor is written to respect over the customer one.
+        HttpHeaders adminHeaders = new HttpHeaders();
+        adminHeaders.setBearerAuth(TestSecurityConfig.ADMIN_TOKEN);
+        ResponseEntity<AccountResponse[]> response = restTemplate.exchange(
+                "/accounts", HttpMethod.GET, new HttpEntity<>(adminHeaders), AccountResponse[].class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody())

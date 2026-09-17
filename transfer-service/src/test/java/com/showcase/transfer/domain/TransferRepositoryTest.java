@@ -36,7 +36,7 @@ class TransferRepositoryTest {
     @Test
     void savesAndReloadsATransfer() {
         Transfer saved = transferRepository.save(
-                new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("25.00")));
+                new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("25.00"), UUID.randomUUID()));
 
         Optional<Transfer> found = transferRepository.findById(saved.getId());
 
@@ -47,7 +47,7 @@ class TransferRepositoryTest {
 
     @Test
     void persistsTheFailureCodeAsAString() {
-        Transfer transfer = new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("25.00"));
+        Transfer transfer = new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("25.00"), UUID.randomUUID());
         transfer.markFailed(TransferFailureCode.INSUFFICIENT_FUNDS, "not enough money");
 
         Transfer saved = transferRepository.saveAndFlush(transfer);
@@ -60,7 +60,7 @@ class TransferRepositoryTest {
 
     @Test
     void findsTransfersByStatus() {
-        Transfer stranded = new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("25.00"));
+        Transfer stranded = new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("25.00"), UUID.randomUUID());
         stranded.markCompensationRequired(TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, "credit failed");
         transferRepository.saveAndFlush(stranded);
 
@@ -71,11 +71,11 @@ class TransferRepositoryTest {
 
     @Test
     void findsStalePendingTransfersOlderThanTheCutoff() {
-        Transfer stale = new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("25.00"));
+        Transfer stale = new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("25.00"), UUID.randomUUID());
         ReflectionTestUtils.setField(stale, "createdAt", Instant.now().minus(Duration.ofMinutes(10)));
         transferRepository.saveAndFlush(stale);
         Transfer recent = transferRepository.saveAndFlush(
-                new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("25.00")));
+                new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("25.00"), UUID.randomUUID()));
 
         List<Transfer> found = transferRepository.findByStatusAndCreatedAtBefore(
                 TransferStatus.PENDING, Instant.now().minus(Duration.ofSeconds(120)), Limit.unlimited());
@@ -86,10 +86,10 @@ class TransferRepositoryTest {
 
     @Test
     void findByStatusHonoursTheLimit() {
-        Transfer first = new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("25.00"));
+        Transfer first = new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("25.00"), UUID.randomUUID());
         first.markCompensationRequired(TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, "credit failed");
         transferRepository.saveAndFlush(first);
-        Transfer second = new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("25.00"));
+        Transfer second = new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("25.00"), UUID.randomUUID());
         second.markCompensationRequired(TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, "credit failed");
         transferRepository.saveAndFlush(second);
 
@@ -100,10 +100,10 @@ class TransferRepositoryTest {
 
     @Test
     void findByStatusAndCreatedAtBeforeHonoursTheLimit() {
-        Transfer first = new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("25.00"));
+        Transfer first = new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("25.00"), UUID.randomUUID());
         ReflectionTestUtils.setField(first, "createdAt", Instant.now().minus(Duration.ofMinutes(10)));
         transferRepository.saveAndFlush(first);
-        Transfer second = new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("25.00"));
+        Transfer second = new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("25.00"), UUID.randomUUID());
         ReflectionTestUtils.setField(second, "createdAt", Instant.now().minus(Duration.ofMinutes(10)));
         transferRepository.saveAndFlush(second);
 

@@ -8,11 +8,13 @@ import java.util.UUID;
 
 public record AccountResponse(
         UUID id,
+        UUID ownerId,
         String ownerName,
         BigDecimal balance,
         Instant createdAt) {
 
     public static AccountResponse from(Account account) {
-        return new AccountResponse(account.getId(), account.getOwnerName(), account.getBalance(), account.getCreatedAt());
+        return new AccountResponse(
+                account.getId(), account.getOwnerId(), account.getOwnerName(), account.getBalance(), account.getCreatedAt());
     }
 }

@@ -62,7 +62,7 @@ class AccountClientFallbackIT {
     @DynamicPropertySource
     static void accountServiceUrl(DynamicPropertyRegistry registry) throws IOException {
         fakeAccountService = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
-        fakeAccountService.createContext("/accounts/" + ACCOUNT_ID, exchange -> {
+        fakeAccountService.createContext("/accounts/exists/" + ACCOUNT_ID, exchange -> {
             byte[] body = ("""
                     {"type":"https://showcase.example/errors/account-not-found","title":"Account not found",
                      "status":404,"detail":"Account not found: %s","code":"ACCOUNT_NOT_FOUND",
@@ -112,7 +112,7 @@ class AccountClientFallbackIT {
         // Asserting the exact type and code is itself conclusive proof the fake backend was
         // reached: a real connection failure would surface as
         // AccountServiceUnavailableException instead, never this specific rejection code.
-        assertThatThrownBy(() -> accountClient.getAccount(ACCOUNT_ID))
+        assertThatThrownBy(() -> accountClient.accountExists(ACCOUNT_ID))
                 .asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.type(AccountRejectedException.class))
                 .extracting(AccountRejectedException::getCode)
                 .isEqualTo("ACCOUNT_NOT_FOUND");
@@ -120,7 +120,7 @@ class AccountClientFallbackIT {
 
     /**
      * debitCreditFallback is the fallback CompensationScheduler actually depends on --
-     * getAccount's fallback above proves nothing about it, since Resilience4j wires a
+     * accountExists's fallback above proves nothing about it, since Resilience4j wires a
      * fallbackMethod per decorated method, not per class. Without this test's own explicit
      * passthrough coverage, the exact Task 6 bug (a definitive rejection silently
      * miscategorized as AccountServiceUnavailableException) could recur here undetected --

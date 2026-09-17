@@ -37,32 +37,66 @@ class AccountClientTest {
     }
 
     @Test
-    void getAccountReturnsTheBalance() {
-        server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID))
+    void accountExistsSucceedsWhenTheAccountExists() {
+        server.expect(requestTo(BASE_URL + "/accounts/exists/" + ACCOUNT_ID))
                 .andExpect(method(org.springframework.http.HttpMethod.GET))
-                .andRespond(withSuccess("""
-                        {"id":"%s","ownerName":"Ada Lovelace","balance":100.00,"createdAt":"2026-09-10T12:00:00Z"}
-                        """.formatted(ACCOUNT_ID), MediaType.APPLICATION_JSON));
+                .andRespond(withStatus(HttpStatus.OK));
 
-        AccountView account = accountClient.getAccount(ACCOUNT_ID);
+        accountClient.accountExists(ACCOUNT_ID);
 
-        assertThat(account.id()).isEqualTo(ACCOUNT_ID);
-        assertThat(account.balance()).isEqualByComparingTo("100.00");
         server.verify();
     }
 
     @Test
-    void getAccountThrowsRejectedWithAccountCodeOn404() {
-        server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID))
+    void accountExistsThrowsRejectedWithAccountCodeOn404() {
+        server.expect(requestTo(BASE_URL + "/accounts/exists/" + ACCOUNT_ID))
                 .andRespond(problem(HttpStatus.NOT_FOUND, "ACCOUNT_NOT_FOUND", "Account not found: " + ACCOUNT_ID));
 
-        assertThatThrownBy(() -> accountClient.getAccount(ACCOUNT_ID))
+        assertThatThrownBy(() -> accountClient.accountExists(ACCOUNT_ID))
                 .isInstanceOf(AccountRejectedException.class)
                 .satisfies(thrown -> {
                     assertThat(((AccountRejectedException) thrown).getCode()).isEqualTo("ACCOUNT_NOT_FOUND");
                     assertThat(((AccountRejectedException) thrown).getDetail())
                             .isEqualTo("Account not found: " + ACCOUNT_ID);
                 });
+        server.verify();
+    }
+
+    // isOwnedByCaller -- backs TransferService.getTransfer's destination-owner read check
+    // (see docs/phase-7b-account-ownership-authorization.md). Hits the owner-gated
+    // GET /accounts/{id}, unlike accountExists above.
+
+    @Test
+    void isOwnedByCallerReturnsTrueOn200() {
+        server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID))
+                .andExpect(method(org.springframework.http.HttpMethod.GET))
+                .andRespond(withStatus(HttpStatus.OK));
+
+        assertThat(accountClient.isOwnedByCaller(ACCOUNT_ID)).isTrue();
+        server.verify();
+    }
+
+    @Test
+    void isOwnedByCallerReturnsFalseOnAccountNotFound() {
+        // 404/ACCOUNT_NOT_FOUND covers both "genuinely missing" and "not yours" -- Account
+        // deliberately does not distinguish the two. Either way, this is a normal, expected
+        // outcome of the check, not a propagated rejection.
+        server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID))
+                .andRespond(problem(HttpStatus.NOT_FOUND, "ACCOUNT_NOT_FOUND", "Account not found: " + ACCOUNT_ID));
+
+        assertThat(accountClient.isOwnedByCaller(ACCOUNT_ID)).isFalse();
+        server.verify();
+    }
+
+    @Test
+    void isOwnedByCallerPropagatesUnavailableOnServerError() {
+        // Unlike ACCOUNT_NOT_FOUND above, "Account is unreachable" must not resolve to false --
+        // that would answer "not yours" when the real answer is "unknown".
+        server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID))
+                .andRespond(withStatus(HttpStatus.INTERNAL_SERVER_ERROR));
+
+        assertThatThrownBy(() -> accountClient.isOwnedByCaller(ACCOUNT_ID))
+                .isInstanceOf(AccountServiceUnavailableException.class);
         server.verify();
     }
 
@@ -190,12 +224,12 @@ class AccountClientTest {
 
     @Test
     void throwsRejectedWithUnknownCodeWhenTheErrorBodyIsNotAProblem() {
-        server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID))
+        server.expect(requestTo(BASE_URL + "/accounts/exists/" + ACCOUNT_ID))
                 .andRespond(withStatus(HttpStatus.BAD_REQUEST)
                         .contentType(MediaType.TEXT_HTML)
                         .body("<html>gateway says no</html>"));
 
-        assertThatThrownBy(() -> accountClient.getAccount(ACCOUNT_ID))
+        assertThatThrownBy(() -> accountClient.accountExists(ACCOUNT_ID))
                 .isInstanceOf(AccountRejectedException.class)
                 .satisfies(thrown -> assertThat(((AccountRejectedException) thrown).getCode())
                         .isEqualTo("UNKNOWN"));
@@ -203,31 +237,11 @@ class AccountClientTest {
     }
 
     @Test
-    void getAccountThrowsUnavailableWhenTheBodyIsEmpty() {
-        server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID))
-                .andRespond(withSuccess());
-
-        assertThatThrownBy(() -> accountClient.getAccount(ACCOUNT_ID))
-                .isInstanceOf(AccountServiceUnavailableException.class);
-        server.verify();
-    }
-
-    @Test
-    void getAccountThrowsUnavailableWhenA2xxBodyIsNotReadable() {
-        server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID))
-                .andRespond(withSuccess("<html>proxy interstitial</html>", MediaType.TEXT_HTML));
-
-        assertThatThrownBy(() -> accountClient.getAccount(ACCOUNT_ID))
-                .isInstanceOf(AccountServiceUnavailableException.class);
-        server.verify();
-    }
-
-    @Test
     void throwsRejectedWithUnknownCodeWhenTheErrorHasNoBodyAtAll() {
-        server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID))
+        server.expect(requestTo(BASE_URL + "/accounts/exists/" + ACCOUNT_ID))
                 .andRespond(withStatus(HttpStatus.BAD_REQUEST));
 
-        assertThatThrownBy(() -> accountClient.getAccount(ACCOUNT_ID))
+        assertThatThrownBy(() -> accountClient.accountExists(ACCOUNT_ID))
                 .isInstanceOf(AccountRejectedException.class)
                 .satisfies(thrown -> assertThat(((AccountRejectedException) thrown).getCode())
                         .isEqualTo("UNKNOWN"));
@@ -245,11 +259,11 @@ class AccountClientTest {
     }
 
     @Test
-    void getAccountThrowsUnavailableOn3xxRedirect() {
-        server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID))
+    void accountExistsThrowsUnavailableOn3xxRedirect() {
+        server.expect(requestTo(BASE_URL + "/accounts/exists/" + ACCOUNT_ID))
                 .andRespond(withStatus(HttpStatus.FOUND));
 
-        assertThatThrownBy(() -> accountClient.getAccount(ACCOUNT_ID))
+        assertThatThrownBy(() -> accountClient.accountExists(ACCOUNT_ID))
                 .isInstanceOf(AccountServiceUnavailableException.class);
         server.verify();
     }

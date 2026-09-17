@@ -3,15 +3,20 @@ package com.showcase.account.domain;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class AccountTest {
 
+    // Ownership is irrelevant to debit/credit's own arithmetic -- any fixed id does, the tests
+    // below never assert on it.
+    private static final UUID OWNER_ID = UUID.randomUUID();
+
     @Test
     void debitReducesBalanceWhenFundsAreSufficient() {
-        Account account = new Account("Ada Lovelace", new BigDecimal("100.00"));
+        Account account = new Account(OWNER_ID, "Ada Lovelace", new BigDecimal("100.00"));
 
         account.debit(new BigDecimal("40.00"));
 
@@ -20,7 +25,7 @@ class AccountTest {
 
     @Test
     void debitThrowsWhenFundsAreInsufficient() {
-        Account account = new Account("Ada Lovelace", new BigDecimal("30.00"));
+        Account account = new Account(OWNER_ID, "Ada Lovelace", new BigDecimal("30.00"));
 
         assertThatThrownBy(() -> account.debit(new BigDecimal("40.00")))
                 .isInstanceOf(InsufficientFundsException.class);
@@ -29,7 +34,7 @@ class AccountTest {
 
     @Test
     void creditIncreasesBalance() {
-        Account account = new Account("Ada Lovelace", new BigDecimal("100.00"));
+        Account account = new Account(OWNER_ID, "Ada Lovelace", new BigDecimal("100.00"));
 
         account.credit(new BigDecimal("25.00"));
 
@@ -38,7 +43,7 @@ class AccountTest {
 
     @Test
     void debitThrowsWhenAmountIsNotPositive() {
-        Account account = new Account("Ada Lovelace", new BigDecimal("100.00"));
+        Account account = new Account(OWNER_ID, "Ada Lovelace", new BigDecimal("100.00"));
 
         assertThatThrownBy(() -> account.debit(new BigDecimal("0.00")))
                 .isInstanceOf(IllegalArgumentException.class);
@@ -48,7 +53,7 @@ class AccountTest {
 
     @Test
     void creditThrowsWhenAmountIsNotPositive() {
-        Account account = new Account("Ada Lovelace", new BigDecimal("100.00"));
+        Account account = new Account(OWNER_ID, "Ada Lovelace", new BigDecimal("100.00"));
 
         assertThatThrownBy(() -> account.credit(new BigDecimal("0.00")))
                 .isInstanceOf(IllegalArgumentException.class);

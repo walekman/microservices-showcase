@@ -22,7 +22,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
-import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 class AccountClientResilienceTest {
 
@@ -66,18 +65,24 @@ class AccountClientResilienceTest {
         return Retry.decorateSupplier(retry, CircuitBreaker.decorateSupplier(circuitBreaker, call)).get();
     }
 
+    // accountExists is void, but retryAndBreak's Supplier<T> plumbing (and CircuitBreaker's own
+    // decorateSupplier below) needs a return value -- wrapping it as Supplier<Void> costs
+    // nothing and keeps this class's resilience-proving helpers shared across every AccountClient
+    // method, not just the ones that happen to return a body.
+    private Void callAccountExists() {
+        accountClient.accountExists(ACCOUNT_ID);
+        return null;
+    }
+
     @Test
     void retriesATransientFailureAndEventuallySucceeds() {
-        server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID))
+        server.expect(requestTo(BASE_URL + "/accounts/exists/" + ACCOUNT_ID))
                 .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
-        server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID))
-                .andRespond(withSuccess("""
-                        {"id":"%s","ownerName":"Ada Lovelace","balance":100.00,"createdAt":"2026-09-10T12:00:00Z"}
-                        """.formatted(ACCOUNT_ID), MediaType.APPLICATION_JSON));
+        server.expect(requestTo(BASE_URL + "/accounts/exists/" + ACCOUNT_ID))
+                .andRespond(withStatus(HttpStatus.OK));
 
-        AccountView account = retryAndBreak(() -> accountClient.getAccount(ACCOUNT_ID));
+        retryAndBreak(this::callAccountExists);
 
-        assertThat(account.balance()).isEqualByComparingTo("100.00");
         // Exactly the two expectations registered above were consumed -- if Retry had not
         // fired, the first (failing) response alone would have propagated and this call
         // would have thrown instead of returning.
@@ -86,7 +91,7 @@ class AccountClientResilienceTest {
 
     @Test
     void doesNotRetryABusinessRejection() {
-        server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID))
+        server.expect(requestTo(BASE_URL + "/accounts/exists/" + ACCOUNT_ID))
                 .andRespond(withStatus(HttpStatus.NOT_FOUND)
                         .contentType(MediaType.APPLICATION_PROBLEM_JSON)
                         .body("""
@@ -94,7 +99,7 @@ class AccountClientResilienceTest {
                                  "detail":"not found","code":"ACCOUNT_NOT_FOUND","timestamp":"2026-09-10T12:00:00Z"}
                                 """));
 
-        assertThatThrownBy(() -> retryAndBreak(() -> accountClient.getAccount(ACCOUNT_ID)))
+        assertThatThrownBy(() -> retryAndBreak(this::callAccountExists))
                 .isInstanceOf(AccountRejectedException.class);
         // Only one request was registered above -- if this had been retried, verify() would
         // fail with "no further requests expected" instead of this test reaching this line.
@@ -104,20 +109,18 @@ class AccountClientResilienceTest {
     @Test
     void opensAfterEnoughFailuresAndShortCircuitsWithoutANewRequest() {
         for (int i = 0; i < 15; i++) {
-            server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID))
+            server.expect(requestTo(BASE_URL + "/accounts/exists/" + ACCOUNT_ID))
                     .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
         }
         // Drive exactly 15 failures through the circuit breaker alone (bypassing Retry here,
         // so each iteration is exactly one HTTP call) to reach minimumNumberOfCalls.
         for (int i = 0; i < 15; i++) {
-            assertThatThrownBy(() -> CircuitBreaker.decorateSupplier(circuitBreaker,
-                    () -> accountClient.getAccount(ACCOUNT_ID)).get())
+            assertThatThrownBy(() -> CircuitBreaker.decorateSupplier(circuitBreaker, this::callAccountExists).get())
                     .isInstanceOf(AccountServiceUnavailableException.class);
         }
 
         assertThat(circuitBreaker.getState()).isEqualTo(CircuitBreaker.State.OPEN);
-        assertThatThrownBy(() -> CircuitBreaker.decorateSupplier(circuitBreaker,
-                () -> accountClient.getAccount(ACCOUNT_ID)).get())
+        assertThatThrownBy(() -> CircuitBreaker.decorateSupplier(circuitBreaker, this::callAccountExists).get())
                 .isInstanceOf(CallNotPermittedException.class);
         // No 16th expectation was registered -- if the circuit had not actually opened, the
         // call above would attempt a real 16th request and MockRestServiceServer would fail

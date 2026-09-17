@@ -51,22 +51,50 @@ public class AccountClient {
         this.objectMapper = objectMapper;
     }
 
+    /**
+     * Confirms an account exists, nothing more -- backs the saga's pre-validate step for both
+     * legs, including the destination, which the initiating caller never owns. Deliberately
+     * hits the ownership-free {@code GET /accounts/exists/{id}} rather than the full
+     * owner-gated {@code GET /accounts/{id}}: the latter would 404 for every transfer to a
+     * different customer's account. See docs/phase-7b-account-ownership-authorization.md.
+     */
     @CircuitBreaker(name = "accountService")
-    @Retry(name = "accountService", fallbackMethod = "getAccountFallback")
-    public AccountView getAccount(UUID accountId) {
-        // A 204, or a 200 with Content-Length: 0, makes the message converter return null.
-        // Without this guard the saga NPEs on account.balance() instead of branching.
-        AccountView account = call(() -> restClient.get()
-                .uri("/accounts/{id}", accountId)
+    @Retry(name = "accountService", fallbackMethod = "accountExistsFallback")
+    public void accountExists(UUID accountId) {
+        call(() -> restClient.get()
+                .uri("/accounts/exists/{id}", accountId)
                 .retrieve()
                 .onStatus(HttpStatusCode::is4xxClientError, this::rejected)
                 .onStatus(status -> !status.is2xxSuccessful(), this::unavailable)
-                .body(AccountView.class));
-        if (account == null) {
-            throw new AccountServiceUnavailableException(
-                    "Account Service returned an empty body for " + accountId);
+                .toBodilessEntity());
+    }
+
+    /**
+     * Whether the CURRENT caller (whatever token this thread relays -- see
+     * AuthorizationPropagatingInterceptor) owns the given account, via Account's owner-gated
+     * {@code GET /accounts/{id}}. Used only by TransferService.getTransfer's destination-owner
+     * read check -- see docs/phase-7b-account-ownership-authorization.md's Design Decisions for
+     * why this is a live per-read check rather than something Transfer stores.
+     *
+     * <p>A 404 (owner mismatch or genuinely missing, indistinguishable by design) resolves to
+     * {@code false} rather than propagating -- that is a normal, expected outcome of this check,
+     * not a rejection. Anything else (Account unavailable) still propagates, since "unknown" is
+     * not the same answer as "not yours".
+     */
+    @CircuitBreaker(name = "accountService")
+    @Retry(name = "accountService", fallbackMethod = "isOwnedByCallerFallback")
+    public boolean isOwnedByCaller(UUID accountId) {
+        try {
+            call(() -> restClient.get()
+                    .uri("/accounts/{id}", accountId)
+                    .retrieve()
+                    .onStatus(HttpStatusCode::is4xxClientError, this::rejected)
+                    .onStatus(status -> !status.is2xxSuccessful(), this::unavailable)
+                    .toBodilessEntity());
+            return true;
+        } catch (AccountRejectedException notOwned) {
+            return false;
         }
-        return account;
     }
 
     @CircuitBreaker(name = "accountService")
@@ -173,12 +201,21 @@ public class AccountClient {
     }
 
     /**
-     * Invoked by Resilience4j instead of getAccount's body -- not only once retries are
+     * Invoked by Resilience4j instead of accountExists's body -- not only once retries are
      * exhausted or the circuit is open, but for every exception the body can throw,
      * {@link AccountRejectedException} included (see the class javadoc). Rethrown
      * unchanged so a business rejection still reaches the caller as a rejection.
      */
-    private AccountView getAccountFallback(UUID accountId, Throwable t) {
+    private void accountExistsFallback(UUID accountId, Throwable t) {
+        throw rethrow(t);
+    }
+
+    /**
+     * Same reasoning as accountExistsFallback above, for isOwnedByCaller. Only reached once
+     * retries/circuit-breaker give up -- the AccountRejectedException "not owned" case is
+     * handled inside isOwnedByCaller's own body and never escapes to trigger this.
+     */
+    private boolean isOwnedByCallerFallback(UUID accountId, Throwable t) {
         throw rethrow(t);
     }
 
