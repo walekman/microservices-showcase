@@ -83,7 +83,7 @@ Each task is its own branch/PR off the current `master`, per this project's work
 3. **Metrics**: Prometheus dependency + config on all 5 services, business metrics at their source points, `prometheus` container wired into Compose.
 4. **Structured JSON logging**: `logging.structured.format.console=logstash` on all 5 services.
 5. **Grafana**: container + provisioned datasources + dashboards wired into Compose.
-6. **Docs sync**: roadmap.md (row 8 narrows to this phase's actual scope, new row 9 added for the split-off e2e test module) and design.md (resolve "Jaeger (or Grafana Tempo)" to Tempo, drop the Spring Cloud Contract line entirely) — same pattern as every prior phase's final wiring/docs-sync commit.
+6. **Docs sync**: design.md (resolve "Jaeger (or Grafana Tempo)" to Tempo, drop the Spring Cloud Contract line entirely) — same pattern as every prior phase's final wiring/docs-sync commit. roadmap.md was already synced ahead of implementation, in this phase's spec PR — see Roadmap Changes.
 
 ## Testing
 
@@ -117,5 +117,5 @@ Each task is its own branch/PR off the current `master`, per this project's work
 
 ## Roadmap Changes
 
-- `docs/roadmap.md` row 8 narrows at implementation-sync time (Task 6) to link to this document with its actual scope (tracing/metrics/logging, no contract tests, no e2e module); a new row 9 is added, "Not started," forecasting the end-to-end saga test module.
-- `docs/microservices-showcase-design.md` §5 gets "Jaeger (or Grafana Tempo)" resolved to "Grafana Tempo"; the Spring Cloud Contract line (§8) is removed entirely, not marked deferred.
+- `docs/roadmap.md` row 8 already narrowed to this phase's actual scope, linked to this document, ahead of implementation (done in this spec PR at the user's request, rather than waiting for Task 6 as every prior phase did); a new row 9, "Not started," forecasts the end-to-end saga test module.
+- `docs/microservices-showcase-design.md` §5 gets "Jaeger (or Grafana Tempo)" resolved to "Grafana Tempo"; the Spring Cloud Contract line (§8) is removed entirely, not marked deferred. Still pending — lands in Task 6.
