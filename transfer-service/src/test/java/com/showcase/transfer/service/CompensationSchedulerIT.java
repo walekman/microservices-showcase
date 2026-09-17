@@ -43,7 +43,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>Covers a Phase 3 final-review test-coverage gap (docs/roadmap.md): no test previously
  * exercised a real scheduled CompensationScheduler execution end-to-end.
  */
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
+// Plain @SpringBootTest (MOCK web environment), not webEnvironment = NONE -- see
+// AccountClientFallbackIT's comment for why (HttpSecurity is only registered for a
+// WebApplicationContext, and this phase's SecurityConfig needs it).
+@SpringBootTest
 @Testcontainers
 @Import(StubServiceTokenTestConfig.class)
 class CompensationSchedulerIT {

@@ -63,7 +63,10 @@
     {
       "username": "ada",
       "enabled": true,
+      "email": "ada@showcase.example",
       "emailVerified": true,
+      "firstName": "Ada",
+      "lastName": "Lovelace",
       "credentials": [
         { "type": "password", "value": "password", "temporary": false }
       ],
@@ -72,7 +75,10 @@
     {
       "username": "bob",
       "enabled": true,
+      "email": "bob@showcase.example",
       "emailVerified": true,
+      "firstName": "Bob",
+      "lastName": "Builder",
       "credentials": [
         { "type": "password", "value": "password", "temporary": false }
       ],

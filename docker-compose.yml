@@ -181,17 +181,20 @@ services:
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
       KC_HTTP_ENABLED: "true"
-      KC_HOSTNAME: localhost
-      KC_HOSTNAME_PORT: "8180"
-      KC_HOSTNAME_STRICT_HTTPS: "false"
+      # Keycloak 26 defaults to "hostname v2": a single URL, not the v1
+      # hostname/hostname-port/hostname-strict-https trio (verified live -- the v1 options
+      # produced a "still in use" deprecation warning on startup even though they worked).
+      KC_HOSTNAME: http://localhost:8180
     ports:
       - "8180:8080"
     volumes:
       - ./docker/keycloak/showcase-realm.json:/opt/keycloak/data/import/showcase-realm.json:ro
     healthcheck:
-      # Doubles as "the realm import finished", not just "the process is up" -- the OIDC
-      # discovery document only resolves once the showcase realm actually exists.
-      test: ["CMD-SHELL", "curl -f http://localhost:8080/realms/showcase/.well-known/openid-configuration || exit 1"]
+      # Verified live: this image (quay.io/keycloak/keycloak, UBI9-based) has no curl or wget,
+      # only bash -- a bash /dev/tcp check is the standard workaround. Keycloak doesn't open
+      # its HTTP port until realm import has already finished, so "the port is open" is a
+      # reliable enough proxy for "the realm import finished", not just "the process is up".
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/8080' || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 15

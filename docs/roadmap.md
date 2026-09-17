@@ -72,15 +72,24 @@ plan document, so these weren't caught by the phase's usual per-task review chec
 - The phase's original Testing plan called for Testcontainers-based Keycloak in the automated
   suite. That was not implemented — each service instead gets a stub `JwtDecoder`
   (`@TestConfiguration`, `@Primary`) returning canned `Jwt`s, which proves the authorization
-  matrix (hasAuthority rules) without a real Keycloak. What's still unverified: the realm export
-  JSON's actual schema/import behavior, and the whole login → Gateway → service round trip
-  against a real Keycloak. Both need a real `docker compose up` before this phase can be
-  considered fully proven, not just unit/slice-tested.
+  matrix (hasAuthority rules) without a real Keycloak. Not a gap on the realm/login side any
+  more, though: a real `docker compose up` (done after the initial PR, once Docker was available)
+  found and fixed two live bugs the stub-based suite couldn't reach — the Keycloak healthcheck
+  used `curl`, which the image doesn't have, and the two demo users lacked an `email` attribute,
+  which Keycloak's default User Profile requires for the password grant to succeed (see the
+  phase doc's Design Decisions for both). After both fixes, a real transfer was run end to end
+  through the Gateway with a real Keycloak-issued token (balances moved, `iss`/`realm_access`
+  claims verified, and the `transfer-service` client-credentials token was independently checked
+  against Account/Fraud/Transfer's real authorization rules) — the realm/login/relay path is
+  confirmed working, not just unit/slice-tested. What's still not automated: this proof was
+  manual (curl), not turned into a Testcontainers-Keycloak-backed test — the community module
+  route from the original Testing plan is still the way to make it repeatable.
 - No `Docker` was available in the session that implemented this phase, so every
   Testcontainers-dependent test (`AccountControllerIT`, `AccountSecurityIT`, `TransferSecurityIT`,
   and the five pre-existing full-context ITs touched by the `AuthorizationPropagatingInterceptor`
-  change) was written and compiled but never actually run. Run `./mvnw test` with Docker
-  available, and a full `docker compose up`, before treating this phase as verified end-to-end.
+  change) was written and compiled but never actually run there. Run `./mvnw test` with Docker
+  available to confirm these before treating the phase as fully verified — the manual
+  `docker compose up` pass above exercised the real endpoints but not these specific test classes.
 - A `@WebMvcTest` slice does not reliably include a hand-written `SecurityFilterChain` bean —
   found live via `FraudCheckControllerTest` returning 200 instead of 403 for a token with the
   wrong authority, silently falling back to Spring Boot's own "any authenticated request"

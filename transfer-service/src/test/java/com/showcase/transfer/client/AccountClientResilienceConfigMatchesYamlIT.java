@@ -28,7 +28,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  * YAML file directly, so this also catches a typo'd property name that Spring's binder
  * would otherwise silently ignore.
  */
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
+// Plain @SpringBootTest (MOCK web environment), not webEnvironment = NONE -- see
+// AccountClientFallbackIT's comment for why (HttpSecurity is only registered for a
+// WebApplicationContext, and this phase's SecurityConfig needs it).
+@SpringBootTest
 @Testcontainers
 @Import(StubServiceTokenTestConfig.class)
 class AccountClientResilienceConfigMatchesYamlIT {
