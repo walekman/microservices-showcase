@@ -33,8 +33,18 @@ public class SecurityConfig {
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers("/actuator/health/**").permitAll()
                         .requestMatchers("/swagger-ui/**", "/v3/api-docs/**").permitAll()
+                        // HEAD is matched explicitly alongside each GET matcher: master's blanket
+                        // "/transfers/**" pattern covered every HTTP method, but splitting it by
+                        // method for the account-admin/transfer-admin split (Phase 7b) dropped HEAD
+                        // coverage by omission -- Spring MVC still serves HEAD /transfers and
+                        // HEAD /transfers/{id} from the same handlers as their GET counterparts, so
+                        // without this both fell through to anyRequest().authenticated(), letting
+                        // any valid token bypass the transfer-admin/transfer-executor gate. Found in
+                        // code review.
                         .requestMatchers(HttpMethod.GET, "/transfers").hasAuthority("transfer-admin")
+                        .requestMatchers(HttpMethod.HEAD, "/transfers").hasAuthority("transfer-admin")
                         .requestMatchers(HttpMethod.GET, "/transfers/*").hasAuthority("transfer-executor")
+                        .requestMatchers(HttpMethod.HEAD, "/transfers/*").hasAuthority("transfer-executor")
                         .requestMatchers(HttpMethod.POST, "/transfers").hasAuthority("transfer-executor")
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt

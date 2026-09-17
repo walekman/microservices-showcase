@@ -53,6 +53,27 @@ class GatewaySecurityIT {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
     }
 
+    // Phase 7b's account-admin/transfer-admin (docs/phase-7b-account-ownership-authorization.md)
+    // must clear the Gateway's own gate too -- it independently re-checks authority before
+    // proxying, same as every other route here. Found missing in code review: the Gateway's
+    // matchers weren't updated alongside account-service's/transfer-service's, so an admin
+    // token 403'd here before ever reaching the service meant to authorize it. Asserts
+    // "not FORBIDDEN" rather than a specific success status, since this class runs with no real
+    // downstream to route to (see GatewayRoutingIT for that) -- what matters here is which gate
+    // rejected the request, not what a real proxied response would look like.
+
+    @Test
+    void accountsGetRouteAcceptsAccountAdminAuthority() {
+        ResponseEntity<String> response = requestWithAuthorities("/accounts", HttpMethod.GET, "account-admin");
+        assertThat(response.getStatusCode()).isNotEqualTo(HttpStatus.FORBIDDEN);
+    }
+
+    @Test
+    void transfersListRouteAcceptsTransferAdminAuthority() {
+        ResponseEntity<String> response = requestWithAuthorities("/transfers", HttpMethod.GET, "transfer-admin");
+        assertThat(response.getStatusCode()).isNotEqualTo(HttpStatus.FORBIDDEN);
+    }
+
     @Test
     void accountsPostRouteReturns403WithoutAccountEditorAuthority() {
         ResponseEntity<String> response = requestWithAuthorities("/accounts", HttpMethod.POST, "account-reader");

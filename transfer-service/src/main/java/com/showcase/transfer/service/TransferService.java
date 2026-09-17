@@ -17,6 +17,7 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -159,9 +160,12 @@ public class TransferService {
     // Scoped to the initiator or the destination account's owner -- see
     // docs/phase-7b-account-ownership-authorization.md's Design Decisions for why the
     // destination-owner check is a live call rather than something stored on Transfer.
+    // Objects.equals, not a raw .equals() call: ddl-auto: update cannot add a NOT NULL column
+    // over a table with existing rows, so a pre-Phase-7b row can have a null initiatorId --
+    // Objects.equals denies cleanly instead of NPE-ing into a 500.
     public Transfer getTransfer(UUID id, UUID callerId) {
         Transfer transfer = transferRepository.findById(id).orElseThrow(() -> new TransferNotFoundException(id));
-        if (transfer.getInitiatorId().equals(callerId)) {
+        if (Objects.equals(transfer.getInitiatorId(), callerId)) {
             return transfer;
         }
         if (accountClient.isOwnedByCaller(transfer.getToAccountId())) {

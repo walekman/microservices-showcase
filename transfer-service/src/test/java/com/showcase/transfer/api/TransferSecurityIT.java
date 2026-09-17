@@ -21,6 +21,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.head;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
@@ -71,6 +72,17 @@ class TransferSecurityIT {
                 .andExpect(status().isOk());
     }
 
+    // HEAD is matched explicitly in SecurityConfig alongside every GET matcher here -- master's
+    // blanket "/transfers/**" pattern covered every HTTP method, but splitting it by method for
+    // the transfer-admin/transfer-executor split (Phase 7b) silently dropped HEAD coverage.
+    // Found in code review; this test exists so a future refactor fails loudly instead of
+    // silently re-dropping it.
+    @Test
+    void headTransfersReturns403WithoutTransferAdminAuthority() throws Exception {
+        mockMvc.perform(head("/transfers").with(jwt().authorities(() -> "transfer-executor")))
+                .andExpect(status().isForbidden());
+    }
+
     @Test
     void getTransferReturns401WithNoToken() throws Exception {
         mockMvc.perform(get("/transfers/" + UUID.randomUUID()))
@@ -80,6 +92,12 @@ class TransferSecurityIT {
     @Test
     void getTransferReturns403WithoutTransferExecutorAuthority() throws Exception {
         mockMvc.perform(get("/transfers/" + UUID.randomUUID()).with(jwt().authorities(() -> "account-editor")))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void headTransferReturns403WithoutTransferExecutorAuthority() throws Exception {
+        mockMvc.perform(head("/transfers/" + UUID.randomUUID()).with(jwt().authorities(() -> "account-editor")))
                 .andExpect(status().isForbidden());
     }
 

@@ -92,7 +92,14 @@ public class AccountClient {
                     .onStatus(status -> !status.is2xxSuccessful(), this::unavailable)
                     .toBodilessEntity());
             return true;
-        } catch (AccountRejectedException notOwned) {
+        } catch (AccountRejectedException rejected) {
+            // Only Account's own reused-404 ownership-denial code resolves to false. Anything
+            // else (e.g. an "UNKNOWN" code from a malformed/proxy-mangled error body) is a
+            // genuine anomaly, not a normal "not yours" answer, and must not be silently read
+            // as a denial -- rethrown instead. Found in code review.
+            if (!"ACCOUNT_NOT_FOUND".equals(rejected.getCode())) {
+                throw rejected;
+            }
             return false;
         }
     }

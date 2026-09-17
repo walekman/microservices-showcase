@@ -12,7 +12,11 @@ First time only:
 
 If you ran an earlier version of this stack, destroy the Postgres volume first — the
 second database is created by an init script that only runs on an empty data directory
-(this discards any locally created accounts):
+(this discards any locally created accounts). This also matters if you last ran the stack
+before Phase 7b (`docs/phase-7b-account-ownership-authorization.md`): Hibernate can't add
+the new `ownerId`/`initiatorId` columns as `NOT NULL` over existing rows, so accounts/transfers
+created before that phase are left with a null value there and simply become permanently
+inaccessible (a clean 404, not an error, but confusing if you don't know why):
 
     docker compose down -v
 

@@ -37,8 +37,13 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.HEAD, "/accounts").hasAuthority("account-admin")
                         // Existence-only, no ownership -- see AccountController.accountExists. Placed
                         // ahead of the "/accounts/*" single-segment matcher below for readability, though
-                        // the two patterns don't actually overlap (different segment counts).
+                        // the two patterns don't actually overlap (different segment counts). HEAD is
+                        // matched explicitly for the same reason as HEAD /accounts/{id} below -- Spring
+                        // MVC serves it from the same @GetMapping handler, so without this a HEAD request
+                        // fell through to anyRequest().authenticated() and any valid token, not just
+                        // account-reader, could probe existence. Found in code review.
                         .requestMatchers(HttpMethod.GET, "/accounts/exists/*").hasAuthority("account-reader")
+                        .requestMatchers(HttpMethod.HEAD, "/accounts/exists/*").hasAuthority("account-reader")
                         // HEAD is matched explicitly, not just GET: requestMatchers(GET, ...) does not
                         // match a HEAD request, which Spring MVC still serves from the GET handler --
                         // without this, HEAD /accounts/{id} fell through to anyRequest().authenticated()

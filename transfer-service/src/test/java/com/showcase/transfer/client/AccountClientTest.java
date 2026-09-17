@@ -89,6 +89,23 @@ class AccountClientTest {
     }
 
     @Test
+    void isOwnedByCallerRethrowsARejectionWithAnUnrecognisedCode() {
+        // A malformed/proxy-mangled error body reads as AccountRejectedException("UNKNOWN", ...)
+        // (see readProblem()) -- that must not be silently read as "not owned" the way a genuine
+        // ACCOUNT_NOT_FOUND is. Found in code review.
+        server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID))
+                .andRespond(withStatus(HttpStatus.BAD_REQUEST)
+                        .contentType(MediaType.TEXT_HTML)
+                        .body("<html>gateway says no</html>"));
+
+        assertThatThrownBy(() -> accountClient.isOwnedByCaller(ACCOUNT_ID))
+                .isInstanceOf(AccountRejectedException.class)
+                .satisfies(thrown -> assertThat(((AccountRejectedException) thrown).getCode())
+                        .isEqualTo("UNKNOWN"));
+        server.verify();
+    }
+
+    @Test
     void isOwnedByCallerPropagatesUnavailableOnServerError() {
         // Unlike ACCOUNT_NOT_FOUND above, "Account is unreachable" must not resolve to false --
         // that would answer "not yours" when the real answer is "unknown".

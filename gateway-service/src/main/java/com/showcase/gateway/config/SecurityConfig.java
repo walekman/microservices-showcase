@@ -29,8 +29,17 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers("/actuator/health/**").permitAll()
-                        .requestMatchers("/transfers/**").hasAuthority("transfer-executor")
-                        .requestMatchers(HttpMethod.GET, "/accounts", "/accounts/*").hasAuthority("account-reader")
+                        // hasAnyAuthority, not hasAuthority: this is the coarse first check (see
+                        // class javadoc), not the precise one -- GET /transfers (list) needs
+                        // transfer-admin downstream, POST /transfers and GET /transfers/{id}
+                        // need transfer-executor, but the Gateway doesn't split by method/path
+                        // here, so it admits either and lets transfer-service's own SecurityConfig
+                        // enforce the exact split. Without account-admin/transfer-admin here, a
+                        // Phase 7b admin token would 403 at the Gateway before ever reaching the
+                        // service that's supposed to authorize it -- found in code review.
+                        .requestMatchers("/transfers/**").hasAnyAuthority("transfer-executor", "transfer-admin")
+                        .requestMatchers(HttpMethod.GET, "/accounts", "/accounts/*")
+                        .hasAnyAuthority("account-reader", "account-admin")
                         .requestMatchers(HttpMethod.POST, "/accounts").hasAuthority("account-editor")
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt

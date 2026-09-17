@@ -25,6 +25,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.head;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -62,6 +63,18 @@ class AccountSecurityIT {
     @Test
     void getAccountsReturns403WithoutAccountAdminAuthority() throws Exception {
         mockMvc.perform(get("/accounts").with(jwt().authorities(() -> "account-reader")))
+                .andExpect(status().isForbidden());
+    }
+
+    // HEAD is matched explicitly in SecurityConfig alongside every GET matcher in this class --
+    // Spring MVC serves HEAD from the same handler as its GET counterpart, so a missing HEAD
+    // matcher lets any valid token bypass the role gate a moment before this comment was
+    // written. Found in code review (twice now -- see SecurityConfig's own comments); these
+    // tests exist so a future refactor that re-drops HEAD coverage fails loudly instead of
+    // silently.
+    @Test
+    void headAccountsReturns403WithoutAccountAdminAuthority() throws Exception {
+        mockMvc.perform(head("/accounts").with(jwt().authorities(() -> "account-reader")))
                 .andExpect(status().isForbidden());
     }
 
@@ -117,6 +130,12 @@ class AccountSecurityIT {
     }
 
     @Test
+    void headAccountReturns403WithoutAccountReaderAuthority() throws Exception {
+        mockMvc.perform(head("/accounts/" + UUID.randomUUID()).with(jwt().authorities(() -> "account-editor")))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     void getAccountPassesTheCallersSubjectToTheService() throws Exception {
         UUID id = UUID.randomUUID();
         UUID subject = UUID.randomUUID();
@@ -156,6 +175,12 @@ class AccountSecurityIT {
     @Test
     void accountExistsReturns403WithoutAccountReaderAuthority() throws Exception {
         mockMvc.perform(get("/accounts/exists/" + UUID.randomUUID()).with(jwt().authorities(() -> "account-editor")))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void headAccountExistsReturns403WithoutAccountReaderAuthority() throws Exception {
+        mockMvc.perform(head("/accounts/exists/" + UUID.randomUUID()).with(jwt().authorities(() -> "account-editor")))
                 .andExpect(status().isForbidden());
     }
 

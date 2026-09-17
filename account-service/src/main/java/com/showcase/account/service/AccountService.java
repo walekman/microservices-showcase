@@ -12,6 +12,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -38,7 +39,7 @@ public class AccountService {
     public Account getAccount(UUID id, UUID callerId) {
         Account account = accountRepository.findById(id)
                 .orElseThrow(() -> new AccountNotFoundException(id));
-        if (!account.getOwnerId().equals(callerId)) {
+        if (!Objects.equals(account.getOwnerId(), callerId)) {
             throw new AccountNotFoundException(id);
         }
         return account;
@@ -81,12 +82,16 @@ public class AccountService {
         return apply(id, amount, idempotencyKey, AccountOperationType.CREDIT);
     }
 
+    // Objects.equals, not account.getOwnerId().equals(callerId): ddl-auto: update cannot add a
+    // NOT NULL column over a table with existing rows, so a pre-Phase-7b row can have a null
+    // ownerId. A raw .equals() call on that null would NPE into a 500; Objects.equals denies
+    // cleanly (404) instead, same as any other non-owning caller. Found in code review.
     private void requireOwnership(UUID id, UUID callerId, boolean serviceCaller) {
         if (serviceCaller) {
             return;
         }
         Account account = accountRepository.findById(id).orElseThrow(() -> new AccountNotFoundException(id));
-        if (!account.getOwnerId().equals(callerId)) {
+        if (!Objects.equals(account.getOwnerId(), callerId)) {
             throw new AccountNotFoundException(id);
         }
     }

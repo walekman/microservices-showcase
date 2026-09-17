@@ -214,6 +214,20 @@ class TransferControllerTest {
     }
 
     @Test
+    void returns503WhenAccountIsUnavailableDuringTheOwnershipCheck() throws Exception {
+        // GET /transfers/{id}'s destination-owner check (AccountClient.isOwnedByCaller) can
+        // propagate AccountServiceUnavailableException -- this must map to the project's usual
+        // 503, not fall through to a generic 500. Found in code review.
+        UUID id = UUID.randomUUID();
+        when(transferService.getTransfer(eq(id), any()))
+                .thenThrow(new com.showcase.transfer.client.AccountServiceUnavailableException("read timed out"));
+
+        mockMvc.perform(get("/transfers/" + id).with(transferExecutor()))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code").value("ACCOUNT_SERVICE_UNAVAILABLE"));
+    }
+
+    @Test
     void returnsTheTransferById() throws Exception {
         Transfer transfer = pendingTransfer();
         transfer.markCompleted();
