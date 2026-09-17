@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this phase task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Wire tracing, metrics, and structured logging across all five services so the system is observable the way the design doc describes: one continuous trace spanning Gateway → Transfer → Account/Fraud → (async hop via Kafka headers) → Notification, business + JVM/HTTP metrics on Grafana dashboards, and JSON logs carrying trace/span context. Full `docker compose up` bringing up every service already works (done incidentally during phases 5–7) — this phase adds the observability stack (OTel Collector, Tempo, Prometheus, Grafana) on top of it. Two items in the roadmap's original phase-8 forecast are explicitly not part of this phase: the end-to-end saga test module (split out to **Phase 8b**, to be brainstormed separately) and Spring Cloud Contract tests (dropped from the roadmap entirely, not deferred).
+**Goal:** Wire tracing, metrics, and structured logging across all five services so the system is observable the way the design doc describes: one continuous trace spanning Gateway → Transfer → Account/Fraud → (async hop via Kafka headers) → Notification, business + JVM/HTTP metrics on Grafana dashboards, and JSON logs carrying trace/span context. Full `docker compose up` bringing up every service already works (done incidentally during phases 5–7) — this phase adds the observability stack (OTel Collector, Tempo, Prometheus, Grafana) on top of it. Two items in the roadmap's original phase-8 forecast are explicitly not part of this phase: the end-to-end saga test module (split out to **Phase 9**, to be brainstormed separately) and Spring Cloud Contract tests (dropped from the roadmap entirely, not deferred).
 
 **Architecture:** Every service gets the Micrometer Tracing → OTel bridge (REST calls propagate W3C trace context automatically; the Kafka hop propagates it via Spring Kafka's observation instrumentation) exporting OTLP to a new `otel-collector` container, which forwards to a new `tempo` container — Grafana's native trace backend, chosen over Jaeger so traces and metrics dashboards live in one UI. Metrics take a separate, simpler path: each service exposes `/actuator/prometheus` directly, scraped by a new `prometheus` container — no detour through the collector. A new `grafana` container has both data sources provisioned on startup, plus a JVM/HTTP dashboard and one hand-authored dashboard for this project's business metrics. Structured JSON logging uses Spring Boot's native support (added in 3.4), which requires bumping the project off 3.3.8.
 
@@ -16,7 +16,7 @@
 - Spring MVC (blocking), not WebFlux; virtual threads unchanged by this phase.
 - No k8s/service mesh; local deployment stays Docker Compose only, single instance per service.
 - No centralized log aggregation (ELK/Loki) — explicitly out of scope per the design doc. Logs stay in container stdout.
-- Do not build the end-to-end saga test module in this phase — that's Phase 8b, brainstormed separately.
+- Do not build the end-to-end saga test module in this phase — that's Phase 9, brainstormed separately.
 - Never commit directly to `master`; work happens on `feature/phase-8-task-<N>-*` branches, one PR per task, stop after each. Subagent review is manual, on request — not automatic. (CLAUDE.md)
 - Default to `haiku` for implementer/routine-review subagents; use a more capable model for the final whole-branch review. This phase touches every service's dependency tree and pom (the Boot bump) plus every service's runtime config — a plausible-looking but wrong OTLP endpoint or a silently-dropped metric is the kind of defect that only a careful whole-branch pass catches, same category as phase 6's Boot-bump review. Always name the model explicitly. (CLAUDE.md)
 
@@ -83,7 +83,7 @@ Each task is its own branch/PR off the current `master`, per this project's work
 3. **Metrics**: Prometheus dependency + config on all 5 services, business metrics at their source points, `prometheus` container wired into Compose.
 4. **Structured JSON logging**: `logging.structured.format.console=logstash` on all 5 services.
 5. **Grafana**: container + provisioned datasources + dashboards wired into Compose.
-6. **Docs sync**: roadmap.md (split row 8 into 8/8b, this phase's actual scope) and design.md (resolve "Jaeger (or Grafana Tempo)" to Tempo, drop the Spring Cloud Contract line entirely) — same pattern as every prior phase's final wiring/docs-sync commit.
+6. **Docs sync**: roadmap.md (row 8 narrows to this phase's actual scope, new row 9 added for the split-off e2e test module) and design.md (resolve "Jaeger (or Grafana Tempo)" to Tempo, drop the Spring Cloud Contract line entirely) — same pattern as every prior phase's final wiring/docs-sync commit.
 
 ## Testing
 
@@ -109,7 +109,7 @@ Each task is its own branch/PR off the current `master`, per this project's work
 
 | Deferred | Why not now | Lands in |
 |---|---|---|
-| End-to-end saga test module (Testcontainers-driven, real services through the Gateway) | Independent concern from runtime observability infra — different kind of work, own design questions (which scenarios, how services get booted for the test) | Phase 8b (not yet brainstormed) |
+| End-to-end saga test module (Testcontainers-driven, real services through the Gateway) | Independent concern from runtime observability infra — different kind of work, own design questions (which scenarios, how services get booted for the test) | Phase 9 (not yet brainstormed) |
 | Boot 4.x migration (Spring Framework 7 / Jakarta EE 11 / Jackson 3) | 3.5.16 was a deliberate stopgap despite being past OSS EOL — see Design Decisions. A real gap, not deferred lightly: this project is meant to demonstrate modern practice, and it's now pinned to a dead branch | Not yet scheduled — revisit as its own phase |
 | Centralized log aggregation (ELK/Loki) | Explicitly out of scope per the design doc §5 | Not currently planned |
 | Alerting (Prometheus Alertmanager / Grafana alert rules) | Not asked for; the design doc's observability section describes dashboards and traces, not alerting | Not currently planned |
@@ -117,5 +117,5 @@ Each task is its own branch/PR off the current `master`, per this project's work
 
 ## Roadmap Changes
 
-- `docs/roadmap.md` row 8 splits into two rows at implementation-sync time (Task 6): row 8 links to this document with its actual scope (tracing/metrics/logging, no contract tests, no e2e module); a new row 8b is added, "Not started," forecasting the end-to-end saga test module.
+- `docs/roadmap.md` row 8 narrows at implementation-sync time (Task 6) to link to this document with its actual scope (tracing/metrics/logging, no contract tests, no e2e module); a new row 9 is added, "Not started," forecasting the end-to-end saga test module.
 - `docs/microservices-showcase-design.md` §5 gets "Jaeger (or Grafana Tempo)" resolved to "Grafana Tempo"; the Spring Cloud Contract line (§8) is removed entirely, not marked deferred.
