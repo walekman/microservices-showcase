@@ -1,10 +1,13 @@
 package com.showcase.account.api;
 
+import com.showcase.account.support.TestSecurityConfig;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -31,6 +34,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Testcontainers
+@Import(TestSecurityConfig.class)
 class AccountControllerIT {
 
     @Container
@@ -39,6 +43,11 @@ class AccountControllerIT {
 
     @Autowired
     private TestRestTemplate restTemplate;
+
+    @BeforeEach
+    void authenticateAsCustomer() {
+        TestSecurityConfig.authenticateAsCustomer(restTemplate);
+    }
 
     @Test
     void createsAndFetchesAnAccount() {

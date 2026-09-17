@@ -20,11 +20,33 @@ Then:
 
     docker compose up --build
 
-This starts Postgres, Account Service (8081), Transfer Service (8082), Fraud Service (8084), Kafka, Notification Service (8083), and the API Gateway (8080).
+This starts Postgres, Account Service (8081), Transfer Service (8082), Fraud Service (8084), Kafka, Notification Service (8083), the API Gateway (8080), and Keycloak (8180).
+
+## Authentication (Keycloak)
+
+Every endpoint except `/actuator/health` and Swagger's own pages now needs a bearer JWT
+(see `docs/phase-7-auth-keycloak-jwt.md`). Keycloak comes up pre-configured with a `showcase`
+realm — two demo users, `ada` and `bob` (password `password` for both), each with the
+`customer` role.
+
+Get a token (password grant — fine for this demo, since there's no login UI yet):
+
+    curl -X POST http://localhost:8180/realms/showcase/protocol/openid-connect/token \
+      -H "Content-Type: application/x-www-form-urlencoded" \
+      -d "grant_type=password&client_id=showcase-ui&username=ada&password=password" \
+      | jq -r .access_token
+
+Export it once and append `-H "Authorization: Bearer $TOKEN"` to every request below:
+
+    export TOKEN=$(curl -s -X POST http://localhost:8180/realms/showcase/protocol/openid-connect/token \
+      -H "Content-Type: application/x-www-form-urlencoded" \
+      -d "grant_type=password&client_id=showcase-ui&username=ada&password=password" \
+      | jq -r .access_token)
 
 ## Try it (Swagger UI)
 
-All three APIs are browsable and callable straight from a browser:
+All three APIs are browsable and callable straight from a browser. Each has an **Authorize**
+button (top right) — paste in a token obtained as above to make "Try it out" calls succeed:
 
 - Account Service — http://localhost:8081/swagger-ui.html
 - Transfer Service — http://localhost:8082/swagger-ui.html
@@ -38,13 +60,22 @@ A single entry point at `http://localhost:8080` routes to the two client-facing 
 - `POST /accounts`, `GET /accounts`, `GET /accounts/{id}` → Account Service
 
 Account's `/accounts/{id}/debit` and `/accounts/{id}/credit` are intentionally **not** routed
-— they're internal saga calls Transfer Service makes directly on the Docker network, and stay
-unreachable from outside it. Every other example in this README still targets each service's
-own port directly (8081/8082/8083/8084); the Gateway doesn't replace those, it adds a second,
-narrower way in. There is no authentication yet (see `docs/roadmap.md` Phase 7) — anyone who
-can reach port 8080 can reach the routed paths, same as reaching 8081/8082 directly today.
+— they're internal saga calls Transfer Service makes directly on the Docker network. That keeps
+them unreachable *through the Gateway*, but **not unreachable outright**: Account's own port
+(8081) is published for local dev, and any `customer` token can call them directly, since the
+same token has to carry `account-editor` for Transfer's saga to relay it on the caller's behalf.
+This is a known, deliberate gap in this phase — not a bypass of a bug, a consequence of the
+token-relay design — see `docs/phase-7-auth-keycloak-jwt.md`'s Known Gaps and Phase 7b
+(ownership authorization) in `docs/roadmap.md`. Every other example in this README still targets
+each service's own port directly (8081/8082/8083/8084); the Gateway doesn't replace those, it
+adds a second, narrower way in. Every routed path requires a bearer JWT with the matching
+permission, same as calling each service directly (see "Authentication" above) — the Gateway and
+the service behind it each independently check the token.
 
 ## Try it (curl)
+
+Every command below needs `-H "Authorization: Bearer $TOKEN"` added (see "Authentication" above) —
+omitted here to keep the examples focused on each endpoint's own request shape.
 
     # Create an account
     curl -X POST http://localhost:8081/accounts \

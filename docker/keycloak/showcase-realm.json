@@ -1,0 +1,94 @@
+{
+  "realm": "showcase",
+  "enabled": true,
+  "sslRequired": "none",
+  "roles": {
+    "realm": [
+      {
+        "name": "transfer-executor",
+        "description": "Can initiate and view transfers"
+      },
+      {
+        "name": "account-reader",
+        "description": "Can list/get accounts"
+      },
+      {
+        "name": "account-editor",
+        "description": "Can create accounts and move money (debit/credit)"
+      },
+      {
+        "name": "fraud-checker",
+        "description": "Can invoke the fraud-check endpoint"
+      },
+      {
+        "name": "customer",
+        "description": "Composite role for a real end user: bundles every capability a human caller needs",
+        "composite": true,
+        "composites": {
+          "realm": ["transfer-executor", "account-reader", "account-editor", "fraud-checker"]
+        }
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "showcase-ui",
+      "name": "Showcase UI",
+      "description": "Represents any human caller: curl/Postman today, a future login UI later",
+      "enabled": true,
+      "publicClient": true,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["http://localhost:*", "http://localhost:3000/*"],
+      "webOrigins": ["*"]
+    },
+    {
+      "clientId": "transfer-service",
+      "name": "Transfer Service",
+      "description": "Transfer Service's own machine identity, used only when there is no inbound user request to relay a token from",
+      "enabled": true,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "secret": "transfer-service-secret"
+    }
+  ],
+  "users": [
+    {
+      "username": "ada",
+      "enabled": true,
+      "email": "ada@showcase.example",
+      "emailVerified": true,
+      "firstName": "Ada",
+      "lastName": "Lovelace",
+      "credentials": [
+        { "type": "password", "value": "password", "temporary": false }
+      ],
+      "realmRoles": ["customer"]
+    },
+    {
+      "username": "bob",
+      "enabled": true,
+      "email": "bob@showcase.example",
+      "emailVerified": true,
+      "firstName": "Bob",
+      "lastName": "Builder",
+      "credentials": [
+        { "type": "password", "value": "password", "temporary": false }
+      ],
+      "realmRoles": ["customer"]
+    },
+    {
+      "username": "service-account-transfer-service",
+      "enabled": true,
+      "serviceAccountClientId": "transfer-service",
+      "realmRoles": ["account-editor", "fraud-checker"]
+    }
+  ]
+}

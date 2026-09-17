@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Showcase — Get a Token</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f5f5f7;
+    --panel: #ffffff;
+    --border: #d7d7dc;
+    --text: #1b1b1f;
+    --muted: #6b6b76;
+    --accent: #3457d5;
+    --accent-text: #ffffff;
+    --error: #c0392b;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16161a;
+      --panel: #1f1f24;
+      --border: #34343c;
+      --text: #eceef1;
+      --muted: #9a9aa5;
+      --accent: #6a89ff;
+      --accent-text: #10101a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 32px 16px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex;
+    justify-content: center;
+  }
+  main { width: 100%; max-width: 640px; }
+  h1 { font-size: 1.3rem; margin: 0 0 4px; }
+  p.sub { color: var(--muted); margin: 0 0 24px; font-size: 0.9rem; }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  label { display: block; font-size: 0.85rem; color: var(--muted); margin: 12px 0 4px; }
+  label:first-child { margin-top: 0; }
+  input {
+    width: 100%;
+    padding: 9px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+    font-size: 0.95rem;
+  }
+  details { margin-top: 14px; }
+  details summary { cursor: pointer; color: var(--muted); font-size: 0.85rem; }
+  button {
+    margin-top: 18px;
+    width: 100%;
+    padding: 11px;
+    border: none;
+    border-radius: 8px;
+    background: var(--accent);
+    color: var(--accent-text);
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.6; cursor: default; }
+  .row { display: flex; gap: 10px; align-items: center; }
+  .row textarea { flex: 1; }
+  textarea {
+    width: 100%;
+    min-height: 90px;
+    padding: 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    resize: vertical;
+  }
+  .copy-btn {
+    margin-top: 0;
+    width: auto;
+    padding: 8px 14px;
+    flex-shrink: 0;
+  }
+  .error {
+    color: var(--error);
+    font-size: 0.9rem;
+    margin-top: 12px;
+    white-space: pre-wrap;
+  }
+  .claims {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    white-space: pre-wrap;
+    color: var(--muted);
+  }
+  .hidden { display: none; }
+  .exp-note { font-size: 0.8rem; color: var(--muted); margin-top: 6px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Showcase — Get a Token</h1>
+  <p class="sub">Local dev helper. Talks directly to Keycloak's password grant; paste the result into Swagger UI's Authorize button or curl's -H Authorization header.</p>
+
+  <div class="panel">
+    <label for="username">Username</label>
+    <input id="username" placeholder="ada" autocomplete="username">
+
+    <label for="password">Password</label>
+    <input id="password" type="password" placeholder="password" autocomplete="current-password">
+
+    <details>
+      <summary>Realm / client settings</summary>
+      <label for="tokenUrl">Token endpoint</label>
+      <input id="tokenUrl" value="http://localhost:8180/realms/showcase/protocol/openid-connect/token">
+      <label for="clientId">Client ID</label>
+      <input id="clientId" value="showcase-ui">
+    </details>
+
+    <button id="submit">Get Token</button>
+    <div id="error" class="error hidden"></div>
+  </div>
+
+  <div id="result" class="panel hidden">
+    <label>Access token</label>
+    <div class="row">
+      <textarea id="token" readonly></textarea>
+      <button id="copy" class="copy-btn">Copy</button>
+    </div>
+    <div id="expNote" class="exp-note"></div>
+
+    <label>Decoded claims</label>
+    <div id="claims" class="claims"></div>
+  </div>
+</main>
+
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const submitBtn = $('submit');
+  const errorBox = $('error');
+  const resultBox = $('result');
+  const tokenBox = $('token');
+  const claimsBox = $('claims');
+  const expNote = $('expNote');
+  const copyBtn = $('copy');
+
+  function showError(message) {
+    errorBox.textContent = message;
+    errorBox.classList.remove('hidden');
+    resultBox.classList.add('hidden');
+  }
+
+  function decodeJwtPayload(jwt) {
+    const payload = jwt.split('.')[1];
+    const padded = payload.replace(/-/g, '+').replace(/_/g, '/')
+      + '='.repeat((4 - (payload.length % 4)) % 4);
+    return JSON.parse(atob(padded));
+  }
+
+  async function getToken() {
+    errorBox.classList.add('hidden');
+    resultBox.classList.add('hidden');
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Requesting…';
+
+    const tokenUrl = $('tokenUrl').value.trim();
+    const clientId = $('clientId').value.trim();
+    const username = $('username').value;
+    const password = $('password').value;
+
+    try {
+      const body = new URLSearchParams({
+        grant_type: 'password',
+        client_id: clientId,
+        username: username,
+        password: password
+      });
+
+      const response = await fetch(tokenUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString()
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error((data.error_description || data.error || 'Request failed') + ` (HTTP ${response.status})`);
+      }
+
+      tokenBox.value = data.access_token;
+      const claims = decodeJwtPayload(data.access_token);
+      const roles = (claims.realm_access && claims.realm_access.roles) || [];
+      claimsBox.textContent =
+        `sub: ${claims.sub}\n` +
+        `preferred_username: ${claims.preferred_username || '(none)'}\n` +
+        `roles: ${roles.join(', ') || '(none)'}\n` +
+        `iss: ${claims.iss}`;
+      expNote.textContent = `Expires in ${data.expires_in}s (${new Date(claims.exp * 1000).toLocaleTimeString()})`;
+      resultBox.classList.remove('hidden');
+    } catch (err) {
+      if (err instanceof TypeError) {
+        showError('Network/CORS error reaching the token endpoint. If you opened this file directly '
+          + '(file://), try serving it instead: run "python3 -m http.server 8765" in this folder and '
+          + 'open http://localhost:8765/get-token.html.\n\n' + err.message);
+      } else {
+        showError(err.message);
+      }
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Get Token';
+    }
+  }
+
+  submitBtn.addEventListener('click', getToken);
+  [$('username'), $('password')].forEach((el) =>
+    el.addEventListener('keydown', (e) => { if (e.key === 'Enter') getToken(); }));
+
+  copyBtn.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(tokenBox.value);
+      copyBtn.textContent = 'Copied!';
+    } catch {
+      tokenBox.select();
+      document.execCommand('copy');
+      copyBtn.textContent = 'Copied!';
+    }
+    setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
+  });
+})();
+</script>
+</body>
+</html>

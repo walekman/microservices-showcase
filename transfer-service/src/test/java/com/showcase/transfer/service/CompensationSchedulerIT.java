@@ -6,12 +6,14 @@ import com.showcase.transfer.domain.Transfer;
 import com.showcase.transfer.domain.TransferFailureCode;
 import com.showcase.transfer.domain.TransferRepository;
 import com.showcase.transfer.domain.TransferStatus;
+import com.showcase.transfer.client.StubServiceTokenTestConfig;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.context.annotation.Import;
 import org.springframework.data.domain.Limit;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -41,8 +43,12 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>Covers a Phase 3 final-review test-coverage gap (docs/roadmap.md): no test previously
  * exercised a real scheduled CompensationScheduler execution end-to-end.
  */
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
+// Plain @SpringBootTest (MOCK web environment), not webEnvironment = NONE -- see
+// AccountClientFallbackIT's comment for why (HttpSecurity is only registered for a
+// WebApplicationContext, and this phase's SecurityConfig needs it).
+@SpringBootTest
 @Testcontainers
+@Import(StubServiceTokenTestConfig.class)
 class CompensationSchedulerIT {
 
     @Container

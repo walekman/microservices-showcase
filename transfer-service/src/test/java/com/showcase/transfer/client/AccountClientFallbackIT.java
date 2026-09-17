@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.context.annotation.Import;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -39,8 +40,15 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * broke CompensationScheduler's compensateSource() branch: it never fired, so a stranded
  * debit was never reversed -- the scheduler just logged "will retry next sweep" forever.
  */
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
+// Plain @SpringBootTest (MOCK web environment, the default), not webEnvironment = NONE: found
+// live once this phase added a SecurityConfig -- Spring Security's HttpSecurity bean is only
+// registered for a WebApplicationContext, so NONE (no web context at all) made
+// SecurityConfig.securityFilterChain(HttpSecurity, ...) fail to construct with
+// "No qualifying bean of type HttpSecurity". MOCK doesn't bind a real port either, so this
+// test's actual behavior (calling AccountClient's methods directly) is unaffected.
+@SpringBootTest
 @Testcontainers
+@Import(StubServiceTokenTestConfig.class)
 class AccountClientFallbackIT {
 
     @Container

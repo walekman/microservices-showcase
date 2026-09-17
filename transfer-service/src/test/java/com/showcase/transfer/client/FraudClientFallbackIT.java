@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.context.annotation.Import;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -27,8 +28,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * CompensationSchedulerTest mock FraudClient entirely, so neither exercises the fallback
  * passthrough that a real business rejection depends on.
  */
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
+// Plain @SpringBootTest (MOCK web environment), not webEnvironment = NONE -- see
+// AccountClientFallbackIT's comment for why (HttpSecurity is only registered for a
+// WebApplicationContext, and this phase's SecurityConfig needs it).
+@SpringBootTest
 @Testcontainers
+@Import(StubServiceTokenTestConfig.class)
 class FraudClientFallbackIT {
 
     @Container

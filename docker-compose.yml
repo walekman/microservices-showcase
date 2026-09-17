@@ -29,10 +29,14 @@ services:
       DB_NAME: account
       DB_USER: account_service
       DB_PASSWORD: ${ACCOUNT_DB_PASSWORD}
+      KEYCLOAK_JWK_SET_URI: http://keycloak:8080/realms/showcase/protocol/openid-connect/certs
+      KEYCLOAK_ISSUER_URI: http://localhost:8180/realms/showcase
     ports:
       - "8081:8081"
     depends_on:
       postgres:
+        condition: service_healthy
+      keycloak:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8081/actuator/health"]
@@ -55,6 +59,10 @@ services:
       ACCOUNT_SERVICE_URL: http://account-service:8081
       FRAUD_SERVICE_URL: http://fraud-service:8084
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KEYCLOAK_JWK_SET_URI: http://keycloak:8080/realms/showcase/protocol/openid-connect/certs
+      KEYCLOAK_ISSUER_URI: http://localhost:8180/realms/showcase
+      KEYCLOAK_TOKEN_URI: http://keycloak:8080/realms/showcase/protocol/openid-connect/token
+      TRANSFER_SERVICE_CLIENT_SECRET: ${TRANSFER_SERVICE_CLIENT_SECRET:-transfer-service-secret}
     ports:
       - "8082:8082"
     depends_on:
@@ -65,6 +73,8 @@ services:
       fraud-service:
         condition: service_healthy
       kafka:
+        condition: service_healthy
+      keycloak:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8082/actuator/health"]
@@ -123,8 +133,13 @@ services:
     container_name: showcase-fraud-service
     environment:
       FRAUD_BLOCKLIST_ACCOUNT_IDS: ${FRAUD_BLOCKLIST_ACCOUNT_IDS:-}
+      KEYCLOAK_JWK_SET_URI: http://keycloak:8080/realms/showcase/protocol/openid-connect/certs
+      KEYCLOAK_ISSUER_URI: http://localhost:8180/realms/showcase
     ports:
       - "8084:8084"
+    depends_on:
+      keycloak:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8084/actuator/health"]
       interval: 10s
@@ -140,6 +155,8 @@ services:
     environment:
       ACCOUNT_SERVICE_URL: http://account-service:8081
       TRANSFER_SERVICE_URL: http://transfer-service:8082
+      KEYCLOAK_JWK_SET_URI: http://keycloak:8080/realms/showcase/protocol/openid-connect/certs
+      KEYCLOAK_ISSUER_URI: http://localhost:8180/realms/showcase
     ports:
       - "8080:8080"
     depends_on:
@@ -147,11 +164,40 @@ services:
         condition: service_healthy
       transfer-service:
         condition: service_healthy
+      keycloak:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 40s
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: showcase-keycloak
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_HTTP_ENABLED: "true"
+      # Keycloak 26 defaults to "hostname v2": a single URL, not the v1
+      # hostname/hostname-port/hostname-strict-https trio (verified live -- the v1 options
+      # produced a "still in use" deprecation warning on startup even though they worked).
+      KC_HOSTNAME: http://localhost:8180
+    ports:
+      - "8180:8080"
+    volumes:
+      - ./docker/keycloak/showcase-realm.json:/opt/keycloak/data/import/showcase-realm.json:ro
+    healthcheck:
+      # Verified live: this image (quay.io/keycloak/keycloak, UBI9-based) has no curl or wget,
+      # only bash -- a bash /dev/tcp check is the standard workaround. Keycloak doesn't open
+      # its HTTP port until realm import has already finished, so "the port is open" is a
+      # reliable enough proxy for "the realm import finished", not just "the process is up".
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/8080' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
       start_period: 40s
 
 volumes:

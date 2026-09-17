@@ -110,6 +110,36 @@ class AccountClientTest {
     }
 
     @Test
+    void debitThrowsUnavailableNotRejectedOn401() {
+        // A 401/403 is Spring Security denying the request before it ever reaches Account's
+        // own RFC 7807 handler -- empty body, no content-type -- so without this check it
+        // would fall through readProblem() into "UNKNOWN" and be treated as a definitive
+        // rejection, exactly like the CONCURRENT_MODIFICATION case above. CompensationScheduler
+        // would then stamp a transfer FAILED/COMPENSATED on the strength of a credential
+        // problem (e.g. a Keycloak restart rotating signing keys while a cached token is still
+        // in use), not a real business answer -- even if the debit it's reasoning about
+        // actually landed. Found in code review, not written test-first.
+        server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID + "/debit"))
+                .andRespond(withStatus(HttpStatus.UNAUTHORIZED));
+
+        assertThatThrownBy(() -> accountClient.debit(ACCOUNT_ID, new BigDecimal("40.00"), "transfer-1:debit"))
+                .isInstanceOf(AccountServiceUnavailableException.class)
+                .isNotInstanceOf(AccountRejectedException.class);
+        server.verify();
+    }
+
+    @Test
+    void debitThrowsUnavailableNotRejectedOn403() {
+        server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID + "/debit"))
+                .andRespond(withStatus(HttpStatus.FORBIDDEN));
+
+        assertThatThrownBy(() -> accountClient.debit(ACCOUNT_ID, new BigDecimal("40.00"), "transfer-1:debit"))
+                .isInstanceOf(AccountServiceUnavailableException.class)
+                .isNotInstanceOf(AccountRejectedException.class);
+        server.verify();
+    }
+
+    @Test
     void debitStillThrowsRejectedOnIdempotencyKeyConflict() {
         // A DIFFERENT 409 code from the same status: reusing a key against a different
         // account/amount/type is a genuine, permanent rejection, not a transient race --
