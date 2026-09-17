@@ -31,6 +31,7 @@ services:
       DB_PASSWORD: ${ACCOUNT_DB_PASSWORD}
       KEYCLOAK_JWK_SET_URI: http://keycloak:8080/realms/showcase/protocol/openid-connect/certs
       KEYCLOAK_ISSUER_URI: http://localhost:8180/realms/showcase
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
     ports:
       - "8081:8081"
     depends_on:
@@ -63,6 +64,7 @@ services:
       KEYCLOAK_ISSUER_URI: http://localhost:8180/realms/showcase
       KEYCLOAK_TOKEN_URI: http://keycloak:8080/realms/showcase/protocol/openid-connect/token
       TRANSFER_SERVICE_CLIENT_SECRET: ${TRANSFER_SERVICE_CLIENT_SECRET:-transfer-service-secret}
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
     ports:
       - "8082:8082"
     depends_on:
@@ -114,6 +116,7 @@ services:
     container_name: showcase-notification-service
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
     ports:
       - "8083:8083"
     depends_on:
@@ -135,6 +138,7 @@ services:
       FRAUD_BLOCKLIST_ACCOUNT_IDS: ${FRAUD_BLOCKLIST_ACCOUNT_IDS:-}
       KEYCLOAK_JWK_SET_URI: http://keycloak:8080/realms/showcase/protocol/openid-connect/certs
       KEYCLOAK_ISSUER_URI: http://localhost:8180/realms/showcase
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
     ports:
       - "8084:8084"
     depends_on:
@@ -157,6 +161,7 @@ services:
       TRANSFER_SERVICE_URL: http://transfer-service:8082
       KEYCLOAK_JWK_SET_URI: http://keycloak:8080/realms/showcase/protocol/openid-connect/certs
       KEYCLOAK_ISSUER_URI: http://localhost:8180/realms/showcase
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
     ports:
       - "8080:8080"
     depends_on:
@@ -199,6 +204,26 @@ services:
       timeout: 5s
       retries: 15
       start_period: 40s
+
+  tempo:
+    image: grafana/tempo:latest
+    container_name: showcase-tempo
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./docker/tempo/tempo.yaml:/etc/tempo.yaml:ro
+    ports:
+      - "3200:3200"
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: showcase-otel-collector
+    volumes:
+      - ./docker/otel-collector/config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+    depends_on:
+      - tempo
 
 volumes:
   postgres-data:
