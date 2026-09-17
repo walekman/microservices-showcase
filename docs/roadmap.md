@@ -84,14 +84,6 @@ plan document, so these weren't caught by the phase's usual per-task review chec
   confirmed working, not just unit/slice-tested. What's still not automated: this proof was
   manual (curl), not turned into a Testcontainers-Keycloak-backed test — the community module
   route from the original Testing plan is still the way to make it repeatable.
-- ~~No `Docker` was available in the session that implemented this phase, so every
-  Testcontainers-dependent test was written and compiled but never actually run there.~~
-  **Resolved**: once Docker was available, `./mvnw test` was run for the full reactor — all
-  200 tests across all five services pass, including `AccountControllerIT`, `AccountSecurityIT`,
-  `TransferSecurityIT`, and the five pre-existing full-context ITs touched by
-  `AuthorizationPropagatingInterceptor`. That run itself found a fourth bug (see below), now
-  also fixed. The phase is fully verified: automated suite green, real `docker compose up`
-  round trip confirmed (see the bullet above).
 - A `@WebMvcTest` slice does not reliably include a hand-written `SecurityFilterChain` bean —
   found live via `FraudCheckControllerTest` returning 200 instead of 403 for a token with the
   wrong authority, silently falling back to Spring Boot's own "any authenticated request"
