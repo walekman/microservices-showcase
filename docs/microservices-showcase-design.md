@@ -38,7 +38,7 @@ Each stateful service owns its data exclusively — no service queries another's
   `INTERNAL_ERROR`, so the property is never absent. The handler and its codes are
   duplicated per service rather than shared through a common module: a shared DTO jar
   turns every contract change into a lockstep redeploy of every service.
-- **Observability:** Micrometer Tracing bridged to OpenTelemetry → OTel Collector → Jaeger (or Grafana Tempo); Micrometer + Prometheus (`/actuator/prometheus`) scraped by Prometheus, visualized in Grafana; structured JSON logs with `traceId`/`spanId` auto-injected via MDC. No centralized log aggregation (ELK/Loki) — out of scope.
+- **Observability:** Micrometer Tracing bridged to OpenTelemetry → OTel Collector → Grafana Tempo; Micrometer + Prometheus (`/actuator/prometheus`) scraped by Prometheus, visualized in Grafana; structured JSON logs with `traceId`/`spanId` auto-injected via MDC. No centralized log aggregation (ELK/Loki) — out of scope.
 - **Deployment (local):** Docker Compose — single `docker compose up` brings up all services, Postgres, Kafka, Keycloak, and the observability stack.
 
 ## 4. Core Flow — The Transfer Saga
@@ -82,7 +82,6 @@ Each stateful service owns its data exclusively — no service queries another's
 
 - **Unit tests** (JUnit 5 + Mockito): business logic in isolation — saga step sequencing in Transfer Service (mocked Account/Fraud clients), fraud rule evaluation, resilience config behavior.
 - **Integration tests per service** (Testcontainers, real Postgres/Kafka — not H2/mocks): validates JPA optimistic locking, the outbox table + polling publisher, and Kafka producer/consumer wiring against the real infra they actually run against.
-- **Cross-service contract tests** (Spring Cloud Contract): Transfer's synchronous dependency on Account's and Fraud's APIs is covered by consumer-driven contracts, so a breaking API change fails in the *producing* service's own build.
 - **End-to-end saga tests:** a dedicated test module boots the real services via Testcontainers/Docker Compose and drives full flows through the Gateway — happy path, fraud-rejection-with-compensation, and forced-Account-unavailable (proving circuit breaker/retry behavior end-to-end).
 - **Fault injection:** WireMock (or Toxiproxy) in front of Account/Fraud in targeted tests, simulating timeouts/5xxs to assert the circuit breaker opens and the transfer fails cleanly.
 
@@ -93,7 +92,7 @@ Single `docker compose up`:
 - One Postgres container, separate database per stateful service (Account, Transfer) via init script
 - Kafka in KRaft mode (no Zookeeper)
 - Keycloak with a pre-loaded realm/client (import file, not manual setup)
-- OTel Collector, Prometheus, Grafana (provisioned dashboards), Jaeger/Tempo
+- OTel Collector, Prometheus, Grafana (provisioned dashboards), Grafana Tempo
 
 A seed script creates demo accounts with starting balances so a transfer can be triggered immediately after startup. README covers: architecture diagram, run instructions, example requests, and where to observe the result (Grafana dashboard, trace UI).
 
