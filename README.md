@@ -24,7 +24,7 @@ Then:
 
     docker compose up --build
 
-This starts Postgres, Account Service (8081), Transfer Service (8082), Fraud Service (8084), Kafka, Notification Service (8083), the API Gateway (8080), and Keycloak (8180).
+This starts Postgres, Account Service (8081), Transfer Service (8082), Fraud Service (8084), Kafka, Notification Service (8083), the API Gateway (8080), Keycloak (8180), and the observability stack: OTel Collector, Grafana Tempo (3200), Prometheus (9090), and Grafana (3001).
 
 ## Authentication (Keycloak)
 
@@ -88,6 +88,20 @@ service's own port directly (8081/8082/8083/8084); the Gateway doesn't replace t
 second, narrower way in. Every routed path requires a bearer JWT with the matching permission,
 same as calling each service directly (see "Authentication" above) — the Gateway and the service
 behind it each independently check the token.
+
+## Observability
+
+Grafana at http://localhost:3001 (no login needed — anonymous viewer access) has two dashboards
+provisioned on startup: a JVM/Micrometer dashboard and a business-metrics dashboard (transfer
+completed/failed/fraud-rejected counters, outbox backlog, circuit-breaker state). Prometheus
+(http://localhost:9090) scrapes `/actuator/prometheus` on all five services every 10s — check
+its Targets page if a Grafana panel shows "No data." Every service also exports traces via
+OTLP through an OTel Collector to Grafana Tempo; trigger any transfer below, then open Grafana
+Explore against the Tempo data source to see a single trace spanning Gateway → Transfer →
+Account → Fraud → the Kafka hop → Notification — the concrete proof this system's sync and
+async communication share one trace. Logs are structured JSON on every service's stdout
+(`docker compose logs <service>`), each line carrying the `traceId`/`spanId` of the request
+that produced it, so a trace in Tempo and its log lines can be cross-referenced directly.
 
 ## Try it (curl)
 

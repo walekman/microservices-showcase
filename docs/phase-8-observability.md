@@ -1172,7 +1172,7 @@ docker compose up --build
 
 Wait for all containers healthy (note: `tempo` and `otel-collector` show no health status at all — expected, see Task 2 — verify they're simply `Up`, not `Exited`), then:
 
-- Trigger a transfer through the Gateway (see README's existing curl examples); confirm a single trace in Tempo (via Grafana Explore, `http://localhost:3001`) spans Gateway → Transfer → Account → Fraud → the Kafka hop → Notification.
+- Trigger a transfer through the Gateway (see README's existing curl examples); confirm a single trace in Tempo (via Grafana Explore, `http://localhost:3001`) spans Gateway → Transfer → Account → Fraud → the Kafka hop → Notification. **This step is exactly what caught a real gap during actual implementation**: the Gateway→Transfer→Account→Fraud portion traced as one connected trace, but Notification's Kafka-consumer span came back as a completely separate, unlinked trace (different trace ID, no parent, no span link) — confirmed via Tempo's API, not just eyeballing the UI. Root cause: `OutboxPublisher` sends from a `@Scheduled` polling thread, seconds after the original request's span has already ended, so Spring Kafka's observation instrumentation has no active span to propagate from and starts a fresh trace instead. This is a structural consequence of Phase 4's transactional-outbox pattern (which deliberately decouples publish-time from request-time for reliability) colliding with this phase's tracing goal — not a config mistake. Fixed in Task 7, added specifically because of this finding.
 - Check Prometheus's Targets page (`http://localhost:9090/targets`) — all 5 services `UP`.
 - Open the two provisioned Grafana dashboards — confirm the JVM panel and the business-metrics dashboard both populate with real data, not "No data." If any business-metric panel shows "No data," check the actual metric name against `/actuator/prometheus` directly (`curl http://localhost:8082/actuator/prometheus | grep transfers_`) and fix the dashboard JSON's `expr` to match — per Task 5's note, those names were not verified against a live system while writing this plan.
 - Pull a service's container logs (`docker compose logs transfer-service`) and confirm lines are JSON with a `traceId` matching the trace ID shown in Tempo for that request.
@@ -1184,4 +1184,448 @@ Wait for all containers healthy (note: `tempo` and `otel-collector` show no heal
 git checkout -b feature/phase-8-task-6-docs-sync
 git add docs/microservices-showcase-design.md README.md
 git commit -m "docs: sync design doc with Phase 8's Tempo/no-contract-tests decisions (Phase 8, Task 6)"
+```
+
+---
+
+### Task 7: Carry trace context across the outbox's async gap
+
+**Added mid-phase, not in the original plan.** Task 6's own live-verification step (above) found that the design doc's and this phase's stated goal — "one continuous trace spanning Gateway → Transfer → Account → Fraud → the Kafka hop → Notification" — did not actually hold: the Kafka-consumer-side trace came back completely disconnected from the original request's trace (different trace ID, `parentSpanId: None`, no span links — confirmed via Tempo's `/api/traces/{id}` directly, not eyeballing the UI). The user chose to fix this now rather than defer it.
+
+**Root cause:** `TransferSaveService.save()` writes the `OutboxEvent` row inside the original HTTP request's span. `OutboxPublisher.publishPending()` sends the Kafka message later, on a `@Scheduled` polling thread, by which point that span has long since ended — there is no active span for Spring Kafka's observation instrumentation (`spring.kafka.template.observation-enabled`, added in Task 2) to propagate from, so it starts a brand-new root trace instead.
+
+**Fix:** persist the request's trace context on the `OutboxEvent` row at write time, then reconstruct it as the parent of a new span on the scheduler thread immediately before calling `kafkaTemplate.send()`. Spring Kafka's existing observation instrumentation (already enabled, unchanged) then creates its own send-span as a proper *child* of that reconstructed parent, and injects continuation headers automatically — no manual Kafka header manipulation needed, no producer/consumer config changes.
+
+**Files:**
+- Modify: `transfer-service/src/main/java/com/showcase/transfer/domain/OutboxEvent.java`
+- Modify: `transfer-service/src/main/java/com/showcase/transfer/service/TransferSaveService.java`
+- Modify: `transfer-service/src/main/java/com/showcase/transfer/service/OutboxPublisher.java`
+- Modify: `transfer-service/src/test/java/com/showcase/transfer/service/TransferSaveServiceTest.java`
+- Modify: `transfer-service/src/test/java/com/showcase/transfer/service/OutboxPublisherTest.java`
+- Modify: `transfer-service/src/test/java/com/showcase/transfer/service/OutboxPublisherIT.java`
+
+**Interfaces:**
+- `OutboxEvent` gains a second constructor: `OutboxEvent(UUID transferId, OutboxEventType eventType, String payload, String traceId, String spanId)`. The existing 3-arg constructor is kept (delegates to the new one with `null, null`) — none of the 9 existing call sites across `OutboxEventRepositoryTest`/`OutboxEventTest`/`OutboxPublisherIT`/`OutboxPublisherTest` need to change.
+- `TransferSaveService`'s constructor gains a `Tracer` parameter (5th arg, after `MeterRegistry`).
+- `OutboxPublisher`'s constructor gains a `Tracer` parameter (5th arg, after `MeterRegistry`).
+
+Verified against the actually-resolved `micrometer-tracing:1.5.12` jar via `javap` before writing any code (same discipline as phase 6's Gateway API verification) — `Tracer.traceContextBuilder()`, `TraceContext.Builder.traceId(String)/.spanId(String)/.sampled(Boolean)/.build()`, `Tracer.spanBuilder()`, `Span.Builder.setParent(TraceContext)`, and `Tracer.NOOP` all confirmed to exist with these exact signatures.
+
+- [ ] **Step 1: Add `traceId`/`spanId` columns and the new constructor to `OutboxEvent`**
+
+```java
+// transfer-service/src/main/java/com/showcase/transfer/domain/OutboxEvent.java
+package com.showcase.transfer.domain;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.Id;
+import jakarta.persistence.Index;
+import jakarta.persistence.Table;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+
+import java.time.Instant;
+import java.util.UUID;
+
+@Entity
+@Table(name = "outbox_events", indexes = @Index(name = "idx_outbox_unpublished", columnList = "publishedAt, createdAt"))
+@Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
+public class OutboxEvent {
+
+    @Id
+    @GeneratedValue
+    private UUID id;
+
+    @Column(nullable = false, updatable = false)
+    private UUID transferId;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 32, updatable = false)
+    private OutboxEventType eventType;
+
+    @Column(nullable = false, updatable = false, columnDefinition = "TEXT")
+    private String payload;
+
+    @Column(nullable = false, updatable = false)
+    private Instant createdAt;
+
+    private Instant publishedAt;
+
+    // Nullable -- rows written before this column existed have none, and there is no
+    // backfill (same "no backfill for pre-existing rows" precedent as Phase 7b's
+    // ownerId/initiatorId). W3C format: traceId is 32 hex chars, spanId is 16 -- lengths
+    // match real captured values from live verification, not a guess.
+    @Column(updatable = false, length = 32)
+    private String traceId;
+
+    @Column(updatable = false, length = 16)
+    private String spanId;
+
+    public OutboxEvent(UUID transferId, OutboxEventType eventType, String payload) {
+        this(transferId, eventType, payload, null, null);
+    }
+
+    public OutboxEvent(UUID transferId, OutboxEventType eventType, String payload, String traceId, String spanId) {
+        this.transferId = transferId;
+        this.eventType = eventType;
+        this.payload = payload;
+        this.traceId = traceId;
+        this.spanId = spanId;
+        this.createdAt = Instant.now();
+    }
+
+    public void markPublished() {
+        this.publishedAt = Instant.now();
+    }
+}
+```
+
+`ddl-auto: update` picks up the two new nullable columns automatically — no `docker compose down -v` needed for this one (unlike Phase 7b's `NOT NULL` columns), since nullable columns over existing rows are never a Hibernate problem.
+
+- [ ] **Step 2: Run the full test suite to verify it still passes**
+
+Run: `./mvnw -pl transfer-service -am test`
+Expected: PASS — the new constructor is additive; nothing existing changed behavior.
+
+- [ ] **Step 3: Write the failing test — `TransferSaveService` captures trace context**
+
+Add to `transfer-service/src/test/java/com/showcase/transfer/service/TransferSaveServiceTest.java`:
+
+```java
+import io.micrometer.tracing.Span;
+import io.micrometer.tracing.TraceContext;
+import io.micrometer.tracing.Tracer;
+// ... (existing imports unchanged)
+
+@ExtendWith(MockitoExtension.class)
+class TransferSaveServiceTest {
+
+    @Mock
+    private TransferRepository transferRepository;
+    @Mock
+    private OutboxEventRepository outboxEventRepository;
+    @Mock
+    private Tracer tracer;
+    @Mock
+    private Span span;
+    @Mock
+    private TraceContext traceContext;
+
+    private SimpleMeterRegistry meterRegistry;
+    private TransferSaveService service;
+
+    @BeforeEach
+    void setUp() {
+        ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
+        meterRegistry = new SimpleMeterRegistry();
+        service = new TransferSaveService(transferRepository, outboxEventRepository, objectMapper, meterRegistry, tracer);
+    }
+
+    // ... (existing tests unchanged -- none of them stub tracer.currentSpan(), so it
+    // returns Mockito's default null, exercised by the null-safety branch added in Step 4)
+
+    @Test
+    void capturesTraceContextOnTheOutboxRowWhenASpanIsActive() {
+        when(tracer.currentSpan()).thenReturn(span);
+        when(span.context()).thenReturn(traceContext);
+        when(traceContext.traceId()).thenReturn("0af7651916cd43dd8448eb211c80319c");
+        when(traceContext.spanId()).thenReturn("b7ad6b7169203331");
+        Transfer transfer = new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("10.00"), UUID.randomUUID());
+        transfer.markCompleted();
+        when(transferRepository.save(transfer)).thenReturn(transfer);
+
+        service.save(transfer);
+
+        ArgumentCaptor<OutboxEvent> captor = ArgumentCaptor.forClass(OutboxEvent.class);
+        verify(outboxEventRepository).save(captor.capture());
+        assertThat(captor.getValue().getTraceId()).isEqualTo("0af7651916cd43dd8448eb211c80319c");
+        assertThat(captor.getValue().getSpanId()).isEqualTo("b7ad6b7169203331");
+    }
+
+    @Test
+    void leavesTraceContextNullWhenNoSpanIsActive() {
+        when(tracer.currentSpan()).thenReturn(null);
+        Transfer transfer = new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("10.00"), UUID.randomUUID());
+        transfer.markCompleted();
+        when(transferRepository.save(transfer)).thenReturn(transfer);
+
+        service.save(transfer);
+
+        ArgumentCaptor<OutboxEvent> captor = ArgumentCaptor.forClass(OutboxEvent.class);
+        verify(outboxEventRepository).save(captor.capture());
+        assertThat(captor.getValue().getTraceId()).isNull();
+        assertThat(captor.getValue().getSpanId()).isNull();
+    }
+}
+```
+
+Also add `import com.showcase.transfer.domain.OutboxEvent;` and `import org.mockito.ArgumentCaptor;` to the existing import list.
+
+- [ ] **Step 4: Run the tests to verify they fail**
+
+Run: `./mvnw -pl transfer-service -am test -Dtest=TransferSaveServiceTest`
+Expected: compile failure — `TransferSaveService`'s constructor doesn't accept a 5th `Tracer` argument yet.
+
+- [ ] **Step 5: Capture trace context in `TransferSaveService`**
+
+Modify `transfer-service/src/main/java/com/showcase/transfer/service/TransferSaveService.java`: add the `Tracer` field/constructor parameter, and capture it when building the `OutboxEvent`.
+
+```java
+// Added imports
+import io.micrometer.tracing.Span;
+import io.micrometer.tracing.Tracer;
+
+// Field
+private final Tracer tracer;
+
+// Constructor
+public TransferSaveService(TransferRepository transferRepository,
+                              OutboxEventRepository outboxEventRepository,
+                              ObjectMapper objectMapper,
+                              MeterRegistry meterRegistry,
+                              Tracer tracer) {
+    this.transferRepository = transferRepository;
+    this.outboxEventRepository = outboxEventRepository;
+    this.objectMapper = objectMapper;
+    this.transfersCompleted = meterRegistry.counter("transfers.completed");
+    this.transfersFailed = meterRegistry.counter("transfers.failed");
+    this.transfersFraudRejected = meterRegistry.counter("transfers.fraud_rejected");
+    this.tracer = tracer;
+}
+
+// save() -- only the OutboxEvent construction line changes:
+@Transactional
+public Transfer save(Transfer transfer) {
+    Transfer saved = transferRepository.save(transfer);
+    OutboxEventType eventType = OutboxEventType.forStatus(saved.getStatus());
+    if (eventType != null) {
+        Span currentSpan = tracer.currentSpan();
+        String traceId = currentSpan != null ? currentSpan.context().traceId() : null;
+        String spanId = currentSpan != null ? currentSpan.context().spanId() : null;
+        outboxEventRepository.save(new OutboxEvent(saved.getId(), eventType, toPayload(saved), traceId, spanId));
+        recordMetric(eventType, saved.getFailureCode());
+    }
+    return saved;
+}
+```
+
+- [ ] **Step 6: Run the tests to verify they pass**
+
+Run: `./mvnw -pl transfer-service -am test -Dtest=TransferSaveServiceTest`
+Expected: PASS, all 10 tests (8 from Task 3 + 2 new) green.
+
+- [ ] **Step 7: Write the failing test — `OutboxPublisher` continues the trace on send**
+
+Add to `transfer-service/src/test/java/com/showcase/transfer/service/OutboxPublisherTest.java`:
+
+```java
+import io.micrometer.tracing.Tracer;
+// ... (existing imports unchanged)
+
+@ExtendWith(MockitoExtension.class)
+class OutboxPublisherTest {
+
+    @Mock
+    private OutboxEventRepository outboxEventRepository;
+
+    @Mock
+    private KafkaTemplate<String, String> kafkaTemplate;
+
+    private OutboxPublisher publisher;
+
+    @BeforeEach
+    void setUp() {
+        OutboxPublisherProperties properties = new OutboxPublisherProperties(
+                Duration.ofSeconds(5), 500, Duration.ofSeconds(5), null);
+        publisher = new OutboxPublisher(outboxEventRepository, kafkaTemplate, properties,
+                new SimpleMeterRegistry(), Tracer.NOOP);
+    }
+
+    // ... (existing 3 tests unchanged -- their event() helper uses the 3-arg OutboxEvent
+    // constructor, so traceId/spanId are null and the new parenting logic's null-check
+    // branch is what they exercise; Tracer.NOOP never gets called in that branch)
+}
+```
+
+(Only `setUp()`'s constructor call changes — `Tracer.NOOP` as the 5th argument. The existing 3 tests need no other change, per the Interfaces note above.)
+
+Add a new test method to the same class:
+
+```java
+    @Test
+    void publishingAnEventWithTraceContextStartsASpanParentedToIt() {
+        Tracer tracer = mock(Tracer.class);
+        Span parentSpan = mock(Span.class);
+        Span.Builder spanBuilder = mock(Span.Builder.class);
+        Tracer.SpanInScope scope = mock(Tracer.SpanInScope.class);
+        TraceContext.Builder contextBuilder = mock(TraceContext.Builder.class);
+        TraceContext reconstructed = mock(TraceContext.class);
+
+        publisher = new OutboxPublisher(outboxEventRepository, kafkaTemplate,
+                new OutboxPublisherProperties(Duration.ofSeconds(5), 500, Duration.ofSeconds(5), null),
+                new SimpleMeterRegistry(), tracer);
+
+        OutboxEvent event = new OutboxEvent(UUID.randomUUID(), OutboxEventType.TRANSFER_COMPLETED, "{}",
+                "0af7651916cd43dd8448eb211c80319c", "b7ad6b7169203331");
+        when(outboxEventRepository.findByPublishedAtIsNullOrderByCreatedAtAsc(any(Limit.class)))
+                .thenReturn(List.of(event));
+        when(tracer.traceContextBuilder()).thenReturn(contextBuilder);
+        when(contextBuilder.traceId("0af7651916cd43dd8448eb211c80319c")).thenReturn(contextBuilder);
+        when(contextBuilder.spanId("b7ad6b7169203331")).thenReturn(contextBuilder);
+        when(contextBuilder.sampled(true)).thenReturn(contextBuilder);
+        when(contextBuilder.build()).thenReturn(reconstructed);
+        when(tracer.spanBuilder()).thenReturn(spanBuilder);
+        when(spanBuilder.setParent(reconstructed)).thenReturn(spanBuilder);
+        when(spanBuilder.name("outbox.publish")).thenReturn(spanBuilder);
+        when(spanBuilder.start()).thenReturn(parentSpan);
+        when(tracer.withSpan(parentSpan)).thenReturn(scope);
+        when(kafkaTemplate.send(anyString(), anyString(), anyString()))
+                .thenReturn(CompletableFuture.completedFuture(null));
+
+        publisher.publishPending();
+
+        verify(tracer).withSpan(parentSpan);
+        verify(scope).close();
+        verify(parentSpan).end();
+        verify(kafkaTemplate).send(anyString(), anyString(), anyString());
+    }
+```
+
+Add `import io.micrometer.tracing.Span;`, `import io.micrometer.tracing.TraceContext;`, and `import static org.mockito.Mockito.mock;` to the import list.
+
+- [ ] **Step 8: Run the test to verify it fails**
+
+Run: `./mvnw -pl transfer-service -am test -Dtest=OutboxPublisherTest`
+Expected: compile failure — `OutboxPublisher`'s constructor doesn't accept a 5th `Tracer` argument yet.
+
+- [ ] **Step 9: Reconstruct and propagate trace context in `OutboxPublisher`**
+
+Modify `transfer-service/src/main/java/com/showcase/transfer/service/OutboxPublisher.java`:
+
+```java
+// Added imports
+import io.micrometer.tracing.Span;
+import io.micrometer.tracing.TraceContext;
+import io.micrometer.tracing.Tracer;
+
+// Field
+private final Tracer tracer;
+
+// Constructor
+public OutboxPublisher(OutboxEventRepository outboxEventRepository, KafkaTemplate<String, String> kafkaTemplate,
+                        OutboxPublisherProperties properties, MeterRegistry meterRegistry, Tracer tracer) {
+    this.outboxEventRepository = outboxEventRepository;
+    this.kafkaTemplate = kafkaTemplate;
+    this.properties = properties;
+    this.tracer = tracer;
+    meterRegistry.gauge("transfer.outbox.backlog", outboxEventRepository,
+            repository -> (double) repository.countByPublishedAtIsNull());
+}
+```
+
+Rename the existing `private void publish(OutboxEvent event)` method to `doPublish`, and add a new `publish` wrapper above it:
+
+```java
+    private void publish(OutboxEvent event) {
+        if (event.getTraceId() == null || event.getSpanId() == null) {
+            // No trace context captured at write time (e.g. a row from before this
+            // column existed, or the outbox write happened with no active span) --
+            // fall through to a normal send, which still gets its own fresh trace via
+            // Spring Kafka's observation instrumentation, just not linked to anything.
+            doPublish(event);
+            return;
+        }
+        TraceContext parentContext = tracer.traceContextBuilder()
+                .traceId(event.getTraceId())
+                .spanId(event.getSpanId())
+                .sampled(true)
+                .build();
+        Span span = tracer.spanBuilder().setParent(parentContext).name("outbox.publish").start();
+        try (Tracer.SpanInScope ignored = tracer.withSpan(span)) {
+            doPublish(event);
+        } finally {
+            span.end();
+        }
+    }
+
+    private void doPublish(OutboxEvent event) {
+        // ... existing publish() method body, unchanged, just renamed
+    }
+```
+
+`publishPending()`'s call to `publish(event)` (inside its per-row try/catch) is unchanged — it already calls the method named `publish`, which now does the parenting first and delegates to `doPublish` for the actual send/error-handling logic that was already there.
+
+- [ ] **Step 10: Run the tests to verify they pass**
+
+Run: `./mvnw -pl transfer-service -am test -Dtest=OutboxPublisherTest`
+Expected: PASS, all 4 tests (3 existing + 1 new) green.
+
+- [ ] **Step 11: Add a real-Kafka header assertion to `OutboxPublisherIT`**
+
+Proves the full chain end to end against a real broker: a stored trace context actually produces a `traceparent` Kafka header on the wire, not just that the right mock calls happened in isolation.
+
+Add to `transfer-service/src/test/java/com/showcase/transfer/service/OutboxPublisherIT.java`:
+
+```java
+    @Test
+    void publishedRecordCarriesTraceparentHeaderWhenTheOutboxEventHasTraceContext() {
+        String traceId = "0af7651916cd43dd8448eb211c80319c";
+        String spanId = "b7ad6b7169203331";
+        String payload = "{\"status\":\"COMPLETED\"}";
+        outboxEventRepository.saveAndFlush(
+                new OutboxEvent(UUID.randomUUID(), OutboxEventType.TRANSFER_COMPLETED, payload, traceId, spanId));
+
+        outboxPublisher.publishPending();
+
+        String topic = outboxPublisherProperties.topics().completed();
+        var consumerProps = KafkaTestUtils.consumerProps(kafka.getBootstrapServers(), "outbox-publisher-it-trace", "true");
+        consumerProps.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+        try (Consumer<String, String> consumer = new KafkaConsumer<>(consumerProps)) {
+            consumer.subscribe(List.of(topic));
+            ConsumerRecord<String, String> record = KafkaTestUtils.getSingleRecord(consumer, topic, Duration.ofSeconds(10));
+
+            var traceparentHeader = record.headers().lastHeader("traceparent");
+            assertThat(traceparentHeader).isNotNull();
+            String traceparent = new String(traceparentHeader.value(), java.nio.charset.StandardCharsets.UTF_8);
+            assertThat(traceparent).contains(traceId);
+        }
+    }
+```
+
+- [ ] **Step 12: Run the test to verify it passes**
+
+Run: `./mvnw -pl transfer-service -am test -Dtest=OutboxPublisherIT`
+Expected: PASS — the `traceparent` header on the real consumed Kafka record contains the exact `traceId` this test stored on the `OutboxEvent`, proving the reconstructed span's context actually made it onto the wire via Spring Kafka's own instrumentation.
+
+- [ ] **Step 13: Run the full reactor test suite**
+
+Run: `./mvnw test`
+Expected: BUILD SUCCESS, all modules, zero failures.
+
+- [ ] **Step 14: Live re-verification — the trace gap Task 6 found is now closed**
+
+```bash
+docker compose down -v
+docker compose up --build -d
+```
+
+Repeat Task 6 Step 4's transfer-through-the-Gateway scenario, then query Tempo directly (`curl "http://localhost:3200/api/traces/<gateway-trace-id>"`, the same way this gap was originally found) and confirm `notification-service`'s `transfer.completed receive` span now appears as part of the *same* trace ID as the Gateway/Transfer/Account/Fraud spans — not a separate one. This is the one thing that must be re-checked against a live system, not just unit/integration tests, since it's exactly the class of gap (structural async-boundary trace propagation) that only showed up under real Kafka timing the first time.
+
+- [ ] **Step 15: Commit**
+
+```bash
+git checkout -b feature/phase-8-task-7-outbox-trace-continuity
+git add transfer-service/src/main/java/com/showcase/transfer/domain/OutboxEvent.java \
+        transfer-service/src/main/java/com/showcase/transfer/service/TransferSaveService.java \
+        transfer-service/src/main/java/com/showcase/transfer/service/OutboxPublisher.java \
+        transfer-service/src/test/java/com/showcase/transfer/service/TransferSaveServiceTest.java \
+        transfer-service/src/test/java/com/showcase/transfer/service/OutboxPublisherTest.java \
+        transfer-service/src/test/java/com/showcase/transfer/service/OutboxPublisherIT.java
+git commit -m "fix(observability): carry trace context across the outbox's async gap (Phase 8, Task 7)"
 ```
