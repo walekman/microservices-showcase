@@ -992,7 +992,7 @@ datasources:
 
 - [ ] **Step 2: Create `docker/grafana/provisioning/dashboards/dashboards.yml`**
 
-Verified live during planning alongside Step 1 — log confirms `"finished to provision dashboards"` with no errors.
+Verified live during planning alongside Step 1 — log confirms `"finished to provision dashboards"` with no errors. **The `options.path` below was corrected during Task 5's actual implementation** (see Step 5's note) — planning's path nested the dashboards mount inside the already-`:ro`-mounted `provisioning/` directory, which Docker refuses to create a second mountpoint under.
 
 ```yaml
 apiVersion: 1
@@ -1005,7 +1005,7 @@ providers:
     disableDeletion: false
     updateIntervalSeconds: 30
     options:
-      path: /etc/grafana/provisioning/dashboards-data
+      path: /etc/grafana/dashboards-data
 ```
 
 - [ ] **Step 3: Download and adapt the community JVM/Micrometer dashboard**
@@ -1105,7 +1105,7 @@ A minimal hand-authored dashboard for this project's own metrics — five panels
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
     volumes:
       - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./docker/grafana/dashboards:/etc/grafana/provisioning/dashboards-data:ro
+      - ./docker/grafana/dashboards:/etc/grafana/dashboards-data:ro
     ports:
       - "3001:3000"
     depends_on:
@@ -1122,6 +1122,8 @@ A minimal hand-authored dashboard for this project's own metrics — five panels
 ```
 
 `tempo`'s condition is `service_started`, not `service_healthy` — Tempo has no healthcheck (see Task 2's note), so `service_healthy` would never resolve. `GF_AUTH_ANONYMOUS_ENABLED` is set so the dashboards are viewable without a login prompt for local demo purposes — this project has no other auth-gated UI (Keycloak's admin console aside), and Grafana's own auth is unrelated to this project's Keycloak realm. Port mapped to `3001` on the host, not `3000` — `3000` is a common local-dev collision (several frontend dev servers default to it); the container's own internal port stays `3000`, only the host mapping changes.
+
+**The dashboards volume target is `/etc/grafana/dashboards-data`, not `/etc/grafana/provisioning/dashboards-data` as an earlier draft of this step had it — found live, not by inspection.** Docker refused to start the container: `failed to create task for container: ... error mounting ".../docker/grafana/dashboards" to rootfs at "/etc/grafana/provisioning/dashboards-data": ... read-only file system`. The `provisioning` volume above is already mounted `:ro` as a whole directory; Docker cannot create a second mountpoint *underneath* an already-mounted read-only bind mount. Moving the dashboards mount to a sibling path outside `provisioning/` (and updating `dashboards.yml`'s `options.path` to match — Step 2 above already reflects this) avoids the nested-mount conflict entirely. Verified live afterward: all 3 containers (`prometheus`, `tempo`, `grafana`) start together, Grafana reports `healthy`, and `GET /api/search` on the running container returns both dashboards by title.
 
 - [ ] **Step 6: Commit**
 
