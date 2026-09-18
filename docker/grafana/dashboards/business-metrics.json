@@ -1,0 +1,61 @@
+{
+  "title": "Microservices Showcase — Business Metrics",
+  "uid": "showcase-business-metrics",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-15m", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Transfers Completed",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "transfers_completed_total", "refId": "A" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Transfers Failed",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "transfers_failed_total", "refId": "A" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Transfers Fraud-Rejected",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "transfers_fraud_rejected_total", "refId": "A" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Outbox Backlog",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "transfer_outbox_backlog", "refId": "A" }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Circuit Breaker State (accountService / fraudService)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "resilience4j_circuitbreaker_state", "legendFormat": "{{name}} - {{state}}", "refId": "A" }
+      ]
+    }
+  ]
+}
