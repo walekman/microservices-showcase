@@ -1,6 +1,7 @@
 package com.showcase.account.api;
 
 import com.showcase.account.support.TestSecurityConfig;
+import com.zaxxer.hikari.HikariDataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -19,7 +20,11 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import javax.sql.DataSource;
+
 import java.math.BigDecimal;
+import java.sql.Connection;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -32,10 +37,34 @@ import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+// The two concurrency tests below (returns409ForConcurrentUpdateConflict and
+// concurrentDebitsWithTheSameIdempotencyKeyNeverDoubleApplyAndTheLoserGets500) only prove
+// anything if CONCURRENT_REQUESTS transactions can genuinely be in flight at the same instant,
+// and a JDBC transaction holds its pooled connection from begin to commit. So the connection
+// pool -- not thread scheduling -- is what actually caps this test's concurrency: with fewer
+// than CONCURRENT_REQUESTS connections available, requests queue in HikariCP and each one only
+// starts after the previous holder has ALREADY COMMITTED, which is precisely the serialization
+// these tests exist to rule out. Both of these tests were flaky in CI with the all-200-OK
+// signature that outcome produces.
+//
+// Hence this test class owns its pool sizing outright rather than inheriting application.yml's
+// (absent) setting, HikariCP's default of 10, or whatever a `-D` override supplies: an ambient
+// pool smaller than CONCURRENT_REQUESTS silently turns a race test into a no-race test.
+// maximum-pool-size deliberately leaves headroom above CONCURRENT_REQUESTS so no request has to
+// wait for a connection at all, and minimum-idle matches it so housekeeping never shrinks the
+// pool back down between test methods. warmUpConnectionPool() then makes the sizing real --
+// see its javadoc for why the configured size alone is not enough.
+@SpringBootTest(
+        webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+        properties = {
+                "spring.datasource.hikari.maximum-pool-size=20",
+                "spring.datasource.hikari.minimum-idle=20"
+        })
 @Testcontainers
 @Import(TestSecurityConfig.class)
 class AccountControllerIT {
+
+    private static final int CONCURRENT_REQUESTS = 10;
 
     @Container
     @ServiceConnection
@@ -44,9 +73,62 @@ class AccountControllerIT {
     @Autowired
     private TestRestTemplate restTemplate;
 
+    @Autowired
+    private DataSource dataSource;
+
     @BeforeEach
     void authenticateAsCustomer() {
         TestSecurityConfig.authenticateAsCustomer(restTemplate);
+    }
+
+    /**
+     * Blocks until HikariCP has actually opened every connection it is configured for, and
+     * asserts it got there.
+     *
+     * <p>Configuring the pool size is not by itself enough. HikariCP opens exactly ONE
+     * connection eagerly at startup; the rest are filled in by a single-threaded
+     * "connection-adder" executor, one real TCP + Postgres auth handshake at a time. A burst of
+     * requests fired while that fill is still in progress hits a pool that is only a few
+     * connections deep, and the surplus requests queue -- the exact serialization these
+     * concurrency tests must not silently degrade into. Locally that fill takes ~450ms and
+     * finishes seconds before any test method runs, which is why the flake was never reproducible
+     * here; on a loaded CI runner with Postgres in Docker each handshake is far slower, so the
+     * window stays open much longer.
+     *
+     * <p>Holding maximumPoolSize connections simultaneously forces the pool to materialize all of
+     * them synchronously (each {@code getConnection()} blocks until its connection exists),
+     * turning HikariCP's background, best-effort fill into a completed precondition. Closing them
+     * returns them to the pool as idle -- {@code minimum-idle == maximum-pool-size} means
+     * housekeeping will not evict them afterwards.
+     *
+     * <p>This touches only the DataSource, i.e. infrastructure underneath the code under test --
+     * it does not stub, wrap or reorder anything in AccountService's dependency graph, so the
+     * race it enables is still a real one between real transactions against real Postgres.
+     */
+    private void warmUpConnectionPool() throws SQLException {
+        HikariDataSource hikari = dataSource.unwrap(HikariDataSource.class);
+        int poolSize = hikari.getMaximumPoolSize();
+        assertThat(poolSize)
+                .as("pool must hold more than the %s simultaneous transactions this test needs, "
+                        + "or requests serialize behind connection acquisition and no race occurs", CONCURRENT_REQUESTS)
+                .isGreaterThan(CONCURRENT_REQUESTS);
+
+        List<Connection> held = new ArrayList<>();
+        try {
+            for (int i = 0; i < poolSize; i++) {
+                held.add(dataSource.getConnection());
+            }
+        } finally {
+            for (Connection connection : held) {
+                connection.close();
+            }
+        }
+
+        // Fails loudly if the pool could not reach its configured size, rather than letting the
+        // race test quietly pass with every request returning 200 OK because it never raced.
+        assertThat(hikari.getHikariPoolMXBean().getTotalConnections())
+                .as("connection pool must be fully open before a barrier-released burst")
+                .isEqualTo(poolSize);
     }
 
     @Test
@@ -240,7 +322,8 @@ class AccountControllerIT {
         //
         // Each request uses its OWN idempotency key: giving them all the same key would make
         // the dedup path short-circuit 9 of the 10 requests instead of letting them race.
-        int concurrentRequests = 10;
+        int concurrentRequests = CONCURRENT_REQUESTS;
+        warmUpConnectionPool();
         UUID id = createAccount(new BigDecimal("1000.00"));
 
         CyclicBarrier barrier = new CyclicBarrier(concurrentRequests);
@@ -303,7 +386,12 @@ class AccountControllerIT {
         // insert-before-update flush ordering -- which is what actually keeps a losing
         // request from double-debiting instead of merely failing loudly -- as Phase 3's
         // final review flagged (docs/roadmap.md).
-        int concurrentRequests = 10;
+        int concurrentRequests = CONCURRENT_REQUESTS;
+        // Without this, a pool that is still filling (or configured smaller than
+        // concurrentRequests) makes every request but the first wait for a connection that is
+        // only released once the winner has committed -- so every request sees the operation
+        // already applied, all of them return 200 OK, and the insert race never happens.
+        warmUpConnectionPool();
         UUID id = createAccount(new BigDecimal("100.00"));
         String sharedKey = "race-key";
 
