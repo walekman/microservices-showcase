@@ -4,6 +4,9 @@ import com.showcase.transfer.domain.OutboxEvent;
 import com.showcase.transfer.domain.OutboxEventRepository;
 import com.showcase.transfer.domain.OutboxEventType;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import io.micrometer.tracing.Span;
+import io.micrometer.tracing.TraceContext;
+import io.micrometer.tracing.Tracer;
 import org.apache.kafka.common.errors.TimeoutException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -21,6 +24,7 @@ import java.util.concurrent.CompletableFuture;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -48,7 +52,8 @@ class OutboxPublisherTest {
     void setUp() {
         OutboxPublisherProperties properties = new OutboxPublisherProperties(
                 Duration.ofSeconds(5), 500, Duration.ofSeconds(5), null);
-        publisher = new OutboxPublisher(outboxEventRepository, kafkaTemplate, properties, new SimpleMeterRegistry());
+        publisher = new OutboxPublisher(outboxEventRepository, kafkaTemplate, properties,
+                new SimpleMeterRegistry(), Tracer.NOOP);
     }
 
     private OutboxEvent event() {
@@ -120,5 +125,43 @@ class OutboxPublisherTest {
 
         verify(kafkaTemplate, times(2)).send(anyString(), anyString(), anyString());
         verify(outboxEventRepository, times(1)).save(any(OutboxEvent.class));
+    }
+
+    @Test
+    void publishingAnEventWithTraceContextStartsASpanParentedToIt() {
+        Tracer tracer = mock(Tracer.class);
+        Span parentSpan = mock(Span.class);
+        Span.Builder spanBuilder = mock(Span.Builder.class);
+        Tracer.SpanInScope scope = mock(Tracer.SpanInScope.class);
+        TraceContext.Builder contextBuilder = mock(TraceContext.Builder.class);
+        TraceContext reconstructed = mock(TraceContext.class);
+
+        publisher = new OutboxPublisher(outboxEventRepository, kafkaTemplate,
+                new OutboxPublisherProperties(Duration.ofSeconds(5), 500, Duration.ofSeconds(5), null),
+                new SimpleMeterRegistry(), tracer);
+
+        OutboxEvent event = new OutboxEvent(UUID.randomUUID(), OutboxEventType.TRANSFER_COMPLETED, "{}",
+                "0af7651916cd43dd8448eb211c80319c", "b7ad6b7169203331");
+        when(outboxEventRepository.findByPublishedAtIsNullOrderByCreatedAtAsc(any(Limit.class)))
+                .thenReturn(List.of(event));
+        when(tracer.traceContextBuilder()).thenReturn(contextBuilder);
+        when(contextBuilder.traceId("0af7651916cd43dd8448eb211c80319c")).thenReturn(contextBuilder);
+        when(contextBuilder.spanId("b7ad6b7169203331")).thenReturn(contextBuilder);
+        when(contextBuilder.sampled(true)).thenReturn(contextBuilder);
+        when(contextBuilder.build()).thenReturn(reconstructed);
+        when(tracer.spanBuilder()).thenReturn(spanBuilder);
+        when(spanBuilder.setParent(reconstructed)).thenReturn(spanBuilder);
+        when(spanBuilder.name("outbox.publish")).thenReturn(spanBuilder);
+        when(spanBuilder.start()).thenReturn(parentSpan);
+        when(tracer.withSpan(parentSpan)).thenReturn(scope);
+        when(kafkaTemplate.send(anyString(), anyString(), anyString()))
+                .thenReturn(CompletableFuture.completedFuture(null));
+
+        publisher.publishPending();
+
+        verify(tracer).withSpan(parentSpan);
+        verify(scope).close();
+        verify(parentSpan).end();
+        verify(kafkaTemplate).send(anyString(), anyString(), anyString());
     }
 }

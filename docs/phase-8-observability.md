@@ -1194,15 +1194,17 @@ git commit -m "docs: sync design doc with Phase 8's Tempo/no-contract-tests deci
 
 **Root cause:** `TransferSaveService.save()` writes the `OutboxEvent` row inside the original HTTP request's span. `OutboxPublisher.publishPending()` sends the Kafka message later, on a `@Scheduled` polling thread, by which point that span has long since ended — there is no active span for Spring Kafka's observation instrumentation (`spring.kafka.template.observation-enabled`, added in Task 2) to propagate from, so it starts a brand-new root trace instead.
 
-**Fix:** persist the request's trace context on the `OutboxEvent` row at write time, then reconstruct it as the parent of a new span on the scheduler thread immediately before calling `kafkaTemplate.send()`. Spring Kafka's existing observation instrumentation (already enabled, unchanged) then creates its own send-span as a proper *child* of that reconstructed parent, and injects continuation headers automatically — no manual Kafka header manipulation needed, no producer/consumer config changes.
+**Fix:** persist the request's trace context on the `OutboxEvent` row at write time, then reconstruct it as the parent of a new span on the scheduler thread immediately before calling `kafkaTemplate.send()`. Spring Kafka's observation instrumentation then creates its own send-span as a proper *child* of that reconstructed parent, and injects continuation headers automatically — no manual Kafka header manipulation needed. (Getting the instrumentation itself actually active *did* need one producer config fix, found during implementation — see Step 11.)
 
 **Files:**
 - Modify: `transfer-service/src/main/java/com/showcase/transfer/domain/OutboxEvent.java`
 - Modify: `transfer-service/src/main/java/com/showcase/transfer/service/TransferSaveService.java`
 - Modify: `transfer-service/src/main/java/com/showcase/transfer/service/OutboxPublisher.java`
+- Modify: `transfer-service/src/main/java/com/showcase/transfer/config/KafkaProducerConfig.java`
 - Modify: `transfer-service/src/test/java/com/showcase/transfer/service/TransferSaveServiceTest.java`
 - Modify: `transfer-service/src/test/java/com/showcase/transfer/service/OutboxPublisherTest.java`
 - Modify: `transfer-service/src/test/java/com/showcase/transfer/service/OutboxPublisherIT.java`
+- Modify: `account-service/src/main/resources/application.yml`, `transfer-service/src/main/resources/application.yml`, `notification-service/src/main/resources/application.yml`, `fraud-service/src/main/resources/application.yml`, `gateway-service/src/main/resources/application.yml` (add `management.tracing.enabled: true`, explicit — see Step 11's second finding)
 
 **Interfaces:**
 - `OutboxEvent` gains a second constructor: `OutboxEvent(UUID transferId, OutboxEventType eventType, String payload, String traceId, String spanId)`. The existing 3-arg constructor is kept (delegates to the new one with `null, null`) — none of the 9 existing call sites across `OutboxEventRepositoryTest`/`OutboxEventTest`/`OutboxPublisherIT`/`OutboxPublisherTest` need to change.
@@ -1568,22 +1570,28 @@ Expected: PASS, all 4 tests (3 existing + 1 new) green.
 
 - [ ] **Step 11: Add a real-Kafka header assertion to `OutboxPublisherIT`**
 
-Proves the full chain end to end against a real broker: a stored trace context actually produces a `traceparent` Kafka header on the wire, not just that the right mock calls happened in isolation.
+Proves the full chain end to end against a real broker: a stored trace context actually produces a `traceparent` Kafka header on the wire, not just that the right mock calls happened in isolation. This step is exactly what caught two more real bugs — neither reachable by a mocked unit test — documented below rather than smoothed over.
 
 Add to `transfer-service/src/test/java/com/showcase/transfer/service/OutboxPublisherIT.java`:
 
 ```java
     @Test
     void publishedRecordCarriesTraceparentHeaderWhenTheOutboxEventHasTraceContext() {
+        // TRANSFER_FAILED, not TRANSFER_COMPLETED -- publishesAnUnpublishedEventAndMarksItPublished
+        // above already publishes a real record to the TRANSFER_COMPLETED topic in this same
+        // class. A fresh consumer group here defaults to reading from the earliest offset, so
+        // reusing that topic would pick up that other test's leftover record too and fail with
+        // "More than one record for topic found" -- confirmed live by hitting exactly that error
+        // before this fix. A different topic sidesteps the collision entirely.
         String traceId = "0af7651916cd43dd8448eb211c80319c";
         String spanId = "b7ad6b7169203331";
-        String payload = "{\"status\":\"COMPLETED\"}";
+        String payload = "{\"status\":\"FAILED\"}";
         outboxEventRepository.saveAndFlush(
-                new OutboxEvent(UUID.randomUUID(), OutboxEventType.TRANSFER_COMPLETED, payload, traceId, spanId));
+                new OutboxEvent(UUID.randomUUID(), OutboxEventType.TRANSFER_FAILED, payload, traceId, spanId));
 
         outboxPublisher.publishPending();
 
-        String topic = outboxPublisherProperties.topics().completed();
+        String topic = outboxPublisherProperties.topics().failed();
         var consumerProps = KafkaTestUtils.consumerProps(kafka.getBootstrapServers(), "outbox-publisher-it-trace", "true");
         consumerProps.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
         try (Consumer<String, String> consumer = new KafkaConsumer<>(consumerProps)) {
@@ -1598,10 +1606,31 @@ Add to `transfer-service/src/test/java/com/showcase/transfer/service/OutboxPubli
     }
 ```
 
+Also add `import org.springframework.boot.test.autoconfigure.actuate.observability.AutoConfigureObservability;`, and put `@AutoConfigureObservability` on the class itself, alongside the existing `@SpringBootTest`/`@Testcontainers`/`@Import` annotations.
+
+**Two real bugs found running this step, neither visible to `OutboxPublisherTest`'s mocks:**
+
+1. **`KafkaProducerConfig`'s manually-constructed `KafkaTemplate` bean silently ignored `spring.kafka.template.observation-enabled` (Task 2) entirely.** That property only customizes Boot's *own* autoconfigured `KafkaTemplate` — since this project already defines its own `@Bean KafkaTemplate<String, String> kafkaTemplate(...)` (predating Phase 8, for its custom producer properties), Boot's autoconfiguration backs off completely and never touches this bean. The real Kafka record carried **zero** headers of any kind (not a wrong name — literally none), confirmed by dumping every header during debugging. Fixed by injecting `ObservationRegistry` into the bean method and calling `setObservationRegistry(...)`/`setObservationEnabled(true)` explicitly:
+   ```java
+   @Bean
+   public KafkaTemplate<String, String> kafkaTemplate(ProducerFactory<String, String> producerFactory,
+                                                        ObservationRegistry observationRegistry) {
+       KafkaTemplate<String, String> template = new KafkaTemplate<>(producerFactory);
+       template.setObservationRegistry(observationRegistry);
+       template.setObservationEnabled(true);
+       return template;
+   }
+   ```
+   (in `transfer-service/src/main/java/com/showcase/transfer/config/KafkaProducerConfig.java`, plus `import io.micrometer.observation.ObservationRegistry;`)
+
+2. **`@SpringBootTest` disables tracing/metrics observability by default**, via Spring Boot's own `ObservabilityContextCustomizerFactory` (package `org.springframework.boot.test.autoconfigure.actuate.observability`) — it adds `management.tracing.enabled=false` as a test-only property source that overrides `application.yml` unconditionally, regardless of what's configured there. Confirmed via the Boot condition-evaluation report (`-Ddebug=true`): `OnEnabledTracingCondition` reported `management.tracing.enabled is false` even with that exact property set to `true` in `application.yml`, and even set as a same-JVM **unforced system property** (the highest normal precedence) — neither had any effect, because the test-only override sits above both. This is *why* Task 3's analogous metrics fix (`management.prometheus.metrics.export.enabled`) worked without needing this: that property is the exporter-*specific* key, which Prometheus's own condition checks before falling back to the generic default the test override targets — tracing has no equivalent specific key to sidestep it with. The fix is `@AutoConfigureObservability` on the test class, Spring Boot's own documented opt-back-in mechanism — needed only on `OutboxPublisherIT`, since it's the only test in this phase asserting real wire-level propagation rather than a bean's type (`TracingBridgeIT`) or in-process MDC content (`StructuredLoggingIT`), neither of which this default affects.
+
+Both findings also motivate keeping `management.tracing.enabled: true` explicit in `application.yml` (added alongside `sampling.probability` in Task 2's config) even though it wasn't sufficient on its own to fix this test — explicit is better than relying on an undocumented-to-a-casual-reader non-test default, and it costs nothing in the real running app, where `@SpringBootTest`'s override never applies at all.
+
 - [ ] **Step 12: Run the test to verify it passes**
 
 Run: `./mvnw -pl transfer-service -am test -Dtest=OutboxPublisherIT`
-Expected: PASS — the `traceparent` header on the real consumed Kafka record contains the exact `traceId` this test stored on the `OutboxEvent`, proving the reconstructed span's context actually made it onto the wire via Spring Kafka's own instrumentation.
+Expected: PASS, all 3 tests — the `traceparent` header on the real consumed Kafka record contains the exact `traceId` this test stored on the `OutboxEvent`, proving the reconstructed span's context actually made it onto the wire via Spring Kafka's own instrumentation.
 
 - [ ] **Step 13: Run the full reactor test suite**
 
@@ -1624,8 +1653,12 @@ git checkout -b feature/phase-8-task-7-outbox-trace-continuity
 git add transfer-service/src/main/java/com/showcase/transfer/domain/OutboxEvent.java \
         transfer-service/src/main/java/com/showcase/transfer/service/TransferSaveService.java \
         transfer-service/src/main/java/com/showcase/transfer/service/OutboxPublisher.java \
+        transfer-service/src/main/java/com/showcase/transfer/config/KafkaProducerConfig.java \
         transfer-service/src/test/java/com/showcase/transfer/service/TransferSaveServiceTest.java \
         transfer-service/src/test/java/com/showcase/transfer/service/OutboxPublisherTest.java \
-        transfer-service/src/test/java/com/showcase/transfer/service/OutboxPublisherIT.java
+        transfer-service/src/test/java/com/showcase/transfer/service/OutboxPublisherIT.java \
+        account-service/src/main/resources/application.yml transfer-service/src/main/resources/application.yml \
+        notification-service/src/main/resources/application.yml fraud-service/src/main/resources/application.yml \
+        gateway-service/src/main/resources/application.yml
 git commit -m "fix(observability): carry trace context across the outbox's async gap (Phase 8, Task 7)"
 ```

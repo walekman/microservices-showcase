@@ -12,6 +12,8 @@ import com.showcase.transfer.domain.TransferRepository;
 import com.showcase.transfer.domain.TransferStatus;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.tracing.Span;
+import io.micrometer.tracing.Tracer;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -42,17 +44,20 @@ public class TransferSaveService {
     private final Counter transfersCompleted;
     private final Counter transfersFailed;
     private final Counter transfersFraudRejected;
+    private final Tracer tracer;
 
     public TransferSaveService(TransferRepository transferRepository,
                                   OutboxEventRepository outboxEventRepository,
                                   ObjectMapper objectMapper,
-                                  MeterRegistry meterRegistry) {
+                                  MeterRegistry meterRegistry,
+                                  Tracer tracer) {
         this.transferRepository = transferRepository;
         this.outboxEventRepository = outboxEventRepository;
         this.objectMapper = objectMapper;
         this.transfersCompleted = meterRegistry.counter("transfers.completed");
         this.transfersFailed = meterRegistry.counter("transfers.failed");
         this.transfersFraudRejected = meterRegistry.counter("transfers.fraud_rejected");
+        this.tracer = tracer;
     }
 
     @Transactional
@@ -60,7 +65,10 @@ public class TransferSaveService {
         Transfer saved = transferRepository.save(transfer);
         OutboxEventType eventType = OutboxEventType.forStatus(saved.getStatus());
         if (eventType != null) {
-            outboxEventRepository.save(new OutboxEvent(saved.getId(), eventType, toPayload(saved)));
+            Span currentSpan = tracer.currentSpan();
+            String traceId = currentSpan != null ? currentSpan.context().traceId() : null;
+            String spanId = currentSpan != null ? currentSpan.context().spanId() : null;
+            outboxEventRepository.save(new OutboxEvent(saved.getId(), eventType, toPayload(saved), traceId, spanId));
             recordMetric(eventType, saved.getFailureCode());
         }
         return saved;
