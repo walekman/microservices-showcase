@@ -4,6 +4,9 @@ import com.showcase.transfer.domain.OutboxEvent;
 import com.showcase.transfer.domain.OutboxEventRepository;
 import com.showcase.transfer.domain.OutboxEventType;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.tracing.Span;
+import io.micrometer.tracing.TraceContext;
+import io.micrometer.tracing.Tracer;
 import org.apache.kafka.common.errors.DisconnectException;
 import org.apache.kafka.common.errors.NetworkException;
 import org.slf4j.Logger;
@@ -32,12 +35,14 @@ public class OutboxPublisher implements SchedulingConfigurer {
     private final OutboxEventRepository outboxEventRepository;
     private final KafkaTemplate<String, String> kafkaTemplate;
     private final OutboxPublisherProperties properties;
+    private final Tracer tracer;
 
     public OutboxPublisher(OutboxEventRepository outboxEventRepository, KafkaTemplate<String, String> kafkaTemplate,
-                            OutboxPublisherProperties properties, MeterRegistry meterRegistry) {
+                            OutboxPublisherProperties properties, MeterRegistry meterRegistry, Tracer tracer) {
         this.outboxEventRepository = outboxEventRepository;
         this.kafkaTemplate = kafkaTemplate;
         this.properties = properties;
+        this.tracer = tracer;
         meterRegistry.gauge("transfer.outbox.backlog", outboxEventRepository,
                 repository -> (double) repository.countByPublishedAtIsNull());
     }
@@ -80,6 +85,28 @@ public class OutboxPublisher implements SchedulingConfigurer {
     }
 
     private void publish(OutboxEvent event) {
+        if (event.getTraceId() == null || event.getSpanId() == null) {
+            // No trace context captured at write time (e.g. a row from before this
+            // column existed, or the outbox write happened with no active span) --
+            // fall through to a normal send, which still gets its own fresh trace via
+            // Spring Kafka's observation instrumentation, just not linked to anything.
+            doPublish(event);
+            return;
+        }
+        TraceContext parentContext = tracer.traceContextBuilder()
+                .traceId(event.getTraceId())
+                .spanId(event.getSpanId())
+                .sampled(true)
+                .build();
+        Span span = tracer.spanBuilder().setParent(parentContext).name("outbox.publish").start();
+        try (Tracer.SpanInScope ignored = tracer.withSpan(span)) {
+            doPublish(event);
+        } finally {
+            span.end();
+        }
+    }
+
+    private void doPublish(OutboxEvent event) {
         String topic = topicFor(event.getEventType());
         try {
             kafkaTemplate.send(topic, event.getTransferId().toString(), event.getPayload())

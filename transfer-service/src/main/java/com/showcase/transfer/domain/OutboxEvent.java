@@ -46,10 +46,26 @@ public class OutboxEvent {
 
     private Instant publishedAt;
 
+    // Nullable -- rows written before this column existed have none, and there is no
+    // backfill (same "no backfill for pre-existing rows" precedent as Phase 7b's
+    // ownerId/initiatorId). W3C format: traceId is 32 hex chars, spanId is 16 -- lengths
+    // match real captured values from live verification, not a guess.
+    @Column(updatable = false, length = 32)
+    private String traceId;
+
+    @Column(updatable = false, length = 16)
+    private String spanId;
+
     public OutboxEvent(UUID transferId, OutboxEventType eventType, String payload) {
+        this(transferId, eventType, payload, null, null);
+    }
+
+    public OutboxEvent(UUID transferId, OutboxEventType eventType, String payload, String traceId, String spanId) {
         this.transferId = transferId;
         this.eventType = eventType;
         this.payload = payload;
+        this.traceId = traceId;
+        this.spanId = spanId;
         this.createdAt = Instant.now();
     }
 

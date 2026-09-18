@@ -11,6 +11,7 @@ import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.actuate.observability.AutoConfigureObservability;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.context.annotation.Import;
@@ -28,7 +29,16 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+// @AutoConfigureObservability: @SpringBootTest disables real tracing/metrics export by
+// default (Spring Boot's own ObservabilityContextCustomizerFactory adds
+// management.tracing.enabled=false as a test-only property source, overriding whatever
+// application.yml says, regardless of precedence tricks -- confirmed live via the
+// condition-evaluation report, including with management.tracing.enabled=true set as a
+// same-JVM unforked system property, which still had no effect). Needed here, and only
+// here in this class, because publishedRecordCarriesTraceparentHeaderWhenTheOutboxEventHasTraceContext
+// asserts on real wire-level header propagation, not just a mocked call or a bean's type.
 @SpringBootTest
+@AutoConfigureObservability
 @Testcontainers
 @Import(StubServiceTokenTestConfig.class)
 class OutboxPublisherIT {
@@ -117,5 +127,35 @@ class OutboxPublisherIT {
 
         OutboxEvent reloaded = outboxEventRepository.findById(event.getId()).orElseThrow();
         assertThat(reloaded.getPublishedAt()).isEqualTo(publishedAtBefore);
+    }
+
+    @Test
+    void publishedRecordCarriesTraceparentHeaderWhenTheOutboxEventHasTraceContext() {
+        // TRANSFER_FAILED, not TRANSFER_COMPLETED -- publishesAnUnpublishedEventAndMarksItPublished
+        // above already publishes a real record to the TRANSFER_COMPLETED topic in this same
+        // class. A fresh consumer group here defaults to reading from the earliest offset, so
+        // reusing that topic would pick up that other test's leftover record too and fail with
+        // "More than one record for topic found" -- confirmed live by hitting exactly that error
+        // before this fix. A different topic sidesteps the collision entirely.
+        String traceId = "0af7651916cd43dd8448eb211c80319c";
+        String spanId = "b7ad6b7169203331";
+        String payload = "{\"status\":\"FAILED\"}";
+        outboxEventRepository.saveAndFlush(
+                new OutboxEvent(UUID.randomUUID(), OutboxEventType.TRANSFER_FAILED, payload, traceId, spanId));
+
+        outboxPublisher.publishPending();
+
+        String topic = outboxPublisherProperties.topics().failed();
+        var consumerProps = KafkaTestUtils.consumerProps(kafka.getBootstrapServers(), "outbox-publisher-it-trace", "true");
+        consumerProps.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+        try (Consumer<String, String> consumer = new KafkaConsumer<>(consumerProps)) {
+            consumer.subscribe(List.of(topic));
+            ConsumerRecord<String, String> record = KafkaTestUtils.getSingleRecord(consumer, topic, Duration.ofSeconds(10));
+
+            var traceparentHeader = record.headers().lastHeader("traceparent");
+            assertThat(traceparentHeader).isNotNull();
+            String traceparent = new String(traceparentHeader.value(), java.nio.charset.StandardCharsets.UTF_8);
+            assertThat(traceparent).contains(traceId);
+        }
     }
 }

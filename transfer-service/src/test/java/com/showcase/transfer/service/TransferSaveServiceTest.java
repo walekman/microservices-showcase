@@ -3,14 +3,19 @@ package com.showcase.transfer.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.showcase.transfer.domain.OutboxEvent;
 import com.showcase.transfer.domain.OutboxEventRepository;
 import com.showcase.transfer.domain.Transfer;
 import com.showcase.transfer.domain.TransferFailureCode;
 import com.showcase.transfer.domain.TransferRepository;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import io.micrometer.tracing.Span;
+import io.micrometer.tracing.TraceContext;
+import io.micrometer.tracing.Tracer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -30,6 +35,12 @@ class TransferSaveServiceTest {
     private TransferRepository transferRepository;
     @Mock
     private OutboxEventRepository outboxEventRepository;
+    @Mock
+    private Tracer tracer;
+    @Mock
+    private Span span;
+    @Mock
+    private TraceContext traceContext;
 
     private SimpleMeterRegistry meterRegistry;
     private TransferSaveService service;
@@ -41,7 +52,7 @@ class TransferSaveServiceTest {
         // hand-built one in a unit test needs it explicitly, or toPayload() throws.
         ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
         meterRegistry = new SimpleMeterRegistry();
-        service = new TransferSaveService(transferRepository, outboxEventRepository, objectMapper, meterRegistry);
+        service = new TransferSaveService(transferRepository, outboxEventRepository, objectMapper, meterRegistry, tracer);
     }
 
     @Test
@@ -138,5 +149,38 @@ class TransferSaveServiceTest {
 
         assertThat(meterRegistry.counter("transfers.completed").count()).isEqualTo(0.0);
         assertThat(meterRegistry.counter("transfers.failed").count()).isEqualTo(0.0);
+    }
+
+    @Test
+    void capturesTraceContextOnTheOutboxRowWhenASpanIsActive() {
+        when(tracer.currentSpan()).thenReturn(span);
+        when(span.context()).thenReturn(traceContext);
+        when(traceContext.traceId()).thenReturn("0af7651916cd43dd8448eb211c80319c");
+        when(traceContext.spanId()).thenReturn("b7ad6b7169203331");
+        Transfer transfer = new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("10.00"), UUID.randomUUID());
+        transfer.markCompleted();
+        when(transferRepository.save(transfer)).thenReturn(transfer);
+
+        service.save(transfer);
+
+        ArgumentCaptor<OutboxEvent> captor = ArgumentCaptor.forClass(OutboxEvent.class);
+        verify(outboxEventRepository).save(captor.capture());
+        assertThat(captor.getValue().getTraceId()).isEqualTo("0af7651916cd43dd8448eb211c80319c");
+        assertThat(captor.getValue().getSpanId()).isEqualTo("b7ad6b7169203331");
+    }
+
+    @Test
+    void leavesTraceContextNullWhenNoSpanIsActive() {
+        when(tracer.currentSpan()).thenReturn(null);
+        Transfer transfer = new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("10.00"), UUID.randomUUID());
+        transfer.markCompleted();
+        when(transferRepository.save(transfer)).thenReturn(transfer);
+
+        service.save(transfer);
+
+        ArgumentCaptor<OutboxEvent> captor = ArgumentCaptor.forClass(OutboxEvent.class);
+        verify(outboxEventRepository).save(captor.capture());
+        assertThat(captor.getValue().getTraceId()).isNull();
+        assertThat(captor.getValue().getSpanId()).isNull();
     }
 }
