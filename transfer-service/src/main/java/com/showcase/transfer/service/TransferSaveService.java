@@ -10,6 +10,8 @@ import com.showcase.transfer.domain.Transfer;
 import com.showcase.transfer.domain.TransferFailureCode;
 import com.showcase.transfer.domain.TransferRepository;
 import com.showcase.transfer.domain.TransferStatus;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,6 +27,11 @@ import java.util.UUID;
  * plus, at most, one insert -- no HTTP calls inside it -- so it does not reopen
  * TransferService's "the saga itself must not be @Transactional" rule; see
  * docs/phase-2-transfer-service-saga.md's Design Decisions and this phase's own.
+ *
+ * <p>Also the single place transfers.completed/transfers.failed/transfers.fraud_rejected
+ * are counted (Phase 8) -- reusing the same forStatus() terminal/non-terminal
+ * classification the outbox write already relies on, rather than a second call site
+ * inside the saga itself. See docs/phase-8-observability.md's Design Decisions.
  */
 @Service
 public class TransferSaveService {
@@ -32,13 +39,20 @@ public class TransferSaveService {
     private final TransferRepository transferRepository;
     private final OutboxEventRepository outboxEventRepository;
     private final ObjectMapper objectMapper;
+    private final Counter transfersCompleted;
+    private final Counter transfersFailed;
+    private final Counter transfersFraudRejected;
 
     public TransferSaveService(TransferRepository transferRepository,
                                   OutboxEventRepository outboxEventRepository,
-                                  ObjectMapper objectMapper) {
+                                  ObjectMapper objectMapper,
+                                  MeterRegistry meterRegistry) {
         this.transferRepository = transferRepository;
         this.outboxEventRepository = outboxEventRepository;
         this.objectMapper = objectMapper;
+        this.transfersCompleted = meterRegistry.counter("transfers.completed");
+        this.transfersFailed = meterRegistry.counter("transfers.failed");
+        this.transfersFraudRejected = meterRegistry.counter("transfers.fraud_rejected");
     }
 
     @Transactional
@@ -47,8 +61,22 @@ public class TransferSaveService {
         OutboxEventType eventType = OutboxEventType.forStatus(saved.getStatus());
         if (eventType != null) {
             outboxEventRepository.save(new OutboxEvent(saved.getId(), eventType, toPayload(saved)));
+            recordMetric(eventType, saved.getFailureCode());
         }
         return saved;
+    }
+
+    private void recordMetric(OutboxEventType eventType, TransferFailureCode failureCode) {
+        switch (eventType) {
+            case TRANSFER_COMPLETED -> transfersCompleted.increment();
+            case TRANSFER_FAILED -> {
+                transfersFailed.increment();
+                if (failureCode == TransferFailureCode.SOURCE_ACCOUNT_BLOCKED
+                        || failureCode == TransferFailureCode.DESTINATION_ACCOUNT_BLOCKED) {
+                    transfersFraudRejected.increment();
+                }
+            }
+        }
     }
 
     private String toPayload(Transfer transfer) {
