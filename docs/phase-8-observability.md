@@ -378,7 +378,7 @@ service:
 
 - [ ] **Step 9: Create `docker/tempo/tempo.yaml`**
 
-Verified live during planning (`docker run` directly against `grafana/tempo:latest`, v3.0.0): starts cleanly, OTLP gRPC/HTTP receivers confirmed listening on 4317/4318, "Tempo started" with no errors.
+**Corrected during Task 2's actual implementation — this differs from what planning verified.** Planning's `docker run` check (v3.0.0, no explicit protocol endpoints) started cleanly and looked right, but that check only proved Tempo starts, not that anything can reach it. Running it inside this Compose file's network, alongside a real `otel-collector`, surfaced the actual bug: Tempo's log showed its OTLP receivers listening on `endpoint=127.0.0.1:4317` — loopback-only, unreachable from any other container — and `otel-collector`'s logs showed a continuous stream of `connection refused` retrying every few seconds, never recovering, even well past both containers' startup. Explicit `endpoint: 0.0.0.0:...` on both protocols fixes it: re-verified live in this same Compose network afterward, confirmed by Tempo's log changing to `endpoint=[::]:4317` and `otel-collector`'s connection errors disappearing entirely.
 
 ```yaml
 server:
@@ -389,7 +389,9 @@ distributor:
     otlp:
       protocols:
         http:
+          endpoint: 0.0.0.0:4318
         grpc:
+          endpoint: 0.0.0.0:4317
 
 storage:
   trace:
