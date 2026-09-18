@@ -1,6 +1,11 @@
 server:
   port: 8084
 
+logging:
+  structured:
+    format:
+      console: logstash
+
 spring:
   application:
     name: fraud-service
