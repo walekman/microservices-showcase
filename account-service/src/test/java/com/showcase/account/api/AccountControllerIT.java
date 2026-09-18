@@ -303,7 +303,22 @@ class AccountControllerIT {
         // insert-before-update flush ordering -- which is what actually keeps a losing
         // request from double-debiting instead of merely failing loudly -- as Phase 3's
         // final review flagged (docs/roadmap.md).
-        int concurrentRequests = 10;
+        //
+        // concurrentRequests was 10 until this failed in CI (10/10 requests came back 200 OK,
+        // none 500: https://github.com/walekman/microservices-showcase/actions/runs/35272840431)
+        // while passing 10/10 on local runs. This race's window is only open until the first
+        // winner's operation-row INSERT commits: once that happens, every later request's
+        // existing-operation check sees it and safely replays (200 OK) instead of contending,
+        // so unlike returns409ForConcurrentUpdateConflict above (where every request always
+        // attempts a write), only the requests whose check lands before that first commit can
+        // ever race here. Widening to 50 gives far more attempts to land inside that window
+        // without changing the mechanism -- the same fix already applied to
+        // returns409ForConcurrentUpdateConflict for the same class of runner-dependent
+        // flakiness, just scaled up further because this window is narrower. Revisit with a
+        // deterministic synchronization point (e.g. gating AccountOperationRepository.findById
+        // on a barrier) if this still flakes in CI -- see this PR's description for why that
+        // approach was tried and reverted first.
+        int concurrentRequests = 50;
         UUID id = createAccount(new BigDecimal("100.00"));
         String sharedKey = "race-key";
 
@@ -327,7 +342,10 @@ class AccountControllerIT {
 
             List<ResponseEntity<String>> responses = new ArrayList<>();
             for (Future<ResponseEntity<String>> future : futures) {
-                responses.add(future.get(10, TimeUnit.SECONDS));
+                // 20s, not the 10s used elsewhere in this class: 50 requests contend for
+                // HikariCP's default 10-connection pool, so later ones queue for a connection
+                // before they even reach the DB.
+                responses.add(future.get(20, TimeUnit.SECONDS));
             }
 
             List<HttpStatus> statuses = new ArrayList<>();
