@@ -1,6 +1,11 @@
 server:
   port: 8083
 
+logging:
+  structured:
+    format:
+      console: logstash
+
 spring:
   application:
     name: notification-service
