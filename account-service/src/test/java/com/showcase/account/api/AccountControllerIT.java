@@ -1,13 +1,17 @@
 package com.showcase.account.api;
 
+import com.showcase.account.domain.AccountOperationRepository;
 import com.showcase.account.support.TestSecurityConfig;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -19,6 +23,8 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
@@ -43,6 +49,55 @@ class AccountControllerIT {
 
     @Autowired
     private TestRestTemplate restTemplate;
+
+    // Lets concurrentDebitsWithTheSameIdempotencyKeyNeverDoubleApplyAndTheLoserGets500 force a
+    // genuine DB-level race deterministically -- see that test's own comment for why. Armed
+    // only for the duration of that one test; a no-op (delegates straight through) for every
+    // other test in this class.
+    private static final RaceHook RACE_HOOK = new RaceHook();
+
+    @TestConfiguration
+    static class RaceHookConfig {
+        @Bean
+        @Primary
+        AccountOperationRepository racingAccountOperationRepository(AccountOperationRepository real) {
+            return (AccountOperationRepository) Proxy.newProxyInstance(
+                    AccountOperationRepository.class.getClassLoader(),
+                    new Class<?>[] {AccountOperationRepository.class},
+                    (proxy, method, args) -> {
+                        if ("findById".equals(method.getName()) && args != null && args.length == 1) {
+                            RACE_HOOK.beforeFindById((String) args[0]);
+                        }
+                        try {
+                            return method.invoke(real, args);
+                        } catch (InvocationTargetException e) {
+                            throw e.getCause();
+                        }
+                    });
+        }
+    }
+
+    private static final class RaceHook {
+        private volatile String armedKey;
+        private volatile CyclicBarrier barrier;
+
+        void arm(String key, CyclicBarrier barrier) {
+            this.armedKey = key;
+            this.barrier = barrier;
+        }
+
+        void disarm() {
+            this.armedKey = null;
+            this.barrier = null;
+        }
+
+        void beforeFindById(String calledKey) throws Exception {
+            CyclicBarrier currentBarrier = barrier;
+            if (currentBarrier != null && calledKey != null && calledKey.equals(armedKey)) {
+                currentBarrier.await();
+            }
+        }
+    }
 
     @BeforeEach
     void authenticateAsCustomer() {
@@ -303,9 +358,29 @@ class AccountControllerIT {
         // insert-before-update flush ordering -- which is what actually keeps a losing
         // request from double-debiting instead of merely failing loudly -- as Phase 3's
         // final review flagged (docs/roadmap.md).
+        //
+        // Relying on a CyclicBarrier around the HTTP call alone (as returns409ForConcurrent-
+        // UpdateConflict does) is NOT enough here: this race's window is only open until the
+        // first winner's operation-row INSERT commits, which is far narrower than the
+        // account-version race's read-then-update window. On a resource-constrained runner
+        // that window can close before a second request's existing-operation check even
+        // starts, so every request serializes into an idempotent replay (200 OK) and the
+        // race never happens -- reproduced live in CI (10/10 requests came back 200 OK) while
+        // passing 10/10 local runs, because the local machine's scheduling happened to
+        // overlap requests that CI's didn't. A wider thread count only lowers the odds of
+        // that, it doesn't remove them. Instead, force the actual overlap: RACE_HOOK (a
+        // @Primary proxy standing in for AccountOperationRepository, see its declaration)
+        // blocks every thread's existing-operation lookup for sharedKey on a same-sized
+        // barrier, so none of the concurrentRequests calls can see a result -- winner's or
+        // not -- until all of them have made that call. That guarantees every one of them
+        // reads "not yet applied" and then genuinely races the INSERT, deterministically, on
+        // any hardware.
         int concurrentRequests = 10;
         UUID id = createAccount(new BigDecimal("100.00"));
         String sharedKey = "race-key";
+
+        CyclicBarrier existingOperationCheckBarrier = new CyclicBarrier(concurrentRequests);
+        RACE_HOOK.arm(sharedKey, existingOperationCheckBarrier);
 
         CyclicBarrier barrier = new CyclicBarrier(concurrentRequests);
         List<Callable<ResponseEntity<String>>> debitCalls = new ArrayList<>();
@@ -336,8 +411,13 @@ class AccountControllerIT {
             }
 
             assertThat(statuses).hasSize(concurrentRequests);
-            // OK covers both the winner and any request that arrived late enough to see the
-            // winner's row already committed -- a genuine idempotent replay, not a race loss.
+            // The existingOperationCheckBarrier above forces every one of the concurrentRequests
+            // calls to read "not yet applied" before any of them can insert, so exactly one wins
+            // the INSERT and the other concurrentRequests - 1 collide on the primary key. OK is
+            // still allowed rather than asserted exactly once: it is the winner's outcome, and
+            // this only pins down the property this test exists to prove (no double-apply, loser
+            // fails loudly), not the exact winner count, which is an implementation detail of
+            // Hibernate's flush ordering rather than part of the contract.
             assertThat(statuses).allMatch(status -> status == HttpStatus.OK || status == HttpStatus.INTERNAL_SERVER_ERROR);
             assertThat(statuses)
                     .as("at least one of %s same-key concurrent debits should lose the insert race", concurrentRequests)
@@ -349,6 +429,7 @@ class AccountControllerIT {
                     .isEqualByComparingTo("60.00");
         } finally {
             executor.shutdownNow();
+            RACE_HOOK.disarm();
         }
     }
 
