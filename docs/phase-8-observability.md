@@ -477,7 +477,7 @@ Add to each of the 5 services' `<dependencies>`:
     </dependency>
 ```
 
-- [ ] **Step 2: Widen actuator exposure on all 5 services**
+- [ ] **Step 2: Widen actuator exposure on all 5 services, and explicitly enable Prometheus export**
 
 In each service's `application.yml`, change:
 ```yaml
@@ -494,7 +494,13 @@ management:
     web:
       exposure:
         include: health,prometheus
+  prometheus:
+    metrics:
+      export:
+        enabled: true
 ```
+
+**The `management.prometheus.metrics.export.enabled: true` block is not optional, and was not in this plan's original draft — found only by actually running a test against it, not assumed from docs.** On Boot 3.5.16, adding the `micrometer-registry-prometheus` dependency and widening `exposure.include` alone still leaves `/actuator/prometheus` 404ing: the `PrometheusMeterRegistry` bean itself never gets created, because `PrometheusMetricsExportAutoConfiguration`'s `@ConditionalOnEnabledMetricsExport` condition is *false by default*. Its condition-evaluation-report message reads `management.defaults.metrics.export.enabled is considered false` — that text names the generic fallback property, not the one that actually needs setting; `management.defaults.metrics.export.enabled=true` (tried first, including as a same-JVM unforked system property to rule out any propagation issue) had no effect at all. Only the registry-specific `management.prometheus.metrics.export.enabled=true` flips the condition. Verified live: without it, `PrometheusExposureIT` (Step 8 below) gets 404; with it, 200 and the real metric names. (Getting there also needed Step 7's `SecurityConfig` fix — without that, the same endpoint 401s before this condition is ever reached.)
 
 - [ ] **Step 3: Write the failing test — business metric counters in `TransferSaveServiceTest`**
 
@@ -704,7 +710,21 @@ public class TransferSaveService {
 Run: `./mvnw -pl transfer-service -am test -Dtest=TransferSaveServiceTest`
 Expected: PASS, all 8 tests (3 existing + 5 new) green.
 
-- [ ] **Step 7: Write and run a Prometheus-exposure IT**
+- [ ] **Step 7: Permit `/actuator/prometheus` in every service's `SecurityConfig`**
+
+**Also not in this plan's original draft — found the same way as Step 2's fix, by actually running a request against the endpoint.** `account-service`, `transfer-service`, `fraud-service`, and `gateway-service` all have Spring Security + OAuth2 Resource Server (Phase 7); each `SecurityConfig` permits only `/actuator/health/**` without a JWT, so `/actuator/prometheus` falls through to `anyRequest().authenticated()` and returns 401. Prometheus's plain HTTP scrape has no way to attach a JWT, so this must be a `permitAll()` matcher, the same posture as the existing health matcher (`notification-service` has no `SecurityConfig` at all, so it needs no change here).
+
+In each of the 4 `SecurityConfig` classes, change:
+```java
+                        .requestMatchers("/actuator/health/**").permitAll()
+```
+to:
+```java
+                        .requestMatchers("/actuator/health/**").permitAll()
+                        .requestMatchers("/actuator/prometheus").permitAll()
+```
+
+- [ ] **Step 8: Write and run a Prometheus-exposure IT**
 
 Closes the coverage this phase's own Testing section promises ("a lightweight test per service... asserting the service's own business metric names appear in the scrape output") — Step 3-6 above prove the counter *logic* against a hand-built `SimpleMeterRegistry`, not that the real Spring-autoconfigured `PrometheusMeterRegistry` actually surfaces them on `/actuator/prometheus`. This also pins down the real Prometheus metric names (Micrometer's dot-to-underscore, `_total`-suffix-on-counters convention) that Task 5's dashboard JSON currently flags as unverified.
 
@@ -760,7 +780,7 @@ class PrometheusExposureIT {
 Run: `./mvnw -pl transfer-service -am test -Dtest=PrometheusExposureIT`
 Expected: PASS. `Transfer`'s `fromAccountId`/`toAccountId` are arbitrary UUIDs with no real Account row behind them — fine here, `Transfer` has no foreign-key constraint to Account (database-per-service; `TransferRepositoryTest` already inserts rows the same way). If either `assertThat(...).contains(...)` fails, read the actual response body to find the real metric name Micrometer produced rather than guessing — that real name is what Task 5's dashboard JSON must use.
 
-- [ ] **Step 8: Create `docker/prometheus/prometheus.yml`**
+- [ ] **Step 9: Create `docker/prometheus/prometheus.yml`**
 
 ```yaml
 global:
@@ -789,7 +809,7 @@ scrape_configs:
       - targets: ["gateway-service:8080"]
 ```
 
-- [ ] **Step 9: Add `prometheus` to `docker-compose.yml`**
+- [ ] **Step 10: Add `prometheus` to `docker-compose.yml`**
 
 ```yaml
   prometheus:
@@ -809,7 +829,7 @@ scrape_configs:
 
 No `command:` override needed — the image's default command already points at `/etc/prometheus/prometheus.yml` (confirmed via `docker inspect prom/prometheus:latest` during planning), which is exactly where the volume mount above places this config. The healthcheck uses exec-form `wget` (not `CMD-SHELL`) since this image was confirmed to have `/bin/wget` but no shell to run a `CMD-SHELL` pipeline in.
 
-- [ ] **Step 10: Commit**
+- [ ] **Step 11: Commit**
 
 ```bash
 git checkout -b feature/phase-8-task-3-metrics
@@ -817,6 +837,10 @@ git add account-service/pom.xml transfer-service/pom.xml notification-service/po
         account-service/src/main/resources/application.yml transfer-service/src/main/resources/application.yml \
         notification-service/src/main/resources/application.yml fraud-service/src/main/resources/application.yml \
         gateway-service/src/main/resources/application.yml \
+        account-service/src/main/java/com/showcase/account/config/SecurityConfig.java \
+        transfer-service/src/main/java/com/showcase/transfer/config/SecurityConfig.java \
+        fraud-service/src/main/java/com/showcase/fraud/config/SecurityConfig.java \
+        gateway-service/src/main/java/com/showcase/gateway/config/SecurityConfig.java \
         transfer-service/src/main/java/com/showcase/transfer/service/TransferSaveService.java \
         transfer-service/src/test/java/com/showcase/transfer/service/TransferSaveServiceTest.java \
         transfer-service/src/test/java/com/showcase/transfer/service/PrometheusExposureIT.java \

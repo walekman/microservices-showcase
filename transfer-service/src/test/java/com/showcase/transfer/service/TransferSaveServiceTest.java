@@ -7,6 +7,7 @@ import com.showcase.transfer.domain.OutboxEventRepository;
 import com.showcase.transfer.domain.Transfer;
 import com.showcase.transfer.domain.TransferFailureCode;
 import com.showcase.transfer.domain.TransferRepository;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -16,6 +17,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.math.BigDecimal;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -29,6 +31,7 @@ class TransferSaveServiceTest {
     @Mock
     private OutboxEventRepository outboxEventRepository;
 
+    private SimpleMeterRegistry meterRegistry;
     private TransferSaveService service;
 
     @BeforeEach
@@ -37,7 +40,8 @@ class TransferSaveServiceTest {
         // module -- Spring's auto-configured bean has it registered already, but a
         // hand-built one in a unit test needs it explicitly, or toPayload() throws.
         ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
-        service = new TransferSaveService(transferRepository, outboxEventRepository, objectMapper);
+        meterRegistry = new SimpleMeterRegistry();
+        service = new TransferSaveService(transferRepository, outboxEventRepository, objectMapper, meterRegistry);
     }
 
     @Test
@@ -75,5 +79,64 @@ class TransferSaveServiceTest {
         service.save(failed);
 
         verify(outboxEventRepository, org.mockito.Mockito.times(2)).save(any());
+    }
+
+    @Test
+    void incrementsCompletedCounterForACompletedTransfer() {
+        Transfer transfer = new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("10.00"), UUID.randomUUID());
+        transfer.markCompleted();
+        when(transferRepository.save(transfer)).thenReturn(transfer);
+
+        service.save(transfer);
+
+        assertThat(meterRegistry.counter("transfers.completed").count()).isEqualTo(1.0);
+        assertThat(meterRegistry.counter("transfers.failed").count()).isEqualTo(0.0);
+    }
+
+    @Test
+    void incrementsFailedCounterForAFailedTransfer() {
+        Transfer transfer = new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("10.00"), UUID.randomUUID());
+        transfer.markFailed(TransferFailureCode.INSUFFICIENT_FUNDS, "not enough money");
+        when(transferRepository.save(transfer)).thenReturn(transfer);
+
+        service.save(transfer);
+
+        assertThat(meterRegistry.counter("transfers.failed").count()).isEqualTo(1.0);
+        assertThat(meterRegistry.counter("transfers.fraud_rejected").count()).isEqualTo(0.0);
+    }
+
+    @Test
+    void incrementsFraudRejectedCounterAlongsideFailedForABlockedSourceAccount() {
+        Transfer transfer = new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("10.00"), UUID.randomUUID());
+        transfer.markFailed(TransferFailureCode.SOURCE_ACCOUNT_BLOCKED, "source blocked");
+        when(transferRepository.save(transfer)).thenReturn(transfer);
+
+        service.save(transfer);
+
+        assertThat(meterRegistry.counter("transfers.failed").count()).isEqualTo(1.0);
+        assertThat(meterRegistry.counter("transfers.fraud_rejected").count()).isEqualTo(1.0);
+    }
+
+    @Test
+    void incrementsFraudRejectedCounterForABlockedDestinationAccount() {
+        Transfer transfer = new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("10.00"), UUID.randomUUID());
+        transfer.markFailed(TransferFailureCode.DESTINATION_ACCOUNT_BLOCKED, "destination blocked");
+        when(transferRepository.save(transfer)).thenReturn(transfer);
+
+        service.save(transfer);
+
+        assertThat(meterRegistry.counter("transfers.fraud_rejected").count()).isEqualTo(1.0);
+    }
+
+    @Test
+    void incrementsNoCounterForATransientStatus() {
+        Transfer transfer = new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("10.00"), UUID.randomUUID());
+        transfer.markCompensationRequired(TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, "credit leg timed out");
+        when(transferRepository.save(transfer)).thenReturn(transfer);
+
+        service.save(transfer);
+
+        assertThat(meterRegistry.counter("transfers.completed").count()).isEqualTo(0.0);
+        assertThat(meterRegistry.counter("transfers.failed").count()).isEqualTo(0.0);
     }
 }
