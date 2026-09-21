@@ -94,6 +94,9 @@ management:
     health:
       probes:
         enabled: true
+  opentelemetry:
+    resource-attributes:
+      "service.version": "@project.version@"
   tracing:
     enabled: true
     sampling:
