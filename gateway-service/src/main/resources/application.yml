@@ -13,7 +13,13 @@ spring:
     virtual:
       enabled: true
 
+info:
+  commit: ${GIT_SHA:unknown}
+
 management:
+  info:
+    env:
+      enabled: true
   endpoints:
     web:
       exposure:

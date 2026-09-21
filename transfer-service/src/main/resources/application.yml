@@ -75,7 +75,13 @@ spring:
           transfer-service:
             token-uri: ${KEYCLOAK_TOKEN_URI:http://localhost:8180/realms/showcase/protocol/openid-connect/token}
 
+info:
+  commit: ${GIT_SHA:unknown}
+
 management:
+  info:
+    env:
+      enabled: true
   endpoints:
     web:
       exposure:

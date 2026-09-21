@@ -16,5 +16,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=build /app/notification-service/target/notification-service-*.jar app.jar
+ARG GIT_SHA=unknown
+ENV GIT_SHA=${GIT_SHA}
+LABEL org.opencontainers.image.revision=${GIT_SHA}
 EXPOSE 8083
 ENTRYPOINT ["java", "-jar", "app.jar"]
