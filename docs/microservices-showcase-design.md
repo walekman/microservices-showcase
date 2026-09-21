@@ -77,6 +77,7 @@ Each stateful service owns its data exclusively — no service queries another's
 - **Metrics:** standard JVM/HTTP metrics plus business metrics: transfers completed/failed/fraud-rejected counters, outbox-backlog gauge. Resilience4j's Micrometer integration exposes circuit-breaker state transitions as metrics for free — visible on a Grafana panel during a fault-injection test.
 - **Logging:** structured JSON, `traceId`/`spanId` auto-injected via MDC for correlation to traces/metrics. No centralized aggregation; `docker compose logs` is sufficient for the demo.
 - **Health:** Actuator health/readiness endpoints per service, wired into Docker Compose healthchecks.
+- **Versioning:** each service's build version is its pom `<version>` and is exposed four ways: `GET /actuator/info` (unauthenticated: `build.version` plus the git commit), a constant-1 `application_info{version,commit}` gauge (the Prometheus "info metric" convention) driving a provisioned Grafana Service Versions dashboard, the `service.version` OpenTelemetry resource attribute on every span, and an OCI `revision` label on each image. This is build versioning only; API-contract versioning (OpenAPI `info.version`, currently `v1`) is separate and unchanged.
 
 ## 6. Testing Strategy
 

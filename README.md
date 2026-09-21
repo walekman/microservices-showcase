@@ -28,7 +28,7 @@ This starts Postgres, Account Service (8081), Transfer Service (8082), Fraud Ser
 
 ## Authentication (Keycloak)
 
-Every endpoint except `/actuator/health` and Swagger's own pages now needs a bearer JWT
+Every endpoint except `/actuator/health`, `/actuator/info`, `/actuator/prometheus`, and Swagger's own pages now needs a bearer JWT
 (see `docs/phase-7-auth-keycloak-jwt.md`). Keycloak comes up pre-configured with a `showcase`
 realm — two demo users, `ada` and `bob` (password `password` for both), each with the
 `customer` role, and a third, `admin` (password `password`), holding `account-admin` and
@@ -91,9 +91,9 @@ behind it each independently check the token.
 
 ## Observability
 
-Grafana at http://localhost:3001 (no login needed — anonymous viewer access) has two dashboards
-provisioned on startup: a JVM/Micrometer dashboard and a business-metrics dashboard (transfer
-completed/failed/fraud-rejected counters, outbox backlog, circuit-breaker state). Prometheus
+Grafana at http://localhost:3001 (no login needed — anonymous viewer access) has three dashboards
+provisioned on startup: a JVM/Micrometer dashboard, a business-metrics dashboard (transfer
+completed/failed/fraud-rejected counters, outbox backlog, circuit-breaker state), and a Service Versions dashboard. The Service Versions dashboard shows which version and commit each service is running, from the `application_info` metric every service publishes; the same facts are at `/actuator/info` on each service's port, no token needed. Pass the commit when building — `GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build` — or it shows as `unknown`. Prometheus
 (http://localhost:9090) scrapes `/actuator/prometheus` on all five services every 10s — check
 its Targets page if a Grafana panel shows "No data." Every service also exports traces via
 OTLP through an OTel Collector to Grafana Tempo; trigger any transfer below, then open Grafana

@@ -1,0 +1,92 @@
+{
+  "title": "Microservices Showcase — Service Versions",
+  "uid": "showcase-service-versions",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Services Reporting",
+      "type": "stat",
+      "gridPos": { "h": 5, "w": 8, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "count(application_info)", "refId": "A" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Distinct Versions Running",
+      "type": "stat",
+      "description": "1 = every service runs the same version. More than 1 = version skew.",
+      "gridPos": { "h": 5, "w": 8, "x": 8, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "count(count by (version) (application_info))", "refId": "A" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 2 } ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "title": "Distinct Commits Running",
+      "type": "stat",
+      "description": "More than 1 = the stack is partly redeployed, e.g. after docker compose up --build --no-deps <service>.",
+      "gridPos": { "h": 5, "w": 8, "x": 16, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "count(count by (commit) (application_info))", "refId": "A" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 2 } ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "title": "Running Builds",
+      "type": "table",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "application_info", "instant": true, "format": "table", "refId": "A" }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true, "Value": true, "__name__": true, "instance": true },
+            "renameByName": { "job": "Service", "version": "Version", "commit": "Commit" },
+            "indexByName": { "job": 0, "version": 1, "commit": 2 }
+          }
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Build History",
+      "type": "state-timeline",
+      "description": "One row per service+version+commit. A new row appearing is a redeploy.",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "application_info", "legendFormat": "{{job}} · {{version}} · {{commit}}", "refId": "A" }
+      ]
+    }
+  ]
+}

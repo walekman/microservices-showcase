@@ -80,12 +80,12 @@
 <script>
   const H = "http://localhost:";
   const swagger = [["Swagger UI", "/swagger-ui/index.html"], ["OpenAPI JSON", "/v3/api-docs"]];
-  const actuator = [["Health", "/actuator/health"], ["Prometheus metrics", "/actuator/prometheus"]];
+  const actuator = [["Health", "/actuator/health"], ["Build info", "/actuator/info"], ["Prometheus metrics", "/actuator/prometheus"]];
 
   const SECTIONS = [
     { title: "Application services", items: [
       { name: "Gateway", port: 8080, desc: "Single entry point. Validates the JWT and routes /transfers/** and /accounts/**.",
-        links: actuator, note: "No Swagger of its own: use the service UIs below. Everything except health/metrics needs a bearer token." },
+        links: actuator, note: "No Swagger of its own: use the service UIs below. Everything except health/info/metrics needs a bearer token." },
       { name: "Account Service", port: 8081, desc: "Accounts and balances, debit/credit with optimistic locking.", links: [...swagger, ...actuator] },
       { name: "Transfer Service", port: 8082, desc: "Orchestrates the transfer saga, compensation and idempotency.", links: [...swagger, ...actuator] },
       { name: "Fraud Service", port: 8084, desc: "Synchronous fraud check called by Transfer.", links: [...swagger, ...actuator] },
@@ -103,6 +103,7 @@
       { name: "Grafana", port: 3001, desc: "Dashboards plus Tempo trace search. Host port 3001, container 3000.", links: [
         ["Home", "/"],
         ["Business metrics dashboard", "/d/showcase-business-metrics"],
+        ["Service versions dashboard", "/d/showcase-service-versions"],
         ["JVM (Micrometer) dashboard", "/d/a0c90e53-d71a-4128-8f4b-8d272e17e2e1"],
         ["Explore (pick Tempo for traces)", "/explore"],
       ]},
