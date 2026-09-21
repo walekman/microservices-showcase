@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this phase task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. **Read this brief critically rather than transcribing it: if something in it is wrong or impossible, report it instead of silently working around it.**
 
-**Goal:** Make "which build is each service running?" answerable in four places from one source of truth — an unauthenticated `/actuator/info` on every service, a Prometheus info metric, the OpenTelemetry `service.version` resource attribute on every span, and a provisioned Grafana "Service Versions" dashboard — and make that version controllable from one line in the root `pom.xml` (overridable by CI with `-Drevision=`).
+**Goal:** Make "which build is each service running?" answerable in four places from one source of truth — an unauthenticated `/actuator/info` on every service, a Prometheus info metric, the OpenTelemetry `service.version` resource attribute on every span, and a provisioned Grafana "Service Versions" dashboard — all reading the one version the build already has, the pom's `<version>`.
 
-**Architecture:** The build version comes from a single `<revision>` property in the root `pom.xml`; Spring Boot's `build-info` goal turns it into `META-INF/build-info.properties`, which Boot exposes as a `BuildProperties` bean. Everything else reads that bean or the `info.commit` property (the git SHA, injected as a Docker build arg because `.git` is not in the image build context). Each service publishes a constant-1 `application_info{version,commit}` gauge — the Prometheus "info metric" convention — which the existing Prometheus scrape already collects, and a new Grafana dashboard renders it. No new containers, no new Java dependency.
+**Architecture:** The build version is the pom's existing `<version>`; Spring Boot's `build-info` goal turns it into `META-INF/build-info.properties`, which Boot exposes as a `BuildProperties` bean. Everything else reads that bean or the `info.commit` property (the git SHA, injected as a Docker build arg because `.git` is not in the image build context). Each service publishes a constant-1 `application_info{version,commit}` gauge — the Prometheus "info metric" convention — which the existing Prometheus scrape already collects, and a new Grafana dashboard renders it. No new containers, no new Java dependency.
 
 **Tech Stack:** Spring Boot 3.5.16's `spring-boot-maven-plugin` `build-info` goal (version managed by the Boot parent), Micrometer 1.15.12 (`MeterBinder`, `Gauge`), Boot's `management.opentelemetry.resource-attributes`, Grafana provisioned dashboard JSON. **No new pinned dependency** — see CLAUDE.md's pinned-dependency lesson: nothing here is outside the Boot BOM, so no pin needs re-checking on this phase; the tests exercise the features themselves regardless.
 
@@ -16,7 +16,7 @@
 - Spring MVC (blocking); no new containers; local deployment stays Docker Compose only.
 - `/actuator/info` is **unauthenticated**, like `/actuator/health/**` and `/actuator/prometheus` (user decision, 2026-09-21). Its content is therefore limited to build name/version/time and the commit SHA. Do **not** enable the `java`, `os` or `process` info contributors, and do not add any other `info.*` property.
 - The `management.endpoints.web.exposure.include` list becomes exactly `health,info,prometheus` in all five services — never `*`.
-- The project's own version literal (`0.1.0-SNAPSHOT`) must appear in exactly one place after Task 1: the `<revision>` property in the root `pom.xml`.
+- The project version stays the plain `<version>` literal in the six poms. This phase does not restructure it — no `<revision>` property, no `${revision}` (dropped as speculative; see Design Decisions).
 - Never commit directly to `master`; one branch per task, `feature/phase-8b-task-<N>-<short-description>`, cut from a freshly fetched `origin/master` (**local `master` was 19 commits stale when this phase was planned — branch from `origin/master`, not `master`**), one PR per task, stop after each. Subagent review is manual, on request. (CLAUDE.md)
 - Default to `haiku` for implementer/routine-review subagents; use a more capable model for the final whole-branch review; always name the model explicitly; give smaller models the explicit checklists in this document. (CLAUDE.md)
 - Sync any review fix back into this document verbatim from the merged source, not by hand. (CLAUDE.md)
@@ -27,7 +27,7 @@ A service has a **build version** (what artifact is deployed — `0.1.0-SNAPSHOT
 
 ## Design Decisions Worth Knowing Before You Start
 
-**What the industry-standard mechanism is, and why this phase follows it.** Every mature stack converges on the same shape: one version source in the build → the artifact carries it → the running process reports it through a machine-readable channel → the metrics system collects it like any other signal → a dashboard renders it. Concretely: (1) a build-time version (SemVer, set by CI from a tag), (2) an embedded build-metadata file (`build-info.properties` / `git.properties` for Spring), (3) a metadata endpoint (`/actuator/info`), (4) an **info metric** — a gauge fixed at `1` whose *labels* carry the metadata: `prometheus_build_info`, `go_build_info`, `kube_pod_info`, `node_uname_info` — and (5) the version as an OpenTelemetry resource attribute (`service.version`, a standard semantic convention). Kubernetes shops get the image tag from kube-state-metrics (`kube_pod_container_info`) and CD tools (Argo CD, Flux) add deployment annotations; at organisation scale a service catalog such as Backstage sits above all of it. This phase implements (1)–(5) at the scale a five-service Compose stack warrants.
+**What the industry-standard mechanism is, and why this phase follows it.** Every mature stack converges on the same shape: one version source in the build → the artifact carries it → the running process reports it through a machine-readable channel → the metrics system collects it like any other signal → a dashboard renders it. Concretely: (1) a build-time version (SemVer, set by CI from a tag), (2) an embedded build-metadata file (`build-info.properties` / `git.properties` for Spring), (3) a metadata endpoint (`/actuator/info`), (4) an **info metric** — a gauge fixed at `1` whose *labels* carry the metadata: `prometheus_build_info`, `go_build_info`, `kube_pod_info`, `node_uname_info` — and (5) the version as an OpenTelemetry resource attribute (`service.version`, a standard semantic convention). Kubernetes shops get the image tag from kube-state-metrics (`kube_pod_container_info`) and CD tools (Argo CD, Flux) add deployment annotations; at organisation scale a service catalog such as Backstage sits above all of it. This phase implements (2)–(5) at the scale a five-service Compose stack warrants; (1) — CI setting the version from a tag — is deferred (see the Scope Boundary).
 
 **Why a Grafana dashboard over an info metric, and not a custom "version aggregator" service.** The non-standard answer is a bespoke service that polls every `/info` endpoint and serves a page: it re-implements service discovery, scrape timing and staleness handling that Prometheus already does, and adds a sixth deployable to a five-service demo. Prometheus already scrapes all five services every 10 s, so the version data needs no new plumbing — only a metric to scrape and a dashboard to draw it. `/actuator/info` stays as the human/`curl` path; the two agree because both read the same `BuildProperties` bean and `info.commit` property.
 
@@ -39,7 +39,7 @@ A service has a **build version** (what artifact is deployed — `0.1.0-SNAPSHOT
 
 **Why the commit SHA is a Docker build arg and not `git-commit-id-maven-plugin` / `git.properties`.** `git.properties` is the standard answer for non-container builds, but the Dockerfiles build inside the image from an explicit `COPY` list — `.git` is not in the build context, and adding it would bust the Maven layer cache on every commit. So CI/compose passes `GIT_SHA` as a build arg (the standard container-build answer). The `ARG`/`ENV`/`LABEL` sit in the **final stage after the jar `COPY`**, so a changing SHA invalidates only the last few cheap layers, never the Maven build. The cost: a service run outside Docker reports `commit: unknown`. Compose defaults the arg to `unknown` — **not** a plausible-looking `dev` — so a forgotten `GIT_SHA` is visibly wrong on the dashboard rather than silently misleading.
 
-**Why one `<revision>` property instead of `maven-release-plugin`.** Six poms hard-coded `0.1.0-SNAPSHOT`. Maven's CI-friendly `${revision}` (Maven ≥ 3.5; the wrapper pins 3.9.9) collapses that to one property that CI overrides with `-Drevision=1.2.3`, with no plugin. `maven-release-plugin` also commits, tags and bumps SNAPSHOTs — machinery for publishing to an artifact repository this project does not have. Verified during planning: `-Drevision=9.9.9` yields `fraud-service-9.9.9.jar` with `build.version=9.9.9`, and the Dockerfiles' `target/<svc>-*.jar` glob is unaffected.
+**Why the version stays a plain `<version>` (a `${revision}` property was planned, then dropped).** Maven's CI-friendly `${revision}` would collapse the six hard-coded `0.1.0-SNAPSHOT` literals into one property that CI overrides with `-Drevision=1.2.3`. It was in the first draft of this plan and the user dropped it on 2026-09-21: nothing consumes it — CI only runs `./mvnw -B test` and there is no release pipeline or image registry — so it is speculative, and it makes the poms look unusual. Everything this phase delivers works identically with the literal `<version>`, because `build-info` reads `project.version` either way. It is a drop-in later: during planning, `<revision>` in the root pom plus `${revision}` in the six poms built across the reactor, and `-Drevision=9.9.9` produced `fraud-service-9.9.9.jar` with `build.version=9.9.9` (the Dockerfiles' `target/<svc>-*.jar` glob is unaffected). Revisit it in the release-automation follow-up (Scope Boundary).
 
 **Why `management.opentelemetry.resource-attributes` and not a custom `Resource` bean.** Boot 3.5.16 ships it (confirmed in the actuator-autoconfigure metadata) and it merges into the same `Resource` the OTLP exporter uses. The quoted key `"service.version"` preserves the dot. The value is `@project.version@` — Boot's starter-parent filters `application*.yml` with the `@` delimiter, so it resolves to the pom version at build time with no Java. (`${...}` placeholders elsewhere in the ymls are untouched by that filtering; the only literal `@` in any yml is inside a comment at `transfer-service/.../application.yml:117`.)
 
@@ -55,8 +55,6 @@ All of the below was run in a throwaway git worktree at `origin/master` (`6e043a
 
 | Claim | Result |
 |---|---|
-| `<revision>` in root + `${revision}` in all six poms resolves across the reactor | ✅ Built and tested |
-| `-Drevision=9.9.9 package` | ✅ `fraud-service-9.9.9.jar`, `build.version=9.9.9` |
 | `build-info` goal writes `META-INF/build-info.properties` | ✅ `artifact`, `group`, `name`, `time`, `version` |
 | `@project.version@` is filtered into `application.yml` | ✅ `"service.version": "0.1.0-SNAPSHOT"` in `target/classes/application.yml` |
 | `/actuator/info` reachable with no token after adding the `permitAll` | ✅ 200 with `build.version` and `commit` |
@@ -64,7 +62,7 @@ All of the below was run in a throwaway git worktree at `origin/master` (`6e043a
 | `application.info` gauge scrapes as `application_info{commit=…,version=…} 1` | ✅ through the real `/actuator/prometheus` endpoint |
 | `BuildInfoIT` (all three tests below) | ✅ **3/3 green on Fraud and on Gateway** |
 
-**Not verified during planning** — the implementer must treat these as unproven: Account, Transfer and Notification runs (the edits are mechanical copies, and their Testcontainers scaffolding is copied from those modules' existing ITs, but none was run); everything Docker-side (build args, image labels, the running stack); Prometheus and Grafana behaviour with the new metric/dashboard (Tasks 3–4 verify these live); and whether `service.version` actually reaches Tempo (the IT asserts the `Resource` bean, the exporter's input — Task 3 has a best-effort live check).
+**Not verified during planning** — the implementer must treat these as unproven: the exact setup this plan specifies (the spike ran with `${revision}` in the poms, which this plan drops; nothing above depends on it, but it was not re-run with plain `<version>`); Account, Transfer and Notification runs (the edits are mechanical copies, and their Testcontainers scaffolding is copied from those modules' existing ITs, but none was run); everything Docker-side (build args, image labels, the running stack); Prometheus and Grafana behaviour with the new metric/dashboard (Tasks 3–4 verify these live); and whether `service.version` actually reaches Tempo (the IT asserts the `Resource` bean, the exporter's input — Task 3 has a best-effort live check).
 
 **One planning finding that changes how builds behave:** `build-info` binds to `generate-resources`, so `./mvnw test` now has to resolve the Boot Maven plugin's *own* dependencies (`spring-boot-buildpack-platform`, `jna`, `commons-compress`, …) — previously only `package` needed the plugin, so it was never resolved for a test run. An **offline** build (`-o`) on a cold cache fails with `Cannot access central … in offline mode`. Online builds (CI, Docker, a normal dev machine) are unaffected; run one online build first if you use `-o`.
 
@@ -84,7 +82,7 @@ This document and the roadmap row land first, on `feature/docs-phase-8b-version-
 
 | # | Task | Deliverable |
 |---|---|---|
-| 1 | Version source + `/actuator/info` | `<revision>`, `build-info`, `info` exposed, `permitAll` on four services, `BuildInfoIT` ×5 |
+| 1 | Build info + `/actuator/info` | `build-info` on all five, `info` exposed, `permitAll` on four services, `BuildInfoIT` ×5 |
 | 2 | Commit SHA | `info.commit`, Docker `GIT_SHA` build arg + OCI label, compose build args, extended `BuildInfoIT` |
 | 3 | Info metric + OTel `service.version` | `BuildInfoMetricsConfig` ×5, resource attribute, extended `BuildInfoIT` |
 | 4 | Grafana dashboard + docs sync + live verification | `service-versions.json`, README/design doc/CLAUDE.md/service-links/roadmap sync |
@@ -101,7 +99,7 @@ Deliberately not in this phase:
 
 - **API/contract versioning** — no `/v1` URI prefix, no header/media-type versioning; OpenAPI `info.version` stays the hard-coded `"v1"`. A `/v1` prefix would rewrite the Gateway routes and every test URL for little showcase value. (Spring Framework 7's native API versioning arrives with Boot 4, which is a separate migration — see Phase 8's Scope Boundary.)
 - **Event `schemaVersion`** on the transactional-outbox payload. Today `OutboxEvent` carries `eventType` and a raw `payload` string with no schema version; Notification consumes it unversioned. Adding one changes the Transfer producer and the Notification consumer and deserves its own design — a strong candidate for a later phase on Kafka contract evolution.
-- **Release automation** — computing `-Drevision` from a git tag, building/pushing tagged images, changelog tooling (release-please, JReleaser). CI (`.github/workflows/ci.yml`) only runs `./mvnw -B test` and there is no image registry. This phase makes the *mechanism* CI needs (`-Drevision`, `GIT_SHA` build arg) exist; wiring it is a follow-up.
+- **Release automation and a version override** — computing the version from a git tag, a `${revision}` / `-Drevision=` override (in the first draft, dropped as speculative — see Design Decisions), building/pushing tagged images, changelog tooling (release-please, JReleaser). CI (`.github/workflows/ci.yml`) only runs `./mvnw -B test` and there is no image registry. This phase only makes the commit half of what CI would need (the `GIT_SHA` build arg) exist; wiring the rest is a follow-up.
 - **`git-commit-id-maven-plugin` / `git.properties`** — see Design Decisions.
 - **Version in structured logs** — Boot 3.5's `logging.structured.json.add.*` could stamp it; traces, metrics and `/info` already answer the question.
 - **CI-pushed Grafana deployment annotations** and **version-skew alert rules** — no CD stage and no Alertmanager in the stack.
@@ -115,7 +113,7 @@ Add a `8b` row between Phase 8 and Phase 9 in `docs/roadmap.md` (done when this 
 
 Each item needs a stated result, not "looks fine":
 
-1. `grep -rn "0.1.0-SNAPSHOT" --include=pom.xml .` matches **exactly one line**, the `<revision>` property in the root `pom.xml`.
+1. `grep -rn "0.1.0-SNAPSHOT" --include=pom.xml .` matches **exactly six lines** (the root pom's own `<version>` and the five `<parent>` blocks), and `grep -rn "revision" --include=pom.xml .` matches nothing — the version was not restructured.
 2. In all five `application.yml`, `management.endpoints.web.exposure.include` is exactly `health,info,prometheus` (`grep -n "include:"`). No `*`.
 3. `grep -rn "actuator/\*\*\|actuator/\*" --include=SecurityConfig.java .` matches nothing; the four `SecurityConfig` files each contain exactly `.requestMatchers("/actuator/info").permitAll()` and Notification has no `SecurityConfig`.
 4. The only `info.*` property in any `application.yml` is `info.commit`; `management.info` contains only `env.enabled: true`.
@@ -130,13 +128,12 @@ Each item needs a stated result, not "looks fine":
 
 ## Tasks
 
-### Task 1: Single version source + unauthenticated `/actuator/info`
+### Task 1: Build info + unauthenticated `/actuator/info`
 
-**Branch:** `feature/phase-8b-task-1-version-source-and-info`
+**Branch:** `feature/phase-8b-task-1-build-info-endpoint`
 
 **Files:**
-- Modify: `pom.xml` (root)
-- Modify: `account-service/pom.xml`, `transfer-service/pom.xml`, `notification-service/pom.xml`, `fraud-service/pom.xml`, `gateway-service/pom.xml` — parent `<version>` and a `build-info` execution
+- Modify: `account-service/pom.xml`, `transfer-service/pom.xml`, `notification-service/pom.xml`, `fraud-service/pom.xml`, `gateway-service/pom.xml` — a `build-info` execution on the existing `spring-boot-maven-plugin` entry (the root `pom.xml` and every `<version>` stay untouched)
 - Modify: `account-service/src/main/resources/application.yml`, and the same file in `transfer-`, `notification-`, `fraud-`, `gateway-service` — expose `info`
 - Modify: `SecurityConfig.java` in account (`com/showcase/account/config/`), transfer, fraud, gateway — `permitAll` for `/actuator/info` (Notification has none)
 - Create: `BuildInfoIT.java` in each of the five services' test trees
@@ -149,7 +146,7 @@ Each item needs a stated result, not "looks fine":
 
 ```bash
 git fetch origin
-git switch --no-track -c feature/phase-8b-task-1-version-source-and-info origin/master
+git switch --no-track -c feature/phase-8b-task-1-build-info-endpoint origin/master
 export JAVA_HOME=/c/dev/openjdk-21.0.2 PATH="/c/dev/openjdk-21.0.2/bin:$PATH"
 ./mvnw -B test 2>&1 | tee /tmp/baseline.log | grep -E "Tests run:.*Fail|BUILD"
 ```
@@ -247,30 +244,7 @@ add `@Testcontainers` above the class, and these members before the `@Autowired`
 
 Expected: **FAIL** in every module — the context cannot start because no `BuildProperties` bean exists (`NoSuchBeanDefinitionException: … BuildProperties`). If any module's `BuildInfoIT` passes, stop and report: something already provides the bean and this brief's premise is wrong.
 
-- [ ] **Step 4: Single version source**
-
-The root `pom.xml` has the literal once (its own `<version>`), and each of the five service poms has it exactly once, in its `<parent>` block. **Run these commands — do not also hand-edit, or `<revision>` will be added twice:**
-
-```bash
-sed -i 's|<version>0.1.0-SNAPSHOT</version>|<version>${revision}</version>|' pom.xml */pom.xml
-sed -i 's|<java.version>21</java.version>|<revision>0.1.0-SNAPSHOT</revision>\n    <java.version>21</java.version>|' pom.xml
-grep -rn "0.1.0-SNAPSHOT" --include=pom.xml .
-```
-
-The first command turns all six literals into `${revision}`; the second re-introduces the literal once, as the `<revision>` property's value. The `grep` must print **one** line, that property. The root pom should now read:
-
-```xml
-  <groupId>com.showcase</groupId>
-  <artifactId>microservices-showcase</artifactId>
-  <version>${revision}</version>
-  <packaging>pom</packaging>
-  ...
-  <properties>
-    <revision>0.1.0-SNAPSHOT</revision>
-    <java.version>21</java.version>
-```
-
-- [ ] **Step 5: Add `build-info` to every service pom**
+- [ ] **Step 4: Add `build-info` to every service pom**
 
 In each of the five service poms, change the existing plugin entry from
 
@@ -297,7 +271,7 @@ to
       </plugin>
 ```
 
-- [ ] **Step 6: Expose `info` in every service**
+- [ ] **Step 5: Expose `info` in every service**
 
 In each service's `src/main/resources/application.yml`, change the existing line (it is under `management.endpoints.web.exposure`, and is identical in all five files):
 
@@ -311,7 +285,7 @@ to
         include: health,info,prometheus
 ```
 
-- [ ] **Step 7: Open `/actuator/info` in the four services that have a `SecurityConfig`**
+- [ ] **Step 6: Open `/actuator/info` in the four services that have a `SecurityConfig`**
 
 In `SecurityConfig.java` of **account, transfer, fraud and gateway**, add one line directly after the existing `/actuator/prometheus` matcher:
 
@@ -322,7 +296,7 @@ In `SecurityConfig.java` of **account, transfer, fraud and gateway**, add one li
 
 Notification has no Spring Security, so its endpoints are already unauthenticated — no edit there.
 
-- [ ] **Step 8: Run the tests to verify they pass**
+- [ ] **Step 7: Run the tests to verify they pass**
 
 ```bash
 ./mvnw -B -pl fraud-service,gateway-service,account-service,transfer-service,notification-service -am \
@@ -331,25 +305,22 @@ Notification has no Spring Security, so its endpoints are already unauthenticate
 
 Expected: 5 modules, 1 test each, all PASS. (Online — see the offline finding above.)
 
-- [ ] **Step 9: Verify the override actually controls the version, then run the whole suite**
+- [ ] **Step 8: Run the whole suite**
 
 ```bash
-./mvnw -B -q -pl fraud-service -am -Drevision=9.9.9 -DskipTests package
-ls fraud-service/target/*.jar
-unzip -p fraud-service/target/fraud-service-9.9.9.jar META-INF/build-info.properties | grep version
 ./mvnw -B test 2>&1 | grep -E "Tests run:.*Fail|BUILD"
 ```
 
-Expected: `fraud-service-9.9.9.jar` exists, prints `build.version=9.9.9`; then the reactor-wide total is **baseline + 5**, `BUILD SUCCESS`. (The `9.9.9` jar stays in the ignored `target/` directory; it is harmless, and `./mvnw -B -q -pl fraud-service clean` removes it.)
+Expected: the reactor-wide total is **baseline + 5**, `BUILD SUCCESS`.
 
-- [ ] **Step 10: Commit, push, open the PR, stop**
+- [ ] **Step 9: Commit, push, open the PR, stop**
 
 ```bash
-git status --short          # only poms, application.yml, SecurityConfig and BuildInfoIT files
-git add -A pom.xml */pom.xml */src
-git commit -m "feat(versioning): single <revision> version source and unauthenticated /actuator/info (Phase 8b, Task 1)"
-git push -u origin feature/phase-8b-task-1-version-source-and-info
-gh pr create --title "Phase 8b Task 1: single version source + /actuator/info" --body "<what/why/verification, incl. the reactor-wide test total>"
+git status --short          # only the five service poms, application.yml, SecurityConfig and BuildInfoIT files
+git add -A */pom.xml */src
+git commit -m "feat(versioning): build-info and unauthenticated /actuator/info (Phase 8b, Task 1)"
+git push -u origin feature/phase-8b-task-1-build-info-endpoint
+gh pr create --title "Phase 8b Task 1: build-info + /actuator/info" --body "<what/why/verification, incl. the reactor-wide test total>"
 ```
 
 Then **stop** and wait for the user to review and merge.
@@ -806,10 +777,10 @@ The PromQL is proven by these API calls; **rendering is not** (the Grafana API c
 - `docs/microservices-showcase-design.md` §5 — add after the **Health** bullet:
 
 ```markdown
-- **Versioning:** each service's build version comes from one `<revision>` in the root `pom.xml` and is exposed four ways: `GET /actuator/info` (unauthenticated: `build.version` plus the git commit), a constant-1 `application_info{version,commit}` gauge (the Prometheus "info metric" convention) driving a provisioned Grafana Service Versions dashboard, the `service.version` OpenTelemetry resource attribute on every span, and an OCI `revision` label on each image. This is build versioning only; API-contract versioning (OpenAPI `info.version`, currently `v1`) is separate and unchanged.
+- **Versioning:** each service's build version is its pom `<version>` and is exposed four ways: `GET /actuator/info` (unauthenticated: `build.version` plus the git commit), a constant-1 `application_info{version,commit}` gauge (the Prometheus "info metric" convention) driving a provisioned Grafana Service Versions dashboard, the `service.version` OpenTelemetry resource attribute on every span, and an OCI `revision` label on each image. This is build versioning only; API-contract versioning (OpenAPI `info.version`, currently `v1`) is separate and unchanged.
 ```
 
-- `CLAUDE.md` — (a) "Project status": `Phases 1–8 (including 7b)` → `Phases 1–8 (including 7b and 8b)`; (b) after the "Versions live in the root `pom.xml`" sentence add: *"The project's own version is the single `<revision>` property there (CI overrides it with `-Drevision=`)."*; (c) under "Local environment", add: *"Pass the git commit into the images with `GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build` (PowerShell: `$env:GIT_SHA = git rev-parse --short HEAD; docker compose up -d --build`); without it `/actuator/info` and the Service Versions dashboard show `commit: unknown`. Also: `build-info` runs at `generate-resources`, so an offline (`-o`) Maven build on a cold cache fails to resolve the Boot plugin — run one online build first."*
+- `CLAUDE.md` — (a) "Project status": `Phases 1–8 (including 7b)` → `Phases 1–8 (including 7b and 8b)`; (b) under "Local environment", add: *"Pass the git commit into the images with `GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build` (PowerShell: `$env:GIT_SHA = git rev-parse --short HEAD; docker compose up -d --build`); without it `/actuator/info` and the Service Versions dashboard show `commit: unknown`. Also: `build-info` runs at `generate-resources`, so an offline (`-o`) Maven build on a cold cache fails to resolve the Boot plugin — run one online build first."*
 
 - `docs/roadmap.md` — change the 8b row's status from `Not started` to `✅ Done`, and re-check its scope text against what actually shipped.
 
@@ -821,7 +792,7 @@ grep -rn "0.1.0-SNAPSHOT" --include=pom.xml .
 grep -n "include:" */src/main/resources/application.yml
 ```
 
-Expected: reactor-wide total **baseline + 15**; exactly one `0.1.0-SNAPSHOT` line; all five `include:` lines read `health,info,prometheus`.
+Expected: reactor-wide total **baseline + 15**; exactly six `0.1.0-SNAPSHOT` lines (the root pom and the five `<parent>` blocks — unchanged from `origin/master`); all five `include:` lines read `health,info,prometheus`.
 
 - [ ] **Step 6: Commit, push, PR, stop**
 
