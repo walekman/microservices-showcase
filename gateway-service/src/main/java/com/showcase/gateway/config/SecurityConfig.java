@@ -30,6 +30,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers("/actuator/health/**").permitAll()
                         .requestMatchers("/actuator/prometheus").permitAll()
+                        .requestMatchers("/actuator/info").permitAll()
                         // hasAnyAuthority, not hasAuthority: this is the coarse first check (see
                         // class javadoc), not the precise one -- GET /transfers (list) needs
                         // transfer-admin downstream, POST /transfers and GET /transfers/{id}
