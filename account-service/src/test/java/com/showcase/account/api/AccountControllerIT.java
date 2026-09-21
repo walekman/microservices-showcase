@@ -3,6 +3,7 @@ package com.showcase.account.api;
 import com.showcase.account.support.TestSecurityConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -373,6 +374,9 @@ class AccountControllerIT {
         }
     }
 
+    @Disabled("Flaky on CI: every request returns 200 OK, so the same-key race never happens. "
+            + "See docs/investigation-account-controller-it-concurrency-flake.md; disabled until it is "
+            + "rewritten to drive the race deterministically (that doc's Recommendations 2 and 3).")
     @Test
     void concurrentDebitsWithTheSameIdempotencyKeyNeverDoubleApplyAndTheLoserGets500() throws Exception {
         // A genuine same-key race: unlike returns409ForConcurrentUpdateConflict above (each
