@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Showcase Service Links</title>
+<style>
+  :root{
+    --bg:#F6F4EC; --card:#FFFFFF; --ink:#14181D; --ink-soft:#5A6068; --line:rgba(20,24,29,.14);
+    --accent:#2F6F4E; --accent-soft:rgba(47,111,78,.12); --steel:#2B4C7E;
+    --up:#2F9E5E; --down:#C2453D; --unknown:#9AA0A6; --code-bg:rgba(20,24,29,.06);
+    --font:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --mono:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#14181D; --card:#1D2329; --ink:#ECEAE2; --ink-soft:#9BA3AB; --line:rgba(236,234,226,.14);
+      --accent:#5CC08A; --accent-soft:rgba(92,192,138,.14); --steel:#7FA8E0;
+      --up:#4FCB84; --down:#EE6F66; --unknown:#6B727A; --code-bg:rgba(236,234,226,.08);
+    }
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font);line-height:1.45;-webkit-font-smoothing:antialiased;}
+  main{max-width:1120px;margin:0 auto;padding:32px 16px 64px;}
+  header{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:8px 24px;margin-bottom:8px;}
+  h1{font-size:28px;margin:0;letter-spacing:-.01em;}
+  .sub{color:var(--ink-soft);font-size:14px;margin:0 0 28px;}
+  .summary{font-family:var(--mono);font-size:13px;color:var(--ink-soft);}
+  h2{font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:var(--ink-soft);margin:32px 0 12px;font-weight:600;}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;}
+  .card-head{display:flex;align-items:center;gap:8px;}
+  .dot{width:10px;height:10px;border-radius:50%;background:var(--unknown);flex:none;}
+  .dot.up{background:var(--up);} .dot.down{background:var(--down);}
+  .name{font-weight:650;font-size:16px;}
+  .port{margin-left:auto;font-family:var(--mono);font-size:12px;color:var(--ink-soft);background:var(--code-bg);padding:1px 7px;border-radius:999px;}
+  .desc{font-size:13px;color:var(--ink-soft);margin:0;}
+  ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px;}
+  li a,li button{display:flex;flex-direction:column;gap:0;width:calc(100% + 16px);text-align:left;padding:6px 8px;margin:0 -8px;border-radius:6px;
+    color:var(--accent);text-decoration:none;font:inherit;font-size:14px;background:none;border:0;cursor:pointer;}
+  li a:hover,li button:hover{background:var(--accent-soft);}
+  li a:focus-visible,li button:focus-visible{outline:2px solid var(--steel);outline-offset:1px;}
+  .path{font-family:var(--mono);font-size:12px;color:var(--ink-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .note{font-size:12px;color:var(--ink-soft);border-top:1px dashed var(--line);padding-top:8px;margin:0;}
+  code{font-family:var(--mono);font-size:12px;background:var(--code-bg);padding:1px 5px;border-radius:4px;}
+  .creds{width:100%;border-collapse:collapse;font-size:14px;}
+  .creds th,.creds td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);}
+  .creds th{font-size:12px;color:var(--ink-soft);font-weight:600;}
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:6px 6px 10px;overflow-x:auto;}
+  .toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:8px;
+    font-size:13px;opacity:0;pointer-events:none;transition:opacity .15s;}
+  .toast.show{opacity:1;}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Showcase Service Links</h1>
+    <span class="summary" id="summary">checking…</span>
+  </header>
+  <p class="sub">Everything <code>docker compose up</code> exposes on localhost. Dots show whether each port answers; click a copy row to put it on the clipboard.</p>
+
+  <div id="sections"></div>
+
+  <h2>Login for Swagger / Grafana / API calls</h2>
+  <div class="panel">
+    <table class="creds">
+      <tr><th>System</th><th>User</th><th>Password</th><th>Roles / notes</th></tr>
+      <tr><td>Keycloak admin console</td><td><code>admin</code></td><td><code>admin</code></td><td>master realm</td></tr>
+      <tr><td>Realm <code>showcase</code></td><td><code>ada</code>, <code>bob</code></td><td><code>password</code></td><td>customer</td></tr>
+      <tr><td>Realm <code>showcase</code></td><td><code>admin</code></td><td><code>password</code></td><td>account-admin, transfer-admin</td></tr>
+      <tr><td>Grafana</td><td colspan="3">anonymous access enabled as Viewer, no login needed</td></tr>
+    </table>
+  </div>
+  <p class="sub" style="margin-top:12px">Get a token for Swagger's <em>Authorize</em> button (client <code>showcase-ui</code>, direct grant):</p>
+  <div class="grid" style="grid-template-columns:1fr"><div class="card"><ul id="token-row"></ul></div></div>
+</main>
+<div class="toast" id="toast">Copied</div>
+
+<script>
+  const H = "http://localhost:";
+  const swagger = [["Swagger UI", "/swagger-ui/index.html"], ["OpenAPI JSON", "/v3/api-docs"]];
+  const actuator = [["Health", "/actuator/health"], ["Prometheus metrics", "/actuator/prometheus"]];
+
+  const SECTIONS = [
+    { title: "Application services", items: [
+      { name: "Gateway", port: 8080, desc: "Single entry point. Validates the JWT and routes /transfers/** and /accounts/**.",
+        links: actuator, note: "No Swagger of its own: use the service UIs below. Everything except health/metrics needs a bearer token." },
+      { name: "Account Service", port: 8081, desc: "Accounts and balances, debit/credit with optimistic locking.", links: [...swagger, ...actuator] },
+      { name: "Transfer Service", port: 8082, desc: "Orchestrates the transfer saga, compensation and idempotency.", links: [...swagger, ...actuator] },
+      { name: "Fraud Service", port: 8084, desc: "Synchronous fraud check called by Transfer.", links: [...swagger, ...actuator] },
+      { name: "Notification Service", port: 8083, desc: "Kafka consumer fed by the transfer outbox. No REST API.", links: actuator },
+    ]},
+    { title: "Identity", items: [
+      { name: "Keycloak", port: 8180, desc: "OIDC provider, realm showcase (imported from docker/keycloak).", links: [
+        ["Admin console", "/admin/master/console/"],
+        ["Account console (realm showcase)", "/realms/showcase/account"],
+        ["OIDC discovery", "/realms/showcase/.well-known/openid-configuration"],
+        ["JWKS certs", "/realms/showcase/protocol/openid-connect/certs"],
+      ]},
+    ]},
+    { title: "Observability", items: [
+      { name: "Grafana", port: 3001, desc: "Dashboards plus Tempo trace search. Host port 3001, container 3000.", links: [
+        ["Home", "/"],
+        ["Business metrics dashboard", "/d/showcase-business-metrics"],
+        ["JVM (Micrometer) dashboard", "/d/a0c90e53-d71a-4128-8f4b-8d272e17e2e1"],
+        ["Explore (pick Tempo for traces)", "/explore"],
+      ]},
+      { name: "Prometheus", port: 9090, desc: "Scrapes all five services every few seconds.", links: [
+        ["Query", "/query"], ["Targets", "/targets"], ["Alerts", "/alerts"],
+      ]},
+      { name: "Tempo", port: 3200, desc: "Trace store. No UI: search traces from Grafana Explore.", links: [["Ready", "/ready"]] },
+      { name: "OTel Collector", port: 4318, desc: "Receives OTLP from the services and forwards to Tempo. No UI.",
+        copy: [["OTLP HTTP", "http://localhost:4318"], ["OTLP gRPC", "localhost:4317"]] },
+    ]},
+    { title: "Data and messaging (no web UI)", items: [
+      { name: "PostgreSQL", port: 5432, desc: "Database per service: account and transfer. Passwords are in .env.", probe: false,
+        copy: [["Account DB (user account_service)", "jdbc:postgresql://localhost:5432/account"],
+               ["Transfer DB (user transfer_service)", "jdbc:postgresql://localhost:5432/transfer"]] },
+      { name: "Kafka", port: 29092, desc: "Single KRaft broker. Use the host listener from outside Docker.", probe: false,
+        copy: [["Bootstrap (from host)", "localhost:29092"], ["Bootstrap (inside Docker network)", "kafka:9092"]] },
+    ]},
+  ];
+
+  const TOKEN_CMD = 'curl -s -d "client_id=showcase-ui&grant_type=password&username=ada&password=password" ' +
+                    H + '8180/realms/showcase/protocol/openid-connect/token';
+
+  const toast = document.getElementById("toast");
+  let toastTimer;
+  function copy(text) {
+    const done = () => { toast.classList.add("show"); clearTimeout(toastTimer); toastTimer = setTimeout(() => toast.classList.remove("show"), 1200); };
+    if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(text).then(done); return; }
+    const ta = Object.assign(document.createElement("textarea"), { value: text });
+    document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); done();
+  }
+
+  function el(tag, props = {}, ...kids) {
+    const e = Object.assign(document.createElement(tag), props);
+    kids.forEach(k => e.append(k));
+    return e;
+  }
+  function copyRow(label, value) {
+    const b = el("button", { type: "button", title: "Copy" }, el("span", { textContent: label }), el("span", { className: "path", textContent: value }));
+    b.onclick = () => copy(value);
+    return el("li", {}, b);
+  }
+  function linkRow(port, label, path) {
+    return el("li", {}, el("a", { href: H + port + path, target: "_blank", rel: "noopener" },
+      el("span", { textContent: label }), el("span", { className: "path", textContent: path })));
+  }
+
+  const dots = [];
+  const root = document.getElementById("sections");
+  SECTIONS.forEach(sec => {
+    root.append(el("h2", { textContent: sec.title }));
+    const grid = el("div", { className: "grid" });
+    sec.items.forEach(it => {
+      const dot = el("span", { className: "dot", title: it.probe === false ? "not HTTP, not probed" : "checking" });
+      if (it.probe !== false) dots.push({ dot, port: it.port });
+      const list = el("ul");
+      (it.links || []).forEach(([l, p]) => list.append(linkRow(it.port, l, p)));
+      (it.copy || []).forEach(([l, v]) => list.append(copyRow(l, v)));
+      const card = el("div", { className: "card" },
+        el("div", { className: "card-head" }, dot, el("span", { className: "name", textContent: it.name }),
+          el("span", { className: "port", textContent: ":" + it.port })),
+        el("p", { className: "desc", textContent: it.desc }), list);
+      if (it.note) card.append(el("p", { className: "note", textContent: it.note }));
+      grid.append(card);
+    });
+    root.append(grid);
+  });
+  document.getElementById("token-row").append(copyRow("Copy curl command", TOKEN_CMD));
+
+  // A no-cors fetch resolves (opaque) for any HTTP answer and rejects only when nothing is listening,
+  // which is all we need to colour a dot. It also sidesteps the CORS block on file:// pages.
+  function probe(port) {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 3000);
+    return fetch(H + port + "/", { mode: "no-cors", cache: "no-store", signal: ctl.signal })
+      .then(() => true, () => false).finally(() => clearTimeout(t));
+  }
+  async function refresh() {
+    const results = await Promise.all(dots.map(async d => [d, await probe(d.port)]));
+    let up = 0;
+    results.forEach(([d, ok]) => { d.dot.className = "dot " + (ok ? "up" : "down"); d.dot.title = ok ? "reachable" : "not reachable"; if (ok) up++; });
+    document.getElementById("summary").textContent = up + " / " + dots.length + " reachable";
+  }
+  refresh();
+  setInterval(refresh, 15000);
+</script>
+</body>
+</html>
