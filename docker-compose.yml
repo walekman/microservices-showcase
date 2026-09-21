@@ -22,6 +22,8 @@ services:
     build:
       context: .
       dockerfile: account-service/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
     container_name: showcase-account-service
     environment:
       DB_HOST: postgres
@@ -50,6 +52,8 @@ services:
     build:
       context: .
       dockerfile: transfer-service/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
     container_name: showcase-transfer-service
     environment:
       DB_HOST: postgres
@@ -113,6 +117,8 @@ services:
     build:
       context: .
       dockerfile: notification-service/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
     container_name: showcase-notification-service
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
@@ -133,6 +139,8 @@ services:
     build:
       context: .
       dockerfile: fraud-service/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
     container_name: showcase-fraud-service
     environment:
       FRAUD_BLOCKLIST_ACCOUNT_IDS: ${FRAUD_BLOCKLIST_ACCOUNT_IDS:-}
@@ -155,6 +163,8 @@ services:
     build:
       context: .
       dockerfile: gateway-service/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
     container_name: showcase-gateway-service
     environment:
       ACCOUNT_SERVICE_URL: http://account-service:8081

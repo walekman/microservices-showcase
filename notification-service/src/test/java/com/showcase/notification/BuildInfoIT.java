@@ -22,7 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * version. Real HTTP round trip (RANDOM_PORT) so the real SecurityConfig is in the path.
  */
 @Testcontainers
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = "info.commit=abc1234")
 class BuildInfoIT {
 
     @Container
@@ -39,12 +39,13 @@ class BuildInfoIT {
     private BuildProperties buildProperties;
 
     @Test
-    void infoEndpointNeedsNoTokenAndReportsTheBuildVersion() {
+    void infoEndpointNeedsNoTokenAndReportsTheBuildVersionAndCommit() {
         ResponseEntity<String> response = restTemplate.getForEntity("/actuator/info", String.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(buildProperties.getVersion()).isNotBlank();
         assertThat((String) JsonPath.read(response.getBody(), "$.build.version"))
                 .isEqualTo(buildProperties.getVersion());
+        assertThat((String) JsonPath.read(response.getBody(), "$.commit")).isEqualTo("abc1234");
     }
 }

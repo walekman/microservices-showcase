@@ -21,7 +21,13 @@ spring:
       ddl-auto: update
     open-in-view: false
 
+info:
+  commit: ${GIT_SHA:unknown}
+
 management:
+  info:
+    env:
+      enabled: true
   endpoints:
     web:
       exposure:
