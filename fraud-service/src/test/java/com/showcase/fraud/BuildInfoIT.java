@@ -1,6 +1,8 @@
 package com.showcase.fraud;
 
 import com.jayway.jsonpath.JsonPath;
+import io.opentelemetry.api.common.AttributeKey;
+import io.opentelemetry.sdk.resources.Resource;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.info.BuildProperties;
@@ -23,6 +25,8 @@ class BuildInfoIT {
     private TestRestTemplate restTemplate;
     @Autowired
     private BuildProperties buildProperties;
+    @Autowired
+    private Resource otelResource;
 
     @Test
     void infoEndpointNeedsNoTokenAndReportsTheBuildVersionAndCommit() {
@@ -33,5 +37,23 @@ class BuildInfoIT {
         assertThat((String) JsonPath.read(response.getBody(), "$.build.version"))
                 .isEqualTo(buildProperties.getVersion());
         assertThat((String) JsonPath.read(response.getBody(), "$.commit")).isEqualTo("abc1234");
+    }
+
+    @Test
+    void applicationInfoGaugeIsScrapedWithVersionAndCommitLabels() {
+        String scrape = restTemplate.getForObject("/actuator/prometheus", String.class);
+
+        // Labels, not the value: the sample renders as "1", not "1.0", for an *_info metric.
+        assertThat(scrape.lines().filter(line -> line.startsWith("application_info{")))
+                .singleElement()
+                .satisfies(line -> assertThat(line)
+                        .contains("version=\"" + buildProperties.getVersion() + "\"")
+                        .contains("commit=\"abc1234\""));
+    }
+
+    @Test
+    void openTelemetryResourceCarriesServiceVersion() {
+        assertThat(otelResource.getAttribute(AttributeKey.stringKey("service.version")))
+                .isEqualTo(buildProperties.getVersion());
     }
 }
