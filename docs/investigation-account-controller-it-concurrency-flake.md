@@ -1,5 +1,15 @@
 # Investigation: `AccountControllerIT` concurrency-test CI flakiness
 
+## Status (2026-09-21): the same-key test is disabled
+
+`concurrentDebitsWithTheSameIdempotencyKeyNeverDoubleApplyAndTheLoserGets500` is now `@Disabled`. It failed on CI again with the identical all-`200 OK` signature on two docs-only PRs the same day (each passed on re-run), i.e. PR #63's pool warm-up reduced the flake but did not remove it, and it now costs a manual CI re-run per PR.
+
+**What is lost:** this was the only automated check that concurrent debits sharing one idempotency key never double-apply the balance change (the idempotency ledger's primary-key race). Nothing else in the suite drives that race. The invariant is unchanged in the code — only its regression guard is off.
+
+**Not disabled:** `returns409ForConcurrentUpdateConflict`, the sibling this document suspects of the same flake. It has not been observed failing, so it stays on.
+
+**To re-enable it,** rewrite the test rather than remove `@Disabled` — see Recommendations 2 and 3 below (synchronize below the HTTP layer, or drive `AccountService.debit(...)` directly with real threads against the same Testcontainers Postgres).
+
 ## TL;DR
 
 Two of `AccountControllerIT`'s concurrency tests —
