@@ -802,3 +802,32 @@ git commit -m "feat(observability): Grafana Service Versions dashboard and docs 
 ```
 
 Push and open the PR with the screenshot and the `deadbee` skew-test output. Then **stop**. When all four PRs are merged, the user may ask for the whole-branch review (more capable model, the checklist above verbatim, named explicitly) — it is not automatic.
+
+---
+
+## Outcome
+
+Implemented as four PRs, each verified by the controller independently of the implementer's report (reactor-wide suite re-run, plus a mutation check that the new assertions fail when their mechanism is removed).
+
+| Task | PR | Merged as | Reactor-wide tests |
+|---|---|---|---|
+| 1 — `build-info` + unauthenticated `/actuator/info` | #74 | `c29ed71` | 264 → 269 |
+| 2 — git SHA in `/actuator/info`, image label, compose build arg | #75 | `7d8ba61` | 269 (no new tests) |
+| 3 — `application_info` metric + OTel `service.version` | #76 | `44b9015` | 269 → 279 |
+| 4 — Grafana Service Versions dashboard + docs sync | this PR | — | 279 (no Java changed) |
+
+Total: baseline 264 + 15 = **279**, as planned.
+
+**The "Not verified during planning" items are now verified live:** Account, Transfer and Notification pass `BuildInfoIT`; the Docker side works (build arg, `ENV`, OCI label, the `unknown` fallback, and the Maven layer staying `CACHED` when only the SHA changes); Prometheus scrapes `application_info` as exactly five series with the labels `job`, `version`, `commit`, `instance` and value `1`; `service.version` reaches Tempo (a Tempo search for `service.version=0.1.0-SNAPSHOT` returns traces, the control `9.9.9` returns none).
+
+**The dashboard was checked in a browser, not just through the API.** Stats `5 / 1 / 1` in green; "Running Builds" shows Service / Version / Commit with no stray columns; "Build History" shows one row per service+version+commit, including the previous builds and the gap while Docker was down. The skew test worked as designed: redeploying Account with `GIT_SHA=deadbee` turned "Distinct Commits Running" to `2` in orange (versions stayed `1`) and put `deadbee` in the table; restoring the real SHA returned it to `1`.
+
+**Behaviours worth knowing**
+- Prometheus has no data volume in `docker-compose.yml`. Build History survives a Docker restart (the container's filesystem persists) but `docker compose down` clears it.
+- Grafana's first paint of this dashboard takes several seconds, and a panel reads blank until the queries return; a browser tab left in the background also stops auto-refreshing, so a stale value there is not a data problem.
+- A Grafana first boot once logged `failed to walk provisioned dashboards … database is locked (SQLITE_BUSY)`. It did not recur on the restart during this phase's verification and the provisioner re-polls every 30 s, but if a dashboard is missing after a cold start, check that log first.
+- `./mvnw test` now resolves the Boot plugin's own dependencies at `generate-resources` (see "Verified During Planning") — an offline build on a cold cache fails until one online build has run.
+
+**Left unfixed (minor):** the `BuildInfoIT` javadoc in `notification-service` says "the real SecurityConfig is in the path", but Notification has no `SecurityConfig` (the wording comes from this plan's shared test template and is accurate for the other four services).
+
+**Still out of scope** — see the Scope Boundary above, unchanged: API `/v1` versioning, outbox event `schemaVersion`, release automation (including a `${revision}` / `-Drevision=` override), version in structured logs, CI-pushed deployment annotations, and version-skew alert rules.
