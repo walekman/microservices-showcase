@@ -24,7 +24,7 @@ No new infrastructure (no Kafka, no outbox, no second service) — this stays in
 - Lombok for entity boilerplate: `@Getter`, `@NoArgsConstructor(access = AccessLevel.PROTECTED)`; hand-write any constructor with custom logic. (CLAUDE.md)
 - `ddl-auto: update` stays; Flyway is still deferred to its own phase (unchanged from Phase 2).
 - Never commit directly to `master`; work happens on a `feature/phase-3-*` branch. Subagent review is manual, on request — not automatic. (CLAUDE.md)
-- springdoc-openapi stays pinned to `2.6.0`. (docs/roadmap.md)
+- springdoc-openapi stays pinned to `2.6.0`. (docs/roadmap.md) *(Superseded in Phase 8: this pin held only for Boot 3.3.x; Boot 3.5.16 needs springdoc 2.8.17 — see `CLAUDE.md`, "Executing implementation phases".)*
 
 ## Scope Boundary
 

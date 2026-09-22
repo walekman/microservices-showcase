@@ -19,7 +19,7 @@
 - Lombok for entity boilerplate: `@Getter`, `@NoArgsConstructor(access = AccessLevel.PROTECTED)`; hand-write any constructor with custom logic. (CLAUDE.md)
 - No Kubernetes/service mesh; local deployment is Docker Compose only, single instance per service — this is why `OutboxPublisher`, like `CompensationScheduler`, needs no distributed locking or leader election.
 - Never commit directly to `master`; work happens on a `feature/phase-4-*` branch, one PR per task, stop after each. Subagent review is manual, on request — not automatic. (CLAUDE.md)
-- springdoc-openapi stays pinned to `2.6.0`; resilience4j stays pinned to `2.4.0`. (docs/roadmap.md)
+- springdoc-openapi stays pinned to `2.6.0`; resilience4j stays pinned to `2.4.0`. (docs/roadmap.md) *(Superseded in Phase 8: this pin held only for Boot 3.3.x; Boot 3.5.16 needs springdoc 2.8.17 — see `CLAUDE.md`, "Executing implementation phases".)*
 - Default to `haiku` for implementer/routine-review subagents; use a more capable model for the final whole-branch review. Always name the model explicitly. (CLAUDE.md)
 
 ## Scope Boundary
