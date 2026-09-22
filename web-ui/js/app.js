@@ -63,7 +63,7 @@ async function renderDashboard(account) {
     document.getElementById('send-money-button')
         .addEventListener('click', () => renderTransferForm(account, transfers));
     await renderQuickTransfers(transfers);
-    renderHistory(transfers);
+    await renderHistory(transfers);
 }
 
 function renderTransferForm(account, transfers, prefillAccountId) {
@@ -140,11 +140,17 @@ async function renderQuickTransfers(transfers) {
     });
 }
 
-function renderHistory(transfers) {
+async function renderHistory(transfers) {
     const section = document.getElementById('history-section');
+    const distinctRecipients = [...new Set(transfers.map((t) => t.toAccountId))];
+    const summaries = await Promise.all(
+        distinctRecipients.map((id) => Api.get(`/accounts/${id}/summary`).catch(() => ({ ownerName: id }))));
+    const nameByAccountId = Object.fromEntries(
+        distinctRecipients.map((id, index) => [id, summaries[index].ownerName]));
+
     const rows = [...transfers]
         .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-        .map((t) => `<tr><td>${new Date(t.createdAt).toLocaleString()}</td><td>${t.toAccountId}</td>
+        .map((t) => `<tr><td>${new Date(t.createdAt).toLocaleString()}</td><td>${nameByAccountId[t.toAccountId]}</td>
             <td>$${Number(t.amount).toFixed(2)}</td><td>${t.status}</td></tr>`)
         .join('');
     section.innerHTML = `
