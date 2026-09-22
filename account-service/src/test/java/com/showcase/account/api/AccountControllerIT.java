@@ -141,9 +141,10 @@ class AccountControllerIT {
         UUID id = createResponse.getBody().id();
 
         // AccountResponse deliberately carries no ownerId (see its own javadoc) -- this GET
-        // succeeding, using the same CUSTOMER_SUBJECT token the account was created with, is
-        // the regression check that ownerId was actually bound to the caller: a mismatched
-        // binding would 404 here instead.
+        // succeeding, using the same fresh per-test-method identity (installed by
+        // authenticateAsCustomer in @BeforeEach) that created the account, is the regression
+        // check that ownerId was actually bound to the caller: a mismatched binding would 404
+        // here instead.
         ResponseEntity<AccountResponse> getResponse = restTemplate.getForEntity("/accounts/" + id, AccountResponse.class);
         assertThat(getResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(getResponse.getBody().balance()).isEqualByComparingTo("100.00");
@@ -178,7 +179,7 @@ class AccountControllerIT {
         ResponseEntity<AccountResponse[]> response = restTemplate.getForEntity("/accounts/mine", AccountResponse[].class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(response.getBody()).extracting(AccountResponse::id).contains(myAccountId);
+        assertThat(response.getBody()).extracting(AccountResponse::id).containsExactly(myAccountId);
     }
 
     // Regression guard for the literal-vs-variable route ambiguity: "/accounts/mine" and

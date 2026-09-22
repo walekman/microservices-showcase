@@ -48,6 +48,14 @@ public class SecurityConfig {
                         .requestMatchers("/actuator/health/**").permitAll()
                         .requestMatchers("/actuator/prometheus").permitAll()
                         .requestMatchers("/actuator/info").permitAll()
+                        // hasAnyAuthority, not hasAuthority: this is the coarse first check (see
+                        // class javadoc), not the precise one -- GET /transfers (list) needs
+                        // transfer-admin downstream, POST /transfers and GET /transfers/{id}
+                        // need transfer-executor, but the Gateway doesn't split by method/path
+                        // here, so it admits either and lets transfer-service's own SecurityConfig
+                        // enforce the exact split. Without account-admin/transfer-admin here, a
+                        // Phase 7b admin token would 403 at the Gateway before ever reaching the
+                        // service that's supposed to authorize it -- found in code review.
                         .requestMatchers("/transfers/**").hasAnyAuthority("transfer-executor", "transfer-admin")
                         .requestMatchers(HttpMethod.GET, "/accounts/*/summary").authenticated()
                         .requestMatchers(HttpMethod.GET, "/accounts", "/accounts/*")

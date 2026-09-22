@@ -13,6 +13,7 @@ const ERROR_MESSAGES = {
     DESTINATION_FRAUD_SERVICE_UNAVAILABLE: 'The banking system is temporarily unavailable. Please try again shortly.',
     COMPENSATION_REQUIRED: 'The transfer could not be completed and is being reversed automatically.',
     VALIDATION_FAILED: 'Please check the values you entered.',
+    UNEXPECTED_ERROR: 'Something went wrong completing the transfer. Please try again.',
 };
 
 class ApiError extends Error {

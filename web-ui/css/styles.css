@@ -47,6 +47,10 @@ button {
     color: #b00020;
 }
 
+.success {
+    color: #1b4332;
+}
+
 .balance {
     font-size: 2rem;
     font-weight: 700;

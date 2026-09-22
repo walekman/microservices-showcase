@@ -1,5 +1,18 @@
+function escapeHtml(value) {
+    return String(value).replace(/[&<>"']/g, (c) =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
 async function bootstrap() {
-    const justLoggedIn = await Auth.handleRedirectCallback();
+    try {
+        await Auth.handleRedirectCallback();
+    } catch (err) {
+        if (err instanceof AuthCallbackError) {
+            document.getElementById('loading').textContent = err.message;
+            return;
+        }
+        throw err;
+    }
     if (!Auth.isAuthenticated()) {
         await Auth.login();
         return;
@@ -47,17 +60,24 @@ function renderOnboarding() {
     });
 }
 
-async function renderDashboard(account) {
+async function renderDashboard(account, { flashMessage } = {}) {
     const main = document.getElementById('main-content');
     main.innerHTML = `
         <div class="card">
-            <h2>${account.ownerName}</h2>
+            <h2>${escapeHtml(account.ownerName)}</h2>
             <p class="balance">$${Number(account.balance).toFixed(2)}</p>
             <button id="send-money-button" type="button">Send money</button>
         </div>
+        <p id="dashboard-flash" class="success" hidden></p>
         <div id="transfer-section"></div>
         <div id="quick-transfers-section"></div>
         <div id="history-section"></div>`;
+
+    if (flashMessage) {
+        const flashEl = document.getElementById('dashboard-flash');
+        flashEl.textContent = flashMessage;
+        flashEl.hidden = false;
+    }
 
     const transfers = await Api.get('/transfers/mine');
     document.getElementById('send-money-button')
@@ -89,10 +109,8 @@ function renderTransferForm(account, transfers, prefillAccountId) {
         successEl.hidden = true;
         try {
             await Api.post('/transfers', { fromAccountId: account.id, toAccountId, amount });
-            successEl.textContent = 'Transfer completed.';
-            successEl.hidden = false;
             const refreshedAccounts = await Api.get('/accounts/mine');
-            await renderDashboard(refreshedAccounts[0]);
+            await renderDashboard(refreshedAccounts[0], { flashMessage: 'Transfer completed.' });
         } catch (err) {
             errorEl.textContent = err.friendlyMessage ? err.friendlyMessage() : err.message;
             errorEl.hidden = false;
@@ -150,7 +168,7 @@ async function renderHistory(transfers) {
 
     const rows = [...transfers]
         .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-        .map((t) => `<tr><td>${new Date(t.createdAt).toLocaleString()}</td><td>${nameByAccountId[t.toAccountId]}</td>
+        .map((t) => `<tr><td>${new Date(t.createdAt).toLocaleString()}</td><td>${escapeHtml(nameByAccountId[t.toAccountId])}</td>
             <td>$${Number(t.amount).toFixed(2)}</td><td>${t.status}</td></tr>`)
         .join('');
     section.innerHTML = `
