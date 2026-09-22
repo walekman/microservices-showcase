@@ -19,6 +19,7 @@ Non-goals: this is not a production banking system. No real payment rails, no do
 | **Transfer** | Orchestrates the transfer saga; owns transfer/ledger history + transactional outbox | PostgreSQL (own database) |
 | **Fraud** | Rule-based risk check on a transfer (amount/velocity thresholds) | stateless |
 | **Notification** | Consumes transfer-outcome events; logs a "notification sent" | stateless |
+| **Bank UI** | Static browser single-page app for customer self-service (signup/onboarding, balance, transfers, history, quick-transfer); calls the Gateway directly from the browser | stateless (no build tooling — plain HTML/CSS/JS served by nginx) |
 
 Each stateful service owns its data exclusively — no service queries another's database directly (database-per-service).
 
@@ -89,10 +90,10 @@ Each stateful service owns its data exclusively — no service queries another's
 ## 7. Deployment / Local Dev
 
 Single `docker compose up`:
-- 6 application services
+- 6 application services, plus the Bank UI (`web-ui`, `nginx:alpine` serving static assets, no build step) — see `docs/phase-9-bank-ui.md`
 - One Postgres container, separate database per stateful service (Account, Transfer) via init script
 - Kafka in KRaft mode (no Zookeeper)
-- Keycloak with a pre-loaded realm/client (import file, not manual setup)
+- Keycloak with a pre-loaded realm/client (import file, not manual setup), including the Bank UI's custom login/registration theme
 - OTel Collector, Prometheus, Grafana (provisioned dashboards), Grafana Tempo
 
 A seed script creates demo accounts with starting balances so a transfer can be triggered immediately after startup. README covers: architecture diagram, run instructions, example requests, and where to observe the result (Grafana dashboard, trace UI).
