@@ -107,7 +107,7 @@ Deliberately not in this phase:
 
 ## Roadmap Changes
 
-Add a `8b` row between Phase 8 and Phase 9 in `docs/roadmap.md` (done when this document was written: status "Not started"). Task 4 flips it to ✅ Done. Phase 9 is unchanged.
+Add a `8b` row between Phase 8 and Phase 9 in `docs/roadmap.md` (done when this document was written: status "Not started"). Task 4 flips it to ✅ Done. Phase 9 (at the time of this document, the not-yet-brainstormed end-to-end saga tests) was unchanged — that phase was later renumbered to Phase 10 when Phase 9 became the Bank UI; see `docs/phase-9-bank-ui.md`.
 
 ## Whole-Branch Review Checklist (for the final review; give this list verbatim to the reviewing model)
 

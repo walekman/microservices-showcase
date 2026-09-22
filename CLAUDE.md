@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-Phases 1–8 (including 7b and 8b) are implemented and merged to `master`. Phase 9 (end-to-end saga tests) has not started. `docs/roadmap.md` indexes every phase and its scope.
+Phases 1–8 (including 7b and 8b) are implemented and merged to `master`. Phase 9 (Bank UI) and Phase 10 (end-to-end saga tests, renumbered from Phase 9) have not started. `docs/roadmap.md` indexes every phase and its scope.
 
 Five Spring Boot / Java 21 services, all reachable via `docker compose up`:
 
