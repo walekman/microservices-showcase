@@ -1,0 +1,28 @@
+:root {
+    --bank-ui-primary: #1b4332;
+    --bank-ui-accent: #2d6a4f;
+}
+
+/* The parent "keycloak" theme paints the page background on ".login-pf body"
+   (html.login-pf > body), not on a "login-pf-page" class on <body> -- that
+   class lives on a child <div> instead. Verified live against the rendered
+   login/registration page's actual markup and the parent theme's login.css
+   (same selector, same specificity; this rule wins on source order). */
+.login-pf body {
+    background: var(--bank-ui-primary);
+}
+
+#kc-header-wrapper {
+    color: #ffffff;
+    text-transform: none;
+    font-weight: 600;
+}
+
+.card-pf {
+    border-top: 4px solid var(--bank-ui-accent);
+}
+
+#kc-form-buttons input[type="submit"] {
+    background-color: var(--bank-ui-accent);
+    border-color: var(--bank-ui-accent);
+}
