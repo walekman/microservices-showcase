@@ -90,6 +90,7 @@
       { name: "Transfer Service", port: 8082, desc: "Orchestrates the transfer saga, compensation and idempotency.", links: [...swagger, ...actuator] },
       { name: "Fraud Service", port: 8084, desc: "Synchronous fraud check called by Transfer.", links: [...swagger, ...actuator] },
       { name: "Notification Service", port: 8083, desc: "Kafka consumer fed by the transfer outbox. No REST API.", links: actuator },
+      { name: "Bank UI", port: 8090, desc: "Customer-facing web app: sign up, log in, view balance, send transfers, view history.", links: [["Home", "/"]] },
     ]},
     { title: "Identity", items: [
       { name: "Keycloak", port: 8180, desc: "OIDC provider, realm showcase (imported from docker/keycloak).", links: [

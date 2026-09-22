@@ -29,8 +29,11 @@ import java.util.concurrent.ConcurrentHashMap;
  * subject) so a real end-to-end request/response/repository round trip can prove ownership
  * denial across two different real people, not just against a mocked service; and ADMIN_TOKEN
  * carries account-admin only, mirroring the admin persona Phase 7b introduced. There's no real
- * signature to verify since no real Keycloak is involved in these tests. See
- * docs/phase-7-auth-keycloak-jwt.md and docs/phase-7b-account-ownership-authorization.md.
+ * signature to verify since no real Keycloak is involved in these tests. The decoder also
+ * accepts dynamically-minted tokens from {@link #freshCustomerToken()} -- each is a distinct
+ * customer identity, recognised via DYNAMIC_CUSTOMER_SUBJECTS below (see its own comment for
+ * why Phase 9 needed this). See docs/phase-7-auth-keycloak-jwt.md and
+ * docs/phase-7b-account-ownership-authorization.md.
  */
 @TestConfiguration
 public class TestSecurityConfig {

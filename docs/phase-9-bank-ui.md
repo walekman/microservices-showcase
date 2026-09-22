@@ -10,6 +10,12 @@
 
 **Spec:** This document (brainstormed with the user on 2026-09-22), `docs/microservices-showcase-design.md` §2 (Services) and §7 (Deployment), `docs/phase-7-auth-keycloak-jwt.md` (JWT/Keycloak wiring this phase's auth flow builds on), and `docs/phase-7b-account-ownership-authorization.md` (the ownership model this UI's new endpoints must respect, and the one place they deliberately carve out an exception).
 
+## Implementation Status
+
+**Phase 9 is now implemented and merged.** All ten tasks (Tasks 1–10) have been merged to `master`. One deviation discovered during Task 9 implementation is worth recording: the `renderHistory` code block below (under Task 9) originally showed a raw account ID in the transfer history's "To" column (line 1581, `t.toAccountId`), contradicting this document's own Design Decisions that specify counterparty names, not IDs. During implementation, this was caught and fixed to resolve the recipient name via `GET /accounts/{id}/summary`, matching the pattern used in `renderQuickTransfers`. The corrected implementation (resolving names before rendering) is in `web-ui/js/app.js` on `master`, not literally what this document's historical code block shows — if this document is used as a reference for a similar future UI, use the corrected approach, not the original code block.
+
+Task 10's whole-branch review fix wave then changed this same block further: `renderHistory`'s `nameByAccountId[...]` interpolation and `renderDashboard`'s `${account.ownerName}` are now passed through an `escapeHtml` helper (stored `ownerName` values are another self-registered user's free-text input, so they're untrusted and were a stored-XSS vector via `innerHTML`); and a successful transfer's confirmation now survives the dashboard re-render via an optional `flashMessage` option on `renderDashboard`, instead of being wiped immediately by the post-transfer `renderDashboard(refreshedAccounts[0])` call. The Task 9 code block below has been re-synced verbatim from that fixed source.
+
 ## Global Constraints
 
 - Java 21 floor for the two backend modules. Use `C:\dev\openjdk-21.0.2` and set `JAVA_HOME` before running Maven. (CLAUDE.md)
@@ -19,6 +25,10 @@
 - Never commit directly to `master`; one branch per task, `feature/phase-9-task-<N>-<short-description>`, cut from a freshly fetched `origin/master`; one PR per task, stop after each; subagent review is manual, on request. (CLAUDE.md)
 - Default to `haiku` for implementer/routine-review subagents; use a more capable model for the final whole-branch review; always name the model explicitly; give smaller models explicit checklists. (CLAUDE.md)
 - Sync any review fix back into this document verbatim from the merged source, not by hand. (CLAUDE.md)
+
+### Running Task 2 against an existing local stack
+
+Task 2 adds `unique = true` to `Account.ownerId`, applied via Hibernate's `ddl-auto: update`. On a **fresh** database (Testcontainers, CI, or a brand-new local stack) this works cleanly. But `docker-compose.yml`'s Postgres uses a **named, persistent volume** (`postgres-data`), so a local dev stack that predates this phase can already have duplicate `owner_id` rows (e.g. `ada`/`bob` demo accounts created before one-account-per-owner existed). Against that data, Hibernate's `ALTER TABLE ADD CONSTRAINT` silently fails (it logs a warning and boots anyway) — so the DB-level half of the one-account-per-owner guarantee (the `saveAndFlush` + `DataIntegrityViolationException` catch) won't actually be backed by a real constraint, even though the `existsByOwnerId` pre-check still catches the common sequential case. There's no Flyway/Liquibase in this project to carry the schema change, so before the first `up` on an existing local stack, run `docker compose down -v` (or manually deduplicate `account.owner_id`) to get a clean volume.
 
 ## Design Decisions Worth Knowing Before You Start
 
@@ -1481,23 +1491,37 @@ Stop here.
 - [ ] **Step 1: Replace Task 8's `renderDashboard` (not append — this supersedes that definition) to wire the new sections**
 
 ```javascript
-async function renderDashboard(account) {
+// Added in Task 10's fix wave: escapes untrusted text (another self-registered user's
+// free-text ownerName) before it is interpolated into innerHTML, closing a stored-XSS hole.
+function escapeHtml(value) {
+    return String(value).replace(/[&<>"']/g, (c) =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+async function renderDashboard(account, { flashMessage } = {}) {
     const main = document.getElementById('main-content');
     main.innerHTML = `
         <div class="card">
-            <h2>${account.ownerName}</h2>
+            <h2>${escapeHtml(account.ownerName)}</h2>
             <p class="balance">$${Number(account.balance).toFixed(2)}</p>
             <button id="send-money-button" type="button">Send money</button>
         </div>
+        <p id="dashboard-flash" class="success" hidden></p>
         <div id="transfer-section"></div>
         <div id="quick-transfers-section"></div>
         <div id="history-section"></div>`;
+
+    if (flashMessage) {
+        const flashEl = document.getElementById('dashboard-flash');
+        flashEl.textContent = flashMessage;
+        flashEl.hidden = false;
+    }
 
     const transfers = await Api.get('/transfers/mine');
     document.getElementById('send-money-button')
         .addEventListener('click', () => renderTransferForm(account, transfers));
     await renderQuickTransfers(transfers);
-    renderHistory(transfers);
+    await renderHistory(transfers);
 }
 
 function renderTransferForm(account, transfers, prefillAccountId) {
@@ -1523,10 +1547,8 @@ function renderTransferForm(account, transfers, prefillAccountId) {
         successEl.hidden = true;
         try {
             await Api.post('/transfers', { fromAccountId: account.id, toAccountId, amount });
-            successEl.textContent = 'Transfer completed.';
-            successEl.hidden = false;
             const refreshedAccounts = await Api.get('/accounts/mine');
-            await renderDashboard(refreshedAccounts[0]);
+            await renderDashboard(refreshedAccounts[0], { flashMessage: 'Transfer completed.' });
         } catch (err) {
             errorEl.textContent = err.friendlyMessage ? err.friendlyMessage() : err.message;
             errorEl.hidden = false;
@@ -1574,11 +1596,17 @@ async function renderQuickTransfers(transfers) {
     });
 }
 
-function renderHistory(transfers) {
+async function renderHistory(transfers) {
     const section = document.getElementById('history-section');
+    const distinctRecipients = [...new Set(transfers.map((t) => t.toAccountId))];
+    const summaries = await Promise.all(
+        distinctRecipients.map((id) => Api.get(`/accounts/${id}/summary`).catch(() => ({ ownerName: id }))));
+    const nameByAccountId = Object.fromEntries(
+        distinctRecipients.map((id, index) => [id, summaries[index].ownerName]));
+
     const rows = [...transfers]
         .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-        .map((t) => `<tr><td>${new Date(t.createdAt).toLocaleString()}</td><td>${t.toAccountId}</td>
+        .map((t) => `<tr><td>${new Date(t.createdAt).toLocaleString()}</td><td>${escapeHtml(nameByAccountId[t.toAccountId])}</td>
             <td>$${Number(t.amount).toFixed(2)}</td><td>${t.status}</td></tr>`)
         .join('');
     section.innerHTML = `
