@@ -171,6 +171,26 @@ class AccountControllerIT {
                 .contains(firstId, secondId);
     }
 
+    @Test
+    void listsOnlyMyAccounts() {
+        UUID myAccountId = createAccount(new BigDecimal("100.00"));
+
+        ResponseEntity<AccountResponse[]> response = restTemplate.getForEntity("/accounts/mine", AccountResponse[].class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).extracting(AccountResponse::id).contains(myAccountId);
+    }
+
+    // Regression guard for the literal-vs-variable route ambiguity: "/accounts/mine" and
+    // "/accounts/{id}" are both single-segment GET paths on this controller. Spring MVC's
+    // PathPattern comparator always prefers the more specific (literal) match, so this must
+    // return the caller's own accounts, never attempt UUID.fromString("mine") for getAccount.
+    @Test
+    void accountsMineIsNotSwallowedByTheIdRoute() {
+        ResponseEntity<AccountResponse[]> response = restTemplate.getForEntity("/accounts/mine", AccountResponse[].class);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    }
+
     // Real end-to-end proof of ownership denial: two DIFFERENT customer identities, both real
     // requests through the full filter chain and AccountService against the real repository --
     // not AccountServiceTest's mocked repository, and not AccountSecurityIT's mocked

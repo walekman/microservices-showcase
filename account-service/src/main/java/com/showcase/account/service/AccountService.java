@@ -62,6 +62,14 @@ public class AccountService {
         return accountRepository.findAll();
     }
 
+    // "Mine" for the caller -- filtered by the same ownerId every other owner-gated method
+    // reads from the JWT. Unlike getAllAccounts, this is safe for any authenticated caller:
+    // each caller only ever sees their own list.
+    @Transactional(readOnly = true)
+    public List<Account> getMyAccounts(UUID ownerId) {
+        return accountRepository.findAllByOwnerId(ownerId);
+    }
+
     // Owner-gated, with an exemption for Transfer Service's own machine identity
     // (serviceCaller=true), needed so CompensationScheduler's stale-PENDING reconciliation can
     // replay a debit it doesn't hold the original customer's token for. See
