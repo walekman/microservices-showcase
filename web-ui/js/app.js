@@ -47,7 +47,7 @@ function renderOnboarding() {
     });
 }
 
-function renderDashboard(account) {
+async function renderDashboard(account) {
     const main = document.getElementById('main-content');
     main.innerHTML = `
         <div class="card">
@@ -56,8 +56,111 @@ function renderDashboard(account) {
             <button id="send-money-button" type="button">Send money</button>
         </div>
         <div id="transfer-section"></div>
+        <div id="quick-transfers-section"></div>
         <div id="history-section"></div>`;
-    // Task 9 wires send-money-button and fills transfer-section/history-section.
+
+    const transfers = await Api.get('/transfers/mine');
+    document.getElementById('send-money-button')
+        .addEventListener('click', () => renderTransferForm(account, transfers));
+    await renderQuickTransfers(transfers);
+    await renderHistory(transfers);
+}
+
+function renderTransferForm(account, transfers, prefillAccountId) {
+    const section = document.getElementById('transfer-section');
+    section.innerHTML = `
+        <div class="card">
+            <h3>Send money</h3>
+            <label for="to-account">To account ID</label>
+            <input id="to-account" type="text" value="${prefillAccountId || ''}" />
+            <label for="amount">Amount</label>
+            <input id="amount" type="number" step="0.01" min="0.01" />
+            <button id="submit-transfer-button" type="button">Send</button>
+            <p id="transfer-error" class="error" hidden></p>
+            <p id="transfer-success" hidden></p>
+        </div>`;
+
+    document.getElementById('submit-transfer-button').addEventListener('click', async () => {
+        const toAccountId = document.getElementById('to-account').value.trim();
+        const amount = document.getElementById('amount').value;
+        const errorEl = document.getElementById('transfer-error');
+        const successEl = document.getElementById('transfer-success');
+        errorEl.hidden = true;
+        successEl.hidden = true;
+        try {
+            await Api.post('/transfers', { fromAccountId: account.id, toAccountId, amount });
+            successEl.textContent = 'Transfer completed.';
+            successEl.hidden = false;
+            const refreshedAccounts = await Api.get('/accounts/mine');
+            await renderDashboard(refreshedAccounts[0]);
+        } catch (err) {
+            errorEl.textContent = err.friendlyMessage ? err.friendlyMessage() : err.message;
+            errorEl.hidden = false;
+        }
+    });
+}
+
+async function renderQuickTransfers(transfers) {
+    const section = document.getElementById('quick-transfers-section');
+    const recentFirst = [...transfers].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    const seen = new Set();
+    const distinctRecipients = [];
+    for (const transfer of recentFirst) {
+        if (!seen.has(transfer.toAccountId)) {
+            seen.add(transfer.toAccountId);
+            distinctRecipients.push(transfer.toAccountId);
+        }
+    }
+
+    if (distinctRecipients.length === 0) {
+        section.innerHTML = '';
+        return;
+    }
+
+    const summaries = await Promise.all(
+        distinctRecipients.map((id) => Api.get(`/accounts/${id}/summary`).catch(() => ({ ownerName: id }))));
+
+    section.innerHTML = `
+        <div class="card">
+            <h3>Quick transfers</h3>
+            <ul id="quick-transfers-list"></ul>
+        </div>`;
+    const list = document.getElementById('quick-transfers-list');
+    distinctRecipients.forEach((id, index) => {
+        const li = document.createElement('li');
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = summaries[index].ownerName;
+        button.addEventListener('click', async () => {
+            const accounts = await Api.get('/accounts/mine');
+            renderTransferForm(accounts[0], transfers, id);
+        });
+        li.appendChild(button);
+        list.appendChild(li);
+    });
+}
+
+async function renderHistory(transfers) {
+    const section = document.getElementById('history-section');
+    const distinctRecipients = [...new Set(transfers.map((t) => t.toAccountId))];
+    const summaries = await Promise.all(
+        distinctRecipients.map((id) => Api.get(`/accounts/${id}/summary`).catch(() => ({ ownerName: id }))));
+    const nameByAccountId = Object.fromEntries(
+        distinctRecipients.map((id, index) => [id, summaries[index].ownerName]));
+
+    const rows = [...transfers]
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+        .map((t) => `<tr><td>${new Date(t.createdAt).toLocaleString()}</td><td>${nameByAccountId[t.toAccountId]}</td>
+            <td>$${Number(t.amount).toFixed(2)}</td><td>${t.status}</td></tr>`)
+        .join('');
+    section.innerHTML = `
+        <div class="card">
+            <h3>Transfer history</h3>
+            <table>
+                <thead><tr><th>Date</th><th>To</th><th>Amount</th><th>Status</th></tr></thead>
+                <tbody>${rows || '<tr><td colspan="4">No transfers yet.</td></tr>'}</tbody>
+            </table>
+        </div>`;
 }
 
 bootstrap().catch((err) => {
