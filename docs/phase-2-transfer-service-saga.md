@@ -19,7 +19,7 @@
 - Lombok for entity boilerplate: `@Getter`, `@NoArgsConstructor(access = AccessLevel.PROTECTED)`; hand-write any constructor with custom logic rather than forcing it through Lombok. (CLAUDE.md)
 - No Kubernetes/service mesh; local deployment is Docker Compose only. (spec §7)
 - Never commit directly to `master`; work happens on a `feature/plan-2-*` branch, merged via a subagent-reviewed PR. (CLAUDE.md)
-- springdoc-openapi is pinned to `2.6.0` in the root POM's `springdoc-openapi.version` property — the version that matches Spring Boot 3.3.4. Do not bump it. (docs/roadmap.md)
+- springdoc-openapi is pinned to `2.6.0` in the root POM's `springdoc-openapi.version` property — the version that matches Spring Boot 3.3.4. Do not bump it. (docs/roadmap.md) *(Superseded in Phase 8: this pin held only for Boot 3.3.x; Boot 3.5.16 needs springdoc 2.8.17 — see `CLAUDE.md`, "Executing implementation phases".)*
 
 ## Scope Boundary
 

@@ -36,7 +36,7 @@ realm — two demo users, `ada` and `bob` (password `password` for both), each w
 `GET /transfers`; see `docs/phase-7b-account-ownership-authorization.md`). Swap `username=ada`
 for `username=admin` in the token request below to exercise those.
 
-Get a token (password grant — fine for this demo, since there's no login UI yet):
+Get a token for `curl` (password grant — fine for this demo; the Bank UI at http://localhost:8090 uses Authorization Code + PKCE instead):
 
     curl -X POST http://localhost:8180/realms/showcase/protocol/openid-connect/token \
       -H "Content-Type: application/x-www-form-urlencoded" \
