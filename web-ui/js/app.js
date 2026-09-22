@@ -135,8 +135,22 @@ async function renderQuickTransfers(transfers) {
         return;
     }
 
-    const summaries = await Promise.all(
-        distinctRecipients.map((id) => Api.get(`/accounts/${id}/summary`).catch(() => ({ ownerName: id }))));
+    // Only ever offer a quick-transfer to an account that still exists. GET /accounts/{id}/summary
+    // has no ownership restriction (any authenticated caller can look up any id), so a failed
+    // lookup here reliably means the account itself is gone -- e.g. a past transfer attempt to a
+    // mistyped or otherwise nonexistent id -- not a permissions issue. Those are excluded rather
+    // than shown with a fallback label, since a quick-transfer button that just fails again isn't
+    // useful.
+    const summaryResults = await Promise.all(
+        distinctRecipients.map((id) => Api.get(`/accounts/${id}/summary`)
+            .then((summary) => ({ id, summary }))
+            .catch(() => null)));
+    const existingRecipients = summaryResults.filter((result) => result !== null);
+
+    if (existingRecipients.length === 0) {
+        section.innerHTML = '';
+        return;
+    }
 
     section.innerHTML = `
         <div class="card">
@@ -144,11 +158,11 @@ async function renderQuickTransfers(transfers) {
             <ul id="quick-transfers-list"></ul>
         </div>`;
     const list = document.getElementById('quick-transfers-list');
-    distinctRecipients.forEach((id, index) => {
+    existingRecipients.forEach(({ id, summary }) => {
         const li = document.createElement('li');
         const button = document.createElement('button');
         button.type = 'button';
-        button.textContent = summaries[index].ownerName;
+        button.textContent = summary.ownerName;
         button.addEventListener('click', async () => {
             const accounts = await Api.get('/accounts/mine');
             renderTransferForm(accounts[0], transfers, id);
