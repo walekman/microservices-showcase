@@ -1,5 +1,6 @@
 package com.showcase.account.api;
 
+import com.showcase.account.domain.AccountAlreadyExistsException;
 import com.showcase.account.domain.AccountNotFoundException;
 import com.showcase.account.domain.AccountOperationConflictException;
 import com.showcase.account.domain.InsufficientFundsException;
@@ -29,6 +30,11 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(AccountNotFoundException.class)
     public ProblemDetail handleNotFound(AccountNotFoundException ex) {
         return Problems.of(HttpStatus.NOT_FOUND, "ACCOUNT_NOT_FOUND", "Account not found", ex.getMessage());
+    }
+
+    @ExceptionHandler(AccountAlreadyExistsException.class)
+    public ProblemDetail handleAlreadyExists(AccountAlreadyExistsException ex) {
+        return Problems.of(HttpStatus.CONFLICT, "ACCOUNT_ALREADY_EXISTS", "Account already exists", ex.getMessage());
     }
 
     @ExceptionHandler(InsufficientFundsException.class)

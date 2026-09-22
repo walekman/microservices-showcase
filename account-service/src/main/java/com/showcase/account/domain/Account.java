@@ -26,7 +26,7 @@ public class Account {
 
     // The JWT `sub` of whoever created this account (see docs/phase-7b-account-ownership-authorization.md).
     // Never client-supplied -- bound server-side from the authenticated caller at creation.
-    @Column(nullable = false)
+    @Column(nullable = false, unique = true)
     private UUID ownerId;
 
     @Column(nullable = false)

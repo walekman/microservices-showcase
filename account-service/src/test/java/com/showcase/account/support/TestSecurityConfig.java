@@ -18,6 +18,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Stands in for a real Keycloak in real-HTTP-round-trip tests (TestRestTemplate, not
@@ -37,12 +38,21 @@ public class TestSecurityConfig {
     public static final String CUSTOMER_TOKEN = "test-customer-token";
     public static final String CUSTOMER2_TOKEN = "test-customer2-token";
     public static final String ADMIN_TOKEN = "test-admin-token";
-
-    // A real Keycloak sub is always a UUID (Account's ownership check now parses it as one via
-    // UUID.fromString) -- a non-UUID stand-in like the old "test-customer" broke every
-    // authenticated call in AccountControllerIT the moment Phase 7b started reading this claim.
     public static final UUID CUSTOMER_SUBJECT = UUID.fromString("22222222-2222-2222-2222-222222222222");
     public static final UUID CUSTOMER2_SUBJECT = UUID.fromString("33333333-3333-3333-3333-333333333333");
+
+    // Phase 9: one-account-per-owner means every test needs its OWN owner, not the one fixed
+    // CUSTOMER_SUBJECT above -- AccountControllerIT shares one Testcontainers Postgres instance
+    // across all its @Test methods, so a fixed shared identity would make the second test that
+    // creates an account 409 against the first. freshCustomerToken() mints a new (token,
+    // subject) pair the stub decoder below also recognises.
+    private static final Map<String, UUID> DYNAMIC_CUSTOMER_SUBJECTS = new ConcurrentHashMap<>();
+
+    public static String freshCustomerToken() {
+        String token = "test-customer-token-" + UUID.randomUUID();
+        DYNAMIC_CUSTOMER_SUBJECTS.put(token, UUID.randomUUID());
+        return token;
+    }
 
     // Named differently from the production JwtDecoderConfig's "jwtDecoder" bean -- a full
     // @SpringBootTest DOES scan that real @Configuration class too, and two bean definitions
@@ -54,24 +64,10 @@ public class TestSecurityConfig {
     public JwtDecoder stubJwtDecoder() {
         return token -> {
             if (CUSTOMER_TOKEN.equals(token)) {
-                return Jwt.withTokenValue(token)
-                        .header("alg", "none")
-                        .subject(CUSTOMER_SUBJECT.toString())
-                        .claim("realm_access", Map.of("roles",
-                                List.of("transfer-executor", "account-reader", "account-editor", "fraud-checker")))
-                        .issuedAt(Instant.now())
-                        .expiresAt(Instant.now().plusSeconds(3600))
-                        .build();
+                return customerJwt(token, CUSTOMER_SUBJECT);
             }
             if (CUSTOMER2_TOKEN.equals(token)) {
-                return Jwt.withTokenValue(token)
-                        .header("alg", "none")
-                        .subject(CUSTOMER2_SUBJECT.toString())
-                        .claim("realm_access", Map.of("roles",
-                                List.of("transfer-executor", "account-reader", "account-editor", "fraud-checker")))
-                        .issuedAt(Instant.now())
-                        .expiresAt(Instant.now().plusSeconds(3600))
-                        .build();
+                return customerJwt(token, CUSTOMER2_SUBJECT);
             }
             if (ADMIN_TOKEN.equals(token)) {
                 return Jwt.withTokenValue(token)
@@ -82,24 +78,36 @@ public class TestSecurityConfig {
                         .expiresAt(Instant.now().plusSeconds(3600))
                         .build();
             }
+            UUID dynamicSubject = DYNAMIC_CUSTOMER_SUBJECTS.get(token);
+            if (dynamicSubject != null) {
+                return customerJwt(token, dynamicSubject);
+            }
             throw new JwtException("Unrecognised test token: " + token);
         };
     }
 
+    private static Jwt customerJwt(String token, UUID subject) {
+        return Jwt.withTokenValue(token)
+                .header("alg", "none")
+                .subject(subject.toString())
+                .claim("realm_access", Map.of("roles",
+                        List.of("transfer-executor", "account-reader", "account-editor", "fraud-checker")))
+                .issuedAt(Instant.now())
+                .expiresAt(Instant.now().plusSeconds(3600))
+                .build();
+    }
+
     /**
-     * A RestTemplateBuilder bean is not reliably picked up by TestRestTemplateContextCustomizer
-     * in every Boot version/configuration -- found live (gateway-service's equivalent test kept
-     * getting 401s with the bean-based approach). Calling this from a @BeforeEach directly
-     * mutates the already-built TestRestTemplate instead, which is guaranteed to take effect.
-     * Idempotent: the underlying RestTemplate bean is shared/cached across this test class's
-     * methods, so a naive @BeforeEach would otherwise add a duplicate interceptor per test.
+     * Installs a FRESH customer identity before every test method, replacing any previous
+     * interceptor rather than skipping when one is already present (Phase 9 changed this from
+     * idempotent-install-once: see the class-level comment above DYNAMIC_CUSTOMER_SUBJECTS).
+     * The underlying RestTemplate bean is still shared/cached across this test class's methods,
+     * so removal-then-add is what makes each test's default identity distinct.
      */
     public static void authenticateAsCustomer(TestRestTemplate restTemplate) {
         var interceptors = restTemplate.getRestTemplate().getInterceptors();
-        boolean alreadyAdded = interceptors.stream().anyMatch(BearerAuthInterceptor.class::isInstance);
-        if (!alreadyAdded) {
-            interceptors.add(new BearerAuthInterceptor(CUSTOMER_TOKEN));
-        }
+        interceptors.removeIf(BearerAuthInterceptor.class::isInstance);
+        interceptors.add(new BearerAuthInterceptor(freshCustomerToken()));
     }
 
     /**

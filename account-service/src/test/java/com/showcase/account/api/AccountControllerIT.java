@@ -154,8 +154,8 @@ class AccountControllerIT {
         // Test methods in this class share one Testcontainers Postgres instance (no per-test
         // cleanup), so other tests' accounts may already be in the table -- assert this test's
         // own accounts are present in the list rather than asserting an exact total count.
-        UUID firstId = createAccount(new BigDecimal("100.00"));
-        UUID secondId = createAccount(new BigDecimal("50.00"));
+        UUID firstId = createAccount(new BigDecimal("100.00"), TestSecurityConfig.freshCustomerToken());
+        UUID secondId = createAccount(new BigDecimal("50.00"), TestSecurityConfig.freshCustomerToken());
 
         // account-admin only, as of Phase 7b -- the class-wide customer token (account-reader)
         // is no longer enough, so this request carries its own explicit admin Authorization
@@ -465,6 +465,17 @@ class AccountControllerIT {
     }
 
     @Test
+    void rejectsASecondAccountForTheSameOwner() {
+        createAccount(new BigDecimal("100.00"));
+
+        ResponseEntity<ProblemDetail> response = restTemplate.postForEntity(
+                "/accounts", new CreateAccountRequest("Ada Lovelace", new BigDecimal("50.00")), ProblemDetail.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(response.getBody().getProperties()).containsEntry("code", "ACCOUNT_ALREADY_EXISTS");
+    }
+
+    @Test
     void rejectsNegativeInitialBalance() {
         ResponseEntity<ProblemDetail> response = restTemplate.postForEntity(
                 "/accounts", new CreateAccountRequest("Ada Lovelace", new BigDecimal("-5.00")), ProblemDetail.class);
@@ -498,8 +509,21 @@ class AccountControllerIT {
     }
 
     private UUID createAccount(BigDecimal initialBalance) {
-        ResponseEntity<AccountResponse> response = restTemplate.postForEntity(
-                "/accounts", new CreateAccountRequest("Ada Lovelace", initialBalance), AccountResponse.class);
+        return createAccount(initialBalance, null);
+    }
+
+    // ownerToken == null uses the ambient per-test identity from authenticateAsCustomer.
+    // An explicit token lets one test method create accounts for two DIFFERENT owners --
+    // needed now that one account per owner is enforced. See listsAllAccounts.
+    private UUID createAccount(BigDecimal initialBalance, String ownerToken) {
+        HttpHeaders headers = new HttpHeaders();
+        if (ownerToken != null) {
+            headers.setBearerAuth(ownerToken);
+        }
+        ResponseEntity<AccountResponse> response = restTemplate.exchange(
+                "/accounts", HttpMethod.POST,
+                new HttpEntity<>(new CreateAccountRequest("Ada Lovelace", initialBalance), headers),
+                AccountResponse.class);
         return response.getBody().id();
     }
 

@@ -8,4 +8,6 @@ import java.util.UUID;
 public interface AccountRepository extends JpaRepository<Account, UUID> {
 
     List<Account> findAllByOwnerId(UUID ownerId);
+
+    boolean existsByOwnerId(UUID ownerId);
 }
