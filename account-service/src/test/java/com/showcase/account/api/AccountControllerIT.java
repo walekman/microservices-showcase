@@ -508,6 +508,30 @@ class AccountControllerIT {
         assertThat(response.getBody().getProperties()).containsEntry("code", "MALFORMED_REQUEST");
     }
 
+    // Deliberately the one place a caller can read something about an account they don't own --
+    // the display name, never the balance or ownerId. See docs/phase-9-bank-ui.md's Design
+    // Decisions.
+    @Test
+    void anyAuthenticatedCallerCanReadAnAccountsSummary() {
+        UUID id = createAccount(new BigDecimal("100.00"));
+
+        HttpHeaders otherCustomer = new HttpHeaders();
+        otherCustomer.setBearerAuth(TestSecurityConfig.freshCustomerToken());
+        ResponseEntity<AccountSummaryResponse> response = restTemplate.exchange(
+                "/accounts/" + id + "/summary", HttpMethod.GET, new HttpEntity<>(otherCustomer), AccountSummaryResponse.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody().ownerName()).isEqualTo("Ada Lovelace");
+    }
+
+    @Test
+    void summaryReturns404ForAnUnknownAccount() {
+        ResponseEntity<ProblemDetail> response = restTemplate.getForEntity(
+                "/accounts/" + UUID.randomUUID() + "/summary", ProblemDetail.class);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(response.getBody().getProperties()).containsEntry("code", "ACCOUNT_NOT_FOUND");
+    }
+
     private UUID createAccount(BigDecimal initialBalance) {
         return createAccount(initialBalance, null);
     }

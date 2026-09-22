@@ -84,6 +84,12 @@ public class AccountService {
         return accountRepository.findAllByOwnerId(ownerId);
     }
 
+    // No ownership check -- see AccountController.getAccountSummary's javadoc.
+    @Transactional(readOnly = true)
+    public Account getAccountSummary(UUID id) {
+        return accountRepository.findById(id).orElseThrow(() -> new AccountNotFoundException(id));
+    }
+
     // Owner-gated, with an exemption for Transfer Service's own machine identity
     // (serviceCaller=true), needed so CompensationScheduler's stale-PENDING reconciliation can
     // replay a debit it doesn't hold the original customer's token for. See
