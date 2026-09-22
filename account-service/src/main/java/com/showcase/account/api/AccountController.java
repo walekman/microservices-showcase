@@ -60,6 +60,13 @@ public class AccountController {
                 .toList();
     }
 
+    @GetMapping("/mine")
+    public List<AccountResponse> getMyAccounts(@AuthenticationPrincipal Jwt jwt) {
+        return accountService.getMyAccounts(UUID.fromString(jwt.getSubject())).stream()
+                .map(AccountResponse::from)
+                .toList();
+    }
+
     @GetMapping("/{id}")
     public AccountResponse getAccount(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID id) {
         return AccountResponse.from(accountService.getAccount(id, UUID.fromString(jwt.getSubject())));
