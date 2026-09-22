@@ -46,14 +46,16 @@ class AccountServiceTest {
 
     @Test
     void createAccountSavesANewAccount() {
-        when(accountRepository.save(any(Account.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(accountRepository.existsByOwnerId(OWNER_ID)).thenReturn(false);
+        when(accountRepository.saveAndFlush(any(Account.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         Account result = accountService.createAccount(OWNER_ID, "Ada Lovelace", new BigDecimal("100.00"));
 
         assertThat(result.getOwnerId()).isEqualTo(OWNER_ID);
         assertThat(result.getOwnerName()).isEqualTo("Ada Lovelace");
         assertThat(result.getBalance()).isEqualByComparingTo("100.00");
-        verify(accountRepository).save(any(Account.class));
+        verify(accountRepository).existsByOwnerId(OWNER_ID);
+        verify(accountRepository).saveAndFlush(any(Account.class));
     }
 
     @Test

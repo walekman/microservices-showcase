@@ -1,12 +1,14 @@
 package com.showcase.account.service;
 
 import com.showcase.account.domain.Account;
+import com.showcase.account.domain.AccountAlreadyExistsException;
 import com.showcase.account.domain.AccountNotFoundException;
 import com.showcase.account.domain.AccountOperation;
 import com.showcase.account.domain.AccountOperationConflictException;
 import com.showcase.account.domain.AccountOperationRepository;
 import com.showcase.account.domain.AccountOperationType;
 import com.showcase.account.domain.AccountRepository;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,7 +31,19 @@ public class AccountService {
 
     @Transactional
     public Account createAccount(UUID ownerId, String ownerName, BigDecimal initialBalance) {
-        return accountRepository.save(new Account(ownerId, ownerName, initialBalance));
+        if (accountRepository.existsByOwnerId(ownerId)) {
+            throw new AccountAlreadyExistsException(ownerId);
+        }
+        try {
+            // saveAndFlush, not save: a plain save() only queues the INSERT for the transaction's
+            // commit-time flush, which happens AFTER this method returns -- too late to catch here.
+            // Flushing now surfaces a genuinely concurrent duplicate (the unique constraint above)
+            // as a DataIntegrityViolationException inside this method, same idiom as
+            // AccountOperation's idempotency-key race in apply() below.
+            return accountRepository.saveAndFlush(new Account(ownerId, ownerName, initialBalance));
+        } catch (DataIntegrityViolationException ex) {
+            throw new AccountAlreadyExistsException(ownerId);
+        }
     }
 
     // Owner-gated: a non-owning caller gets the same AccountNotFoundException a genuinely
