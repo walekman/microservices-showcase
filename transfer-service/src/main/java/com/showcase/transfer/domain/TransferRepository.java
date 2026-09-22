@@ -16,4 +16,8 @@ public interface TransferRepository extends JpaRepository<Transfer, UUID> {
     List<Transfer> findByStatus(TransferStatus status, Limit limit);
 
     List<Transfer> findByStatusAndCreatedAtBefore(TransferStatus status, Instant cutoff, Limit limit);
+
+    List<Transfer> findByInitiatorId(UUID initiatorId);
+
+    List<Transfer> findByInitiatorIdAndStatus(UUID initiatorId, TransferStatus status);
 }

@@ -129,6 +129,21 @@ class TransferSecurityIT {
     }
 
     @Test
+    void listMyTransfersReturns401WithNoToken() throws Exception {
+        mockMvc.perform(get("/transfers/mine"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void listMyTransfersReturns200WithTransferExecutorAuthority() throws Exception {
+        UUID subject = UUID.randomUUID();
+        mockMvc.perform(get("/transfers/mine")
+                        .with(jwt().jwt(builder -> builder.subject(subject.toString()))
+                                .authorities(() -> "transfer-executor")))
+                .andExpect(status().isOk());
+    }
+
+    @Test
     void actuatorHealthNeedsNoToken() throws Exception {
         mockMvc.perform(get("/actuator/health"))
                 .andExpect(status().isOk());
