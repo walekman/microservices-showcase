@@ -10,6 +10,10 @@
 
 **Spec:** This document (brainstormed with the user on 2026-09-22), `docs/microservices-showcase-design.md` §2 (Services) and §7 (Deployment), `docs/phase-7-auth-keycloak-jwt.md` (JWT/Keycloak wiring this phase's auth flow builds on), and `docs/phase-7b-account-ownership-authorization.md` (the ownership model this UI's new endpoints must respect, and the one place they deliberately carve out an exception).
 
+## Implementation Status
+
+**Phase 9 is now implemented and merged.** All ten tasks (Tasks 1–10) have been merged to `master`. One deviation discovered during Task 9 implementation is worth recording: the `renderHistory` code block below (under Task 9) originally showed a raw account ID in the transfer history's "To" column (line 1581, `t.toAccountId`), contradicting this document's own Design Decisions that specify counterparty names, not IDs. During implementation, this was caught and fixed to resolve the recipient name via `GET /accounts/{id}/summary`, matching the pattern used in `renderQuickTransfers`. The corrected implementation (resolving names before rendering) is in `web-ui/js/app.js` on `master`, not literally what this document's historical code block shows — if this document is used as a reference for a similar future UI, use the corrected approach, not the original code block.
+
 ## Global Constraints
 
 - Java 21 floor for the two backend modules. Use `C:\dev\openjdk-21.0.2` and set `JAVA_HOME` before running Maven. (CLAUDE.md)

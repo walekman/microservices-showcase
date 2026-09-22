@@ -34,6 +34,7 @@ See `docs/microservices-showcase-design.md` for the architecture, and `docs/phas
 - Build and test with the wrapper from the repo root: `./mvnw test`. Surefire runs the `*IT` classes too, so this is the whole suite; it needs Docker running (Testcontainers) and takes a few minutes. One class in one module: `./mvnw -pl <module> -Dtest=<Class> test`. Compose builds each image from source, so after a code or `pom.xml` change `docker compose up -d --build --no-deps <service>` picks it up.
 - Lombok is used for entity boilerplate (getters, JPA no-arg constructors) — see `account-service`'s `pom.xml`/`Account.java` for the pattern (`@Getter`, `@NoArgsConstructor(access = AccessLevel.PROTECTED)`; hand-write any constructor with custom logic rather than forcing it through Lombok).
 - Pass the git commit into the images with `GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build` (PowerShell: `$env:GIT_SHA = git rev-parse --short HEAD; docker compose up -d --build`); without it `/actuator/info` and the Service Versions dashboard show `commit: unknown`. Also: `build-info` runs at `generate-resources`, so an offline (`-o`) Maven build on a cold cache fails to resolve the Boot plugin — run one online build first.
+- A fresh `git worktree` checkout does not carry the `.env` file (it's gitignored, untracked); copy `.env` from an existing checkout before running `docker compose up`, or `docker compose up` will fail at Postgres with unset `POSTGRES_PASSWORD` and related variables.
 
 ## Git workflow
 

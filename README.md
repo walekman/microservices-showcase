@@ -24,7 +24,7 @@ Then:
 
     docker compose up --build
 
-This starts Postgres, Account Service (8081), Transfer Service (8082), Fraud Service (8084), Kafka, Notification Service (8083), the API Gateway (8080), Keycloak (8180), and the observability stack: OTel Collector, Grafana Tempo (3200), Prometheus (9090), and Grafana (3001).
+This starts Postgres, Account Service (8081), Transfer Service (8082), Fraud Service (8084), Kafka, Notification Service (8083), the API Gateway (8080), the Bank UI (8090), Keycloak (8180), and the observability stack: OTel Collector, Grafana Tempo (3200), Prometheus (9090), and Grafana (3001).
 
 ## Authentication (Keycloak)
 
@@ -58,14 +58,18 @@ token for the `admin` user instead:
       -d "grant_type=password&client_id=showcase-ui&username=admin&password=password" \
       | jq -r .access_token)
 
-## Try it (Swagger UI)
+## Try it (Swagger UI & Bank UI)
 
-All three APIs are browsable and callable straight from a browser. Each has an **Authorize**
+All three backend APIs are browsable and callable straight from a browser. Each has an **Authorize**
 button (top right) — paste in a token obtained as above to make "Try it out" calls succeed:
 
 - Account Service — http://localhost:8081/swagger-ui.html
 - Transfer Service — http://localhost:8082/swagger-ui.html
 - Fraud Service — http://localhost:8084/swagger-ui.html
+
+The Bank UI (customer-facing web app) is at:
+
+- Bank UI — http://localhost:8090
 
 ## API Gateway
 
