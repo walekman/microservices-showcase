@@ -281,4 +281,15 @@ class TransferControllerTest {
                 .andExpect(jsonPath("$.code").value("REQUEST_REJECTED"))
                 .andExpect(jsonPath("$.timestamp").exists());
     }
+
+    @Test
+    void listsMyTransfersUsingTheCallersSubject() throws Exception {
+        Transfer transfer = pendingTransfer();
+        transfer.markCompleted();
+        when(transferService.listMyTransfers(SUBJECT, null)).thenReturn(List.of(transfer));
+
+        mockMvc.perform(get("/transfers/mine").with(transferExecutor()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].status").value("COMPLETED"));
+    }
 }

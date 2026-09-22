@@ -174,6 +174,12 @@ public class TransferService {
         throw new TransferNotFoundException(id);
     }
 
+    public List<Transfer> listMyTransfers(UUID initiatorId, TransferStatus status) {
+        return status == null
+                ? transferRepository.findByInitiatorId(initiatorId)
+                : transferRepository.findByInitiatorIdAndStatus(initiatorId, status);
+    }
+
     public List<Transfer> listTransfers(TransferStatus status) {
         return status == null ? transferRepository.findAll() : transferRepository.findByStatus(status);
     }

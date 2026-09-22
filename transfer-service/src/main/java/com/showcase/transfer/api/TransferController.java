@@ -47,6 +47,14 @@ public class TransferController {
         return TransferResponse.from(transferService.getTransfer(id, UUID.fromString(jwt.getSubject())));
     }
 
+    @GetMapping("/mine")
+    public List<TransferResponse> listMyTransfers(@AuthenticationPrincipal Jwt jwt,
+                                                   @RequestParam(required = false) TransferStatus status) {
+        return transferService.listMyTransfers(UUID.fromString(jwt.getSubject()), status).stream()
+                .map(TransferResponse::from)
+                .toList();
+    }
+
     // transfer-admin only (see SecurityConfig) -- deliberately unscoped, unlike getTransfer above.
     @GetMapping
     public List<TransferResponse> listTransfers(@RequestParam(required = false) TransferStatus status) {
