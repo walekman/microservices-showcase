@@ -30,7 +30,9 @@ public class GatewayRoutesConfig {
     public RouterFunction<ServerResponse> accountRoutes(AccountServiceProperties properties) {
         RequestPredicate accountPaths = POST("/accounts")
                 .or(GET("/accounts"))
-                .or(GET("/accounts/{id}"));
+                .or(GET("/accounts/mine"))
+                .or(GET("/accounts/{id}"))
+                .or(GET("/accounts/{id}/summary"));
         return route(accountPaths, http(properties.baseUrl()));
     }
 }

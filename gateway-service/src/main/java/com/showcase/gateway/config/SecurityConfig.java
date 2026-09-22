@@ -9,6 +9,10 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+import java.util.List;
 
 /**
  * Validates the JWT here too, not just downstream -- this is the FIRST check, not the only
@@ -21,25 +25,31 @@ import org.springframework.security.web.SecurityFilterChain;
 public class SecurityConfig {
 
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http, JwtDecoder jwtDecoder) throws Exception {
+    public CorsConfigurationSource corsConfigurationSource(BankUiProperties bankUiProperties) {
+        CorsConfiguration configuration = new CorsConfiguration();
+        configuration.setAllowedOrigins(List.of(bankUiProperties.origin()));
+        configuration.setAllowedMethods(List.of("GET", "POST"));
+        configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "Idempotency-Key"));
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", configuration);
+        return source;
+    }
+
+    @Bean
+    public SecurityFilterChain securityFilterChain(HttpSecurity http, JwtDecoder jwtDecoder,
+            CorsConfigurationSource corsConfigurationSource) throws Exception {
         JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
         converter.setJwtGrantedAuthoritiesConverter(new KeycloakRealmRoleConverter());
 
-        http.sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+        http.cors(cors -> cors.configurationSource(corsConfigurationSource))
+                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .csrf(AbstractHttpConfigurer::disable)
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers("/actuator/health/**").permitAll()
                         .requestMatchers("/actuator/prometheus").permitAll()
                         .requestMatchers("/actuator/info").permitAll()
-                        // hasAnyAuthority, not hasAuthority: this is the coarse first check (see
-                        // class javadoc), not the precise one -- GET /transfers (list) needs
-                        // transfer-admin downstream, POST /transfers and GET /transfers/{id}
-                        // need transfer-executor, but the Gateway doesn't split by method/path
-                        // here, so it admits either and lets transfer-service's own SecurityConfig
-                        // enforce the exact split. Without account-admin/transfer-admin here, a
-                        // Phase 7b admin token would 403 at the Gateway before ever reaching the
-                        // service that's supposed to authorize it -- found in code review.
                         .requestMatchers("/transfers/**").hasAnyAuthority("transfer-executor", "transfer-admin")
+                        .requestMatchers(HttpMethod.GET, "/accounts/*/summary").authenticated()
                         .requestMatchers(HttpMethod.GET, "/accounts", "/accounts/*")
                         .hasAnyAuthority("account-reader", "account-admin")
                         .requestMatchers(HttpMethod.POST, "/accounts").hasAuthority("account-editor")

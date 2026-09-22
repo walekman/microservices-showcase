@@ -85,4 +85,16 @@ class GatewaySecurityIT {
         ResponseEntity<String> response = restTemplate.getForEntity("/actuator/health", String.class);
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     }
+
+    @Test
+    void accountSummaryRouteAcceptsAnyAuthenticatedCaller() {
+        ResponseEntity<String> response = requestWithAuthorities("/accounts/123/summary", HttpMethod.GET, "transfer-executor");
+        assertThat(response.getStatusCode()).isNotEqualTo(HttpStatus.FORBIDDEN);
+    }
+
+    @Test
+    void transfersMineRouteAcceptsTransferExecutorAuthority() {
+        ResponseEntity<String> response = requestWithAuthorities("/transfers/mine", HttpMethod.GET, "transfer-executor");
+        assertThat(response.getStatusCode()).isNotEqualTo(HttpStatus.FORBIDDEN);
+    }
 }

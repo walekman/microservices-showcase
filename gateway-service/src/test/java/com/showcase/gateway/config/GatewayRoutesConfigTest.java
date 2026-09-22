@@ -61,4 +61,14 @@ class GatewayRoutesConfigTest {
         assertThat(matches(transferRoutes, "GET", "/fraud-check")).isFalse();
         assertThat(matches(accountRoutes, "GET", "/fraud-check")).isFalse();
     }
+
+    @Test
+    void accountMineMatches() {
+        assertThat(matches(accountRoutes, "GET", "/accounts/mine")).isTrue();
+    }
+
+    @Test
+    void accountSummaryMatches() {
+        assertThat(matches(accountRoutes, "GET", "/accounts/123/summary")).isTrue();
+    }
 }
