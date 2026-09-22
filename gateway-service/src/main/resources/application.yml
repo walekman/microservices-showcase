@@ -52,3 +52,6 @@ transfer-service:
 keycloak:
   issuer-uri: ${KEYCLOAK_ISSUER_URI:http://localhost:8180/realms/showcase}
   jwk-set-uri: ${KEYCLOAK_JWK_SET_URI:http://localhost:8180/realms/showcase/protocol/openid-connect/certs}
+
+bank-ui:
+  origin: ${BANK_UI_ORIGIN:http://localhost:8090}
