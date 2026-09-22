@@ -2,6 +2,8 @@
   "realm": "showcase",
   "enabled": true,
   "sslRequired": "none",
+  "registrationAllowed": true,
+  "loginTheme": "bank-ui",
   "roles": {
     "realm": [
       {
@@ -35,8 +37,19 @@
         "composites": {
           "realm": ["transfer-executor", "account-reader", "account-editor", "fraud-checker"]
         }
+      },
+      {
+        "name": "default-roles-showcase",
+        "description": "Assigned automatically to every new user, including self-registered ones",
+        "composite": true,
+        "composites": { "realm": ["customer"] }
       }
     ]
+  },
+  "defaultRole": {
+    "name": "default-roles-showcase",
+    "composite": true,
+    "composites": { "realm": ["customer"] }
   },
   "clients": [
     {
@@ -51,7 +64,10 @@
       "directAccessGrantsEnabled": true,
       "serviceAccountsEnabled": false,
       "redirectUris": ["http://localhost:*", "http://localhost:3000/*"],
-      "webOrigins": ["*"]
+      "webOrigins": ["*"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      }
     },
     {
       "clientId": "transfer-service",
