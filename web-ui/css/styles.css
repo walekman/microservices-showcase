@@ -42,3 +42,12 @@ button {
     margin-bottom: 1rem;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
+
+.error {
+    color: #b00020;
+}
+
+.balance {
+    font-size: 2rem;
+    font-weight: 700;
+}
