@@ -72,6 +72,15 @@ public class AccountController {
         return AccountResponse.from(accountService.getAccount(id, UUID.fromString(jwt.getSubject())));
     }
 
+    // Any authenticated caller, deliberately NOT owner-gated -- the one exception to this
+    // controller's ownership rule. Returns only ownerName, never balance or ownerId, so a
+    // recipient can be shown as a name instead of a bare UUID without leaking their balance.
+    // See docs/phase-9-bank-ui.md's Design Decisions.
+    @GetMapping("/{id}/summary")
+    public AccountSummaryResponse getAccountSummary(@PathVariable UUID id) {
+        return AccountSummaryResponse.from(accountService.getAccountSummary(id));
+    }
+
     // Existence only, no body, no ownership check -- see docs/phase-7b-account-ownership-authorization.md.
     // Deliberately not reused as HEAD /accounts/{id}: HEAD shares getAccount's handler, so it
     // would inherit that endpoint's ownership check instead of staying a general probe.

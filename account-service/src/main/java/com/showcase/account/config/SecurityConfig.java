@@ -46,6 +46,11 @@ public class SecurityConfig {
                         // account-reader, could probe existence. Found in code review.
                         .requestMatchers(HttpMethod.GET, "/accounts/exists/*").hasAuthority("account-reader")
                         .requestMatchers(HttpMethod.HEAD, "/accounts/exists/*").hasAuthority("account-reader")
+                        // Any authenticated caller, not just account-reader -- matches getAccountSummary's
+                        // deliberately open access. HEAD included for the same reason as every other GET matcher
+                        // here (Spring MVC serves HEAD from the same handler).
+                        .requestMatchers(HttpMethod.GET, "/accounts/*/summary").authenticated()
+                        .requestMatchers(HttpMethod.HEAD, "/accounts/*/summary").authenticated()
                         // HEAD is matched explicitly, not just GET: requestMatchers(GET, ...) does not
                         // match a HEAD request, which Spring MVC still serves from the GET handler --
                         // without this, HEAD /accounts/{id} fell through to anyRequest().authenticated()
