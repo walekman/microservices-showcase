@@ -188,6 +188,14 @@ services:
       retries: 10
       start_period: 40s
 
+  web-ui:
+    image: nginx:alpine
+    container_name: showcase-web-ui
+    volumes:
+      - ./web-ui:/usr/share/nginx/html:ro
+    ports:
+      - "8090:80"
+
   keycloak:
     image: quay.io/keycloak/keycloak:26.0
     container_name: showcase-keycloak
