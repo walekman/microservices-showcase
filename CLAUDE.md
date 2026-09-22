@@ -32,6 +32,7 @@ Known gap: `CompensationScheduler` sweeps only `COMPENSATION_REQUIRED` and stale
 - **Design spec:** `docs/microservices-showcase-design.md` — the source of truth for architecture, service boundaries, and tech stack. Update it (not just the phases) if an implementation decision changes the actual architecture.
 - **Implementation phases:** `docs/phase-N-<feature-name>.md` (e.g. `docs/phase-1-foundation-account-service.md`) — one per build increment, in execution order. This project uses this location/naming instead of the `docs/superpowers/plans/` default; keep new phases consistent with it.
 - **Roadmap:** `docs/roadmap.md` — tracks which phases are done/not-started and their forecast scope. Update its status/scope row whenever a phase starts, finishes, or its actual scope diverges from the forecast.
+- **Open items:** `docs/open-items.md` — every open gap, planned feature, tech-debt item and deliberate non-goal, each pointing back to the phase doc that raised it. Add to it when a phase defers something; remove an item when it lands.
 
 ## Local environment
 
