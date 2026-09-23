@@ -1,5 +1,6 @@
 package com.showcase.transfer.service;
 
+import com.showcase.transfer.domain.DebitOutcomeUnknownException;
 import com.showcase.transfer.domain.OutboxEvent;
 import com.showcase.transfer.domain.OutboxEventRepository;
 import com.showcase.transfer.domain.Transfer;
@@ -28,9 +29,11 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.catchThrowableOfType;
 
 /**
  * Runs the real, Spring-managed CompensationScheduler bean against a real Postgres-backed
@@ -61,6 +64,9 @@ class CompensationSchedulerIT {
     private static HttpServer fakeAccountService;
     private static HttpServer fakeFraudService;
     private static final AtomicInteger creditRequestsToDestination = new AtomicInteger();
+    private static final AtomicInteger debitRequests = new AtomicInteger();
+    // Flipped by the timed-out-debit test: 503 while Account is "down", 200 once it is back.
+    private static final AtomicBoolean debitAvailable = new AtomicBoolean(true);
 
     @DynamicPropertySource
     static void accountServiceUrl(DynamicPropertyRegistry registry) throws IOException {
@@ -70,6 +76,15 @@ class CompensationSchedulerIT {
         fakeAccountService.createContext("/accounts/" + TO + "/credit", exchange -> {
             creditRequestsToDestination.incrementAndGet();
             exchange.sendResponseHeaders(200, -1);
+            exchange.close();
+        });
+        fakeAccountService.createContext("/accounts/exists/", exchange -> {
+            exchange.sendResponseHeaders(200, -1);
+            exchange.close();
+        });
+        fakeAccountService.createContext("/accounts/" + FROM + "/debit", exchange -> {
+            debitRequests.incrementAndGet();
+            exchange.sendResponseHeaders(debitAvailable.get() ? 200 : 503, -1);
             exchange.close();
         });
         fakeAccountService.start();
@@ -86,6 +101,10 @@ class CompensationSchedulerIT {
                 () -> "http://localhost:" + fakeAccountService.getAddress().getPort());
         registry.add("fraud-service.base-url",
                 () -> "http://localhost:" + fakeFraudService.getAddress().getPort());
+        // Every PENDING row counts as stale, so a test can sweep straight after its saga; the long
+        // interval keeps the background sweep from running concurrently with a test's own call.
+        registry.add("transfer.compensation.pending-stale-after", () -> "0s");
+        registry.add("transfer.compensation.sweep-interval", () -> "1h");
     }
 
     @AfterAll
@@ -106,6 +125,9 @@ class CompensationSchedulerIT {
 
     @Autowired
     private OutboxEventRepository outboxEventRepository;
+
+    @Autowired
+    private TransferService transferService;
 
     @Test
     void drainingARealStrandedTransferReconcilesItToCompletedAndPersistsThroughTheRealVersionedSave() {
@@ -133,5 +155,41 @@ class CompensationSchedulerIT {
         // thus unpublished-marked-null) this row out from under the assertion.
         List<OutboxEvent> unpublished = outboxEventRepository.findByPublishedAtIsNullOrderByCreatedAtAsc(Limit.of(10));
         assertThat(unpublished).extracting(OutboxEvent::getTransferId).contains(transfer.getId());
+    }
+
+    /**
+     * The live saga's debit gets no definitive answer (503 on every retry), so its outcome is
+     * unknown. The row must stay PENDING -- not FAILED, which no sweep revisits -- and the
+     * stale-PENDING sweep must then settle it by replaying the debit key once Account is back.
+     */
+    @Test
+    void aTimedOutLiveDebitIsLeftPendingAndThenReconciledByTheSweeps() {
+        debitAvailable.set(false);
+        UUID transferId;
+        try {
+            transferId = catchThrowableOfType(DebitOutcomeUnknownException.class,
+                    () -> transferService.execute(FROM, TO, new BigDecimal("25.00"), UUID.randomUUID(), "key-timeout"))
+                    .getTransferId();
+        } finally {
+            debitAvailable.set(true);
+        }
+
+        Transfer unsettled = transferRepository.findById(transferId).orElseThrow();
+        assertThat(unsettled.getStatus()).isEqualTo(TransferStatus.PENDING);
+        assertThat(outboxEventRepository.findByPublishedAtIsNullOrderByCreatedAtAsc(Limit.of(100)))
+                .extracting(OutboxEvent::getTransferId).doesNotContain(transferId);
+        int debitsDuringTheSaga = debitRequests.get();
+
+        scheduler.sweepStalePending();
+
+        // The replay reached Account with the debit key and got a definitive answer.
+        assertThat(debitRequests.get()).isGreaterThan(debitsDuringTheSaga);
+        assertThat(transferRepository.findById(transferId).orElseThrow().getStatus())
+                .isEqualTo(TransferStatus.COMPENSATION_REQUIRED);
+
+        scheduler.drainCompensationRequired();
+
+        assertThat(transferRepository.findById(transferId).orElseThrow().getStatus())
+                .isEqualTo(TransferStatus.COMPLETED);
     }
 }

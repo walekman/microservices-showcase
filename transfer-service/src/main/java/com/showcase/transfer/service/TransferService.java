@@ -6,6 +6,7 @@ import com.showcase.transfer.client.AccountServiceUnavailableException;
 import com.showcase.transfer.client.FraudClient;
 import com.showcase.transfer.client.FraudRejectedException;
 import com.showcase.transfer.client.FraudServiceUnavailableException;
+import com.showcase.transfer.domain.DebitOutcomeUnknownException;
 import com.showcase.transfer.domain.IdempotencyKeyConflictException;
 import com.showcase.transfer.domain.Transfer;
 import com.showcase.transfer.domain.TransferFailureCode;
@@ -116,22 +117,19 @@ public class TransferService {
             } catch (AccountServiceUnavailableException ex) {
                 // AMBIGUOUS, and the most dangerous state in this service. A read timeout is
                 // indistinguishable from "the request never arrived": Account may have
-                // committed the debit and failed to tell us. FAILED here therefore means
-                // "debit NOT CONFIRMED", never "debit definitely did not happen".
+                // committed the debit and failed to tell us.
                 //
-                // It is deliberately NOT routed to COMPENSATION_REQUIRED. That state means
-                // "debit definitely succeeded, credit definitely did not", and the compensator
-                // credits the source back on the strength of it. Feeding an ambiguous outcome
-                // into it would make the compensator invent money whenever the debit never
-                // actually landed -- strictly worse than under-reporting.
-                //
-                // BLOCKING PRECONDITION FOR THE COMPENSATOR PLAN: it must reconcile against
-                // Account before crediting anything back, and must not read this combination
-                // (FAILED + ACCOUNT_SERVICE_UNAVAILABLE on the debit leg) as "no money moved".
+                // So the transfer is NOT settled here. FAILED would be terminal -- no sweep
+                // revisits it -- and would stay wrong for good if the debit had committed.
+                // COMPENSATION_REQUIRED means "debit definitely succeeded", and the compensator
+                // would credit the source back on a guess, inventing money if it never landed.
+                // Left PENDING, the row is exactly what CompensationScheduler.sweepStalePending
+                // exists for: it replays <id>:debit against Account's idempotency ledger and
+                // settles the transfer from the answer, not from a guess.
                 log.error("Transfer {} debit outcome UNKNOWN for account {} amount {}: {}. "
-                                + "Recorded FAILED, but the debit may have committed -- needs reconciliation.",
+                                + "Left PENDING for the stale-PENDING sweep to reconcile.",
                         transfer.getId(), fromAccountId, amount, ex.getMessage());
-                return fail(transfer, TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, ex.getMessage());
+                throw new DebitOutcomeUnknownException(transfer.getId(), ex);
             }
             debited = true;
 
@@ -161,6 +159,10 @@ public class TransferService {
             transfer.markCompleted();
             log.info("Transfer {} completed", transfer.getId());
             return transferSaveService.save(transfer);
+        } catch (DebitOutcomeUnknownException ex) {
+            // Deliberately unsettled -- see step 3. Must not fall into the catch-all below,
+            // which would record the PENDING row as FAILED.
+            throw ex;
         } catch (RuntimeException ex) {
             // Anything the two client exceptions do not cover -- a DataAccessException or an
             // optimistic-lock failure from a save, a bug. Without this the row is orphaned in

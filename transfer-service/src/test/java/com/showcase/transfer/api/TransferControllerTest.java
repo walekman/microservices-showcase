@@ -1,6 +1,7 @@
 package com.showcase.transfer.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.showcase.transfer.domain.DebitOutcomeUnknownException;
 import com.showcase.transfer.domain.IdempotencyKeyConflictException;
 import com.showcase.transfer.domain.SameAccountTransferException;
 import com.showcase.transfer.domain.Transfer;
@@ -234,6 +235,22 @@ class TransferControllerTest {
         mockMvc.perform(post("/transfers").header("Idempotency-Key", KEY).contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(transferExecutor()))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_CONFLICT"));
+    }
+
+    @Test
+    void returns503WithTheTransferIdAndPendingStatusWhenTheDebitOutcomeIsUnknown() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(transferService.execute(FROM, TO, AMOUNT, SUBJECT, KEY))
+                .thenThrow(new DebitOutcomeUnknownException(id, new RuntimeException("read timed out")));
+
+        mockMvc.perform(post("/transfers").header("Idempotency-Key", KEY).contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(transferExecutor()))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code").value("ACCOUNT_SERVICE_UNAVAILABLE"))
+                // PENDING is what tells the caller (and the Bank UI) to keep the same
+                // Idempotency-Key: the transfer is not settled and may still complete.
+                .andExpect(jsonPath("$.transferId").value(id.toString()))
+                .andExpect(jsonPath("$.transferStatus").value("PENDING"))
+                .andExpect(jsonPath("$.detail", not(containsString("read timed out"))));
     }
 
     @Test

@@ -26,6 +26,11 @@ class ApiError extends Error {
     }
 
     friendlyMessage() {
+        // A 503 whose debit went unconfirmed still names a PENDING transfer: it is not a failure
+        // yet, and may still complete once Transfer Service reconciles it.
+        if (this.problem.transferStatus === 'PENDING') {
+            return ERROR_MESSAGES.TRANSFER_IN_PROGRESS;
+        }
         return ERROR_MESSAGES[this.code] || 'Something went wrong. Please try again.';
     }
 }

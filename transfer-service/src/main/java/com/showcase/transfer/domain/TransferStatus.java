@@ -1,7 +1,11 @@
 package com.showcase.transfer.domain;
 
 public enum TransferStatus {
-    /** Created, no leg attempted or the outcome is not yet known. */
+    /**
+     * Created, no leg attempted or the outcome is not yet known -- including a live debit that
+     * got no definitive answer from Account. CompensationScheduler's stale-PENDING sweep
+     * resolves it by replaying the debit's idempotency key.
+     */
     PENDING,
     /** Source debited and destination credited. */
     COMPLETED,

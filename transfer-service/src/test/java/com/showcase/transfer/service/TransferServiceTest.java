@@ -6,6 +6,7 @@ import com.showcase.transfer.client.AccountServiceUnavailableException;
 import com.showcase.transfer.client.FraudClient;
 import com.showcase.transfer.client.FraudRejectedException;
 import com.showcase.transfer.client.FraudServiceUnavailableException;
+import com.showcase.transfer.domain.DebitOutcomeUnknownException;
 import com.showcase.transfer.domain.IdempotencyKeyConflictException;
 import com.showcase.transfer.domain.SameAccountTransferException;
 import com.showcase.transfer.domain.Transfer;
@@ -213,19 +214,28 @@ class TransferServiceTest {
     }
 
     @Test
-    void failsWhenTheDebitCannotReachAccountService() {
-        repositoryEchoesSaves();
+    void leavesTheTransferPendingWhenTheDebitOutcomeIsUnknown() {
+        // Only the PENDING insert is stubbed, not repositoryEchoesSaves(): this path must never
+        // reach transferSaveService, and strict stubbing would fail its unused stub.
+        when(transferRepository.save(any(Transfer.class))).thenAnswer(invocation -> {
+            Transfer saved = invocation.getArgument(0);
+            ReflectionTestUtils.setField(saved, "id", TRANSFER_ID);
+            statusesAtSaveTime.add(saved.getStatus());
+            return saved;
+        });
         bothAccountsExist();
         org.mockito.Mockito.doThrow(new AccountServiceUnavailableException("read timed out"))
                 .when(accountClient).debit(eq(FROM), eq(AMOUNT), any());
 
-        Transfer result = transferService.execute(FROM, TO, AMOUNT, INITIATOR_ID, KEY);
+        assertThatThrownBy(() -> transferService.execute(FROM, TO, AMOUNT, INITIATOR_ID, KEY))
+                .isInstanceOf(DebitOutcomeUnknownException.class)
+                .extracting("transferId").isEqualTo(TRANSFER_ID);
 
-        assertThat(result.getStatus()).isEqualTo(TransferStatus.FAILED);
-        assertThat(result.getFailureCode()).isEqualTo(TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE);
-        // Pins ex.getMessage() as the recorded reason on the unavailable path, the way
-        // ex.getDetail() is pinned on the rejected path.
-        assertThat(result.getFailureReason()).contains("read timed out");
+        // The debit may have committed, so the row must not be settled: it stays PENDING for
+        // CompensationScheduler's stale-PENDING sweep to reconcile by replaying the debit key.
+        // Only the initial PENDING insert was persisted -- no FAILED write, so no outbox event.
+        assertThat(statusesAtSaveTime).containsExactly(TransferStatus.PENDING);
+        verify(transferSaveService, never()).save(any(Transfer.class));
         verify(accountClient, never()).credit(any(), any(), any());
     }
 
