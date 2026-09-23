@@ -53,7 +53,7 @@ Each stateful service owns its data exclusively — no service queries another's
 2. **Sync call** → Fraud Service: screen the source account (before the debit — see `docs/phase-5-fraud-service.md`'s Design Decisions for why the check runs twice). A block fails the transfer clean, no money moved.
 3. **Sync call** → Account Service: debit the source account (optimistic locking on balance; rejects on insufficient funds, and rejects unless the relayed JWT's subject owns the account), carrying an `Idempotency-Key` of `<transferId>:debit`.
 4. **Sync call** → Fraud Service: screen the destination account (before the credit). A block strands the transfer for compensation — the deliberate trigger for the compensation path below.
-5. **Sync call** → Account Service: credit the destination account (`Idempotency-Key` `<transferId>:credit`).
+5. **Sync call** → Account Service: credit the destination account (`Idempotency-Key` `<transferId>:credit`). Made as Transfer's own machine identity, not with the relayed customer token: credit has no ownership check (the destination belongs to someone else), so it requires `account-crediter`, which only that identity holds.
 6. Transfer Service marks the `Transfer` `COMPLETED` and writes an outbox row **in the same local DB transaction** (transactional outbox — guarantees the event and the DB state are consistent).
 7. A scheduled **outbox publisher** (polling, not Debezium — keeps deployment footprint manageable) reads unpublished outbox rows, publishes `TransferCompleted`/`TransferFailed` to Kafka, marks them published.
 8. Notification Service consumes the Kafka event, logs a "notification sent."

@@ -9,7 +9,6 @@ lands, and add new ones as phases defer them.
 
 | # | Item | Source | Status in code |
 |---|---|---|---|
-| 2 | **Any customer can mint money directly.** Any authenticated `customer` can call `POST /accounts/{id}/credit` on port 8081, bypassing the saga. Closing it means Transfer uses its own machine identity for the credit leg instead of relaying the customer's token. | `phase-7-auth-keycloak-jwt.md` Known Gaps, `phase-7b-account-ownership-authorization.md` Design Decisions | Open; "not currently planned" |
 | 20 | **Rows written before the unknown-debit fix are not migrated.** A database from before it can still hold transfers recorded `FAILED` + `ACCOUNT_SERVICE_UNAVAILABLE` on the debit leg. No sweep revisits them, and the debit may have committed. `docker compose down -v` clears them locally. | `microservices-showcase-design.md` §4 | Open (legacy data only) |
 
 ## 2. Planned phases and features

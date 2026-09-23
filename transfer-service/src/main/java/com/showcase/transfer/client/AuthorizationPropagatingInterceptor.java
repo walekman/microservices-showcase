@@ -31,11 +31,20 @@ import java.io.IOException;
  * token for transfer-service's own machine identity, fetched (and cached/refreshed) via
  * {@link OAuth2AuthorizedClientManager}.
  *
+ * <p><b>Service-identity requests</b> -- a request tagged with {@link #USE_SERVICE_IDENTITY}
+ * always carries the service token, even with a caller on the thread. Account's credit is the
+ * one such call: it requires {@code account-crediter}, which only transfer-service's machine
+ * identity holds, because credit has no ownership check and a customer able to call it could
+ * create money (docs/open-items.md #2, now closed).
+ *
  * <p>See docs/phase-7-auth-keycloak-jwt.md's Design Decisions for why both paths exist.
  */
 public class AuthorizationPropagatingInterceptor implements ClientHttpRequestInterceptor {
 
     static final String SERVICE_REGISTRATION_ID = "transfer-service";
+
+    /** RestClient request attribute: when {@code true}, send the service token, never the caller's. */
+    public static final String USE_SERVICE_IDENTITY = AuthorizationPropagatingInterceptor.class.getName() + ".USE_SERVICE_IDENTITY";
 
     private final OAuth2AuthorizedClientManager authorizedClientManager;
 
@@ -46,7 +55,8 @@ public class AuthorizationPropagatingInterceptor implements ClientHttpRequestInt
     @Override
     public ClientHttpResponse intercept(HttpRequest request, byte[] body, ClientHttpRequestExecution execution)
             throws IOException {
-        request.getHeaders().setBearerAuth(resolveToken());
+        boolean serviceIdentity = Boolean.TRUE.equals(request.getAttributes().get(USE_SERVICE_IDENTITY));
+        request.getHeaders().setBearerAuth(serviceIdentity ? fetchServiceToken() : resolveToken());
         return execution.execute(request, body);
     }
 
