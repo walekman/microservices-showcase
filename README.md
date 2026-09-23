@@ -175,9 +175,12 @@ Background scheduler resolution:
 - **stale `PENDING`** → re-check source fraud: blocked → `FAILED`; unreachable → stays `PENDING`, retried next sweep; clear → (idempotent) debit attempt exactly as today (lands → promoted to `COMPENSATION_REQUIRED`; rejected → `FAILED`; unreachable → stays `PENDING`)
 - **`COMPENSATION_REQUIRED`** → re-check destination fraud, unconditionally: blocked → compensate the source (as today's rejected-credit path); unreachable → stays `COMPENSATION_REQUIRED`, retried next sweep; clear → (idempotent) credit attempt exactly as today (lands → `COMPLETED`; rejected → compensate; unreachable → stays `COMPENSATION_REQUIRED`)
 
-    # Transfer money (replace the ids with two accounts you created)
+    # Transfer money (replace the ids with two accounts you created). Idempotency-Key is
+    # required: resending the same key returns the first attempt's result instead of moving
+    # the money again -- see "Errors" below for the two 409s it can produce.
     curl -X POST http://localhost:8082/transfers \
       -H "Content-Type: application/json" \
+      -H "Idempotency-Key: $(uuidgen)" \
       -d '{"fromAccountId": "<from>", "toAccountId": "<to>", "amount": 40.00}'
 
     # Fetch one transfer -- the initiator or the destination account's owner (see
@@ -205,10 +208,14 @@ Errors are RFC 7807 problem documents with a stable `code`:
     # Destination account blocklisted     -> transfer recorded COMPENSATION_REQUIRED, source
     #                                         is automatically credited back within
     #                                         transfer.compensation.sweep-interval
-    # Missing, blank, or overlong          -> 400 VALIDATION_FAILED (debit/credit only)
-    #   Idempotency-Key header
-    # Idempotency key reused with         -> 409 IDEMPOTENCY_KEY_CONFLICT (should never
-    #   different parameters                 happen in normal operation)
+    # Missing, blank, or overlong          -> 400 VALIDATION_FAILED (POST /transfers, and
+    #   Idempotency-Key header                Account's debit/credit)
+    # Idempotency key reused with         -> 409 IDEMPOTENCY_KEY_CONFLICT
+    #   different parameters
+    # Idempotency key replayed while      -> 409 TRANSFER_IN_PROGRESS, with the transferId
+    #   that transfer is still PENDING        to poll GET /transfers/{id}
+    # Idempotency key replayed after      -> the first attempt's own response (201, or its
+    #   that transfer settled                 problem), no money moves again
     # Account down during pre-validation  -> after Retry/CircuitBreaker exhaust their
     #                                         attempts, 503 ACCOUNT_SERVICE_UNAVAILABLE,
     #                                         no money moves

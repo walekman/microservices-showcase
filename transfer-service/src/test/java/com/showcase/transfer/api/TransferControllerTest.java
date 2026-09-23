@@ -1,9 +1,11 @@
 package com.showcase.transfer.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.showcase.transfer.domain.IdempotencyKeyConflictException;
 import com.showcase.transfer.domain.SameAccountTransferException;
 import com.showcase.transfer.domain.Transfer;
 import com.showcase.transfer.domain.TransferFailureCode;
+import com.showcase.transfer.domain.TransferInProgressException;
 import com.showcase.transfer.domain.TransferNotFoundException;
 import com.showcase.transfer.domain.TransferStatus;
 import com.showcase.transfer.service.TransferPersistenceException;
@@ -25,6 +27,7 @@ import static org.hamcrest.Matchers.not;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -50,6 +53,7 @@ class TransferControllerTest {
     // logic with TransferService mocked out, so its exact value never matters beyond being a
     // valid UUID string -- the real ownership behaviour is TransferServiceTest's job.
     private static final UUID SUBJECT = UUID.randomUUID();
+    private static final String KEY = "client-key-1";
 
     @Autowired
     private MockMvc mockMvc;
@@ -76,9 +80,9 @@ class TransferControllerTest {
     void returns201WhenTheTransferCompletes() throws Exception {
         Transfer transfer = pendingTransfer();
         transfer.markCompleted();
-        when(transferService.execute(FROM, TO, AMOUNT, SUBJECT)).thenReturn(transfer);
+        when(transferService.execute(FROM, TO, AMOUNT, SUBJECT, KEY)).thenReturn(transfer);
 
-        mockMvc.perform(post("/transfers").contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(transferExecutor()))
+        mockMvc.perform(post("/transfers").header("Idempotency-Key", KEY).contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(transferExecutor()))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.status").value("COMPLETED"));
     }
@@ -87,9 +91,9 @@ class TransferControllerTest {
     void returns422WhenTheTransferFailsForInsufficientFunds() throws Exception {
         Transfer transfer = pendingTransfer();
         transfer.markFailed(TransferFailureCode.INSUFFICIENT_FUNDS, "not enough money");
-        when(transferService.execute(FROM, TO, AMOUNT, SUBJECT)).thenReturn(transfer);
+        when(transferService.execute(FROM, TO, AMOUNT, SUBJECT, KEY)).thenReturn(transfer);
 
-        mockMvc.perform(post("/transfers").contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(transferExecutor()))
+        mockMvc.perform(post("/transfers").header("Idempotency-Key", KEY).contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(transferExecutor()))
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.code").value("INSUFFICIENT_FUNDS"))
                 .andExpect(jsonPath("$.transferStatus").value("FAILED"));
@@ -99,9 +103,9 @@ class TransferControllerTest {
     void returns503WhenAccountServiceIsUnavailable() throws Exception {
         Transfer transfer = pendingTransfer();
         transfer.markFailed(TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, "connection refused");
-        when(transferService.execute(FROM, TO, AMOUNT, SUBJECT)).thenReturn(transfer);
+        when(transferService.execute(FROM, TO, AMOUNT, SUBJECT, KEY)).thenReturn(transfer);
 
-        mockMvc.perform(post("/transfers").contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(transferExecutor()))
+        mockMvc.perform(post("/transfers").header("Idempotency-Key", KEY).contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(transferExecutor()))
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(jsonPath("$.code").value("ACCOUNT_SERVICE_UNAVAILABLE"))
                 // The recorded reason can name the internal host and port of Account Service.
@@ -115,9 +119,9 @@ class TransferControllerTest {
         Transfer transfer = pendingTransfer();
         transfer.markFailed(TransferFailureCode.UNEXPECTED_ERROR,
                 "java.lang.IllegalStateException: response mapper exploded");
-        when(transferService.execute(FROM, TO, AMOUNT, SUBJECT)).thenReturn(transfer);
+        when(transferService.execute(FROM, TO, AMOUNT, SUBJECT, KEY)).thenReturn(transfer);
 
-        mockMvc.perform(post("/transfers").contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(transferExecutor()))
+        mockMvc.perform(post("/transfers").header("Idempotency-Key", KEY).contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(transferExecutor()))
                 .andExpect(status().isInternalServerError())
                 .andExpect(jsonPath("$.code").value("UNEXPECTED_ERROR"))
                 .andExpect(jsonPath("$.detail").value("The transfer could not be completed due to an internal error"))
@@ -128,12 +132,12 @@ class TransferControllerTest {
     void keepsTheRealReasonForBusinessFailures() throws Exception {
         Transfer transfer = pendingTransfer();
         transfer.markFailed(TransferFailureCode.INSUFFICIENT_FUNDS, "Balance 10.00 is less than 40.00");
-        when(transferService.execute(FROM, TO, AMOUNT, SUBJECT)).thenReturn(transfer);
+        when(transferService.execute(FROM, TO, AMOUNT, SUBJECT, KEY)).thenReturn(transfer);
 
         // The counterpart to the two tests above: a business reason is written for the caller
         // and contains nothing internal, so blanket sanitising would throw away the one thing
         // that tells them what to do next.
-        mockMvc.perform(post("/transfers").contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(transferExecutor()))
+        mockMvc.perform(post("/transfers").header("Idempotency-Key", KEY).contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(transferExecutor()))
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.detail").value("Balance 10.00 is less than 40.00"));
     }
@@ -144,9 +148,9 @@ class TransferControllerTest {
         // returning it. Guarded anyway: a PENDING transfer has no failure code, and reading
         // one would NPE into the catch-all and lose the id -- the one property a caller
         // needs to find the row and see what really happened.
-        when(transferService.execute(FROM, TO, AMOUNT, SUBJECT)).thenReturn(pendingTransfer());
+        when(transferService.execute(FROM, TO, AMOUNT, SUBJECT, KEY)).thenReturn(pendingTransfer());
 
-        mockMvc.perform(post("/transfers").contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(transferExecutor()))
+        mockMvc.perform(post("/transfers").header("Idempotency-Key", KEY).contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(transferExecutor()))
                 .andExpect(status().isInternalServerError())
                 .andExpect(jsonPath("$.code").value("UNEXPECTED_ERROR"))
                 .andExpect(jsonPath("$.transferStatus").value("PENDING"))
@@ -157,9 +161,9 @@ class TransferControllerTest {
     void returns500WhenTheTransferNeedsCompensation() throws Exception {
         Transfer transfer = pendingTransfer();
         transfer.markCompensationRequired(TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, "credit failed");
-        when(transferService.execute(FROM, TO, AMOUNT, SUBJECT)).thenReturn(transfer);
+        when(transferService.execute(FROM, TO, AMOUNT, SUBJECT, KEY)).thenReturn(transfer);
 
-        mockMvc.perform(post("/transfers").contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(transferExecutor()))
+        mockMvc.perform(post("/transfers").header("Idempotency-Key", KEY).contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(transferExecutor()))
                 .andExpect(status().isInternalServerError())
                 .andExpect(jsonPath("$.code").value("COMPENSATION_REQUIRED"))
                 .andExpect(jsonPath("$.transferStatus").value("COMPENSATION_REQUIRED"))
@@ -174,10 +178,10 @@ class TransferControllerTest {
         // Without the id in this body the caller cannot find the one record that needs
         // reconciling -- the same hole the COMPENSATION_REQUIRED 500 exists to close.
         UUID id = UUID.randomUUID();
-        when(transferService.execute(FROM, TO, AMOUNT, SUBJECT)).thenThrow(
+        when(transferService.execute(FROM, TO, AMOUNT, SUBJECT, KEY)).thenThrow(
                 new TransferPersistenceException(id, new IllegalStateException("version conflict")));
 
-        mockMvc.perform(post("/transfers").contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(transferExecutor()))
+        mockMvc.perform(post("/transfers").header("Idempotency-Key", KEY).contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(transferExecutor()))
                 .andExpect(status().isInternalServerError())
                 .andExpect(jsonPath("$.code").value("INTERNAL_ERROR"))
                 .andExpect(jsonPath("$.transferId").value(id.toString()))
@@ -186,9 +190,9 @@ class TransferControllerTest {
 
     @Test
     void returns400ForASelfTransfer() throws Exception {
-        when(transferService.execute(any(), any(), any(), any())).thenThrow(new SameAccountTransferException(FROM));
+        when(transferService.execute(any(), any(), any(), any(), any())).thenThrow(new SameAccountTransferException(FROM));
 
-        mockMvc.perform(post("/transfers").contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(transferExecutor()))
+        mockMvc.perform(post("/transfers").header("Idempotency-Key", KEY).contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(transferExecutor()))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("SAME_ACCOUNT_TRANSFER"));
     }
@@ -198,9 +202,50 @@ class TransferControllerTest {
         String body = objectMapper.writeValueAsString(
                 new CreateTransferRequest(FROM, TO, new BigDecimal("0.00")));
 
-        mockMvc.perform(post("/transfers").contentType(MediaType.APPLICATION_JSON).content(body).with(transferExecutor()))
+        mockMvc.perform(post("/transfers").header("Idempotency-Key", KEY).contentType(MediaType.APPLICATION_JSON).content(body).with(transferExecutor()))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    }
+
+    @Test
+    void returns400WhenTheIdempotencyKeyIsMissing() throws Exception {
+        mockMvc.perform(post("/transfers").contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(transferExecutor()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.detail").value("Missing required header: Idempotency-Key"));
+        verifyNoInteractions(transferService);
+    }
+
+    @Test
+    void returns400ForABlankOrOverlongIdempotencyKey() throws Exception {
+        for (String key : List.of(" ", "k".repeat(256))) {
+            mockMvc.perform(post("/transfers").header("Idempotency-Key", key)
+                            .contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(transferExecutor()))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+        }
+        verifyNoInteractions(transferService);
+    }
+
+    @Test
+    void returns409WhenTheIdempotencyKeyWasUsedForADifferentTransfer() throws Exception {
+        when(transferService.execute(FROM, TO, AMOUNT, SUBJECT, KEY)).thenThrow(new IdempotencyKeyConflictException(KEY));
+
+        mockMvc.perform(post("/transfers").header("Idempotency-Key", KEY).contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(transferExecutor()))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_CONFLICT"));
+    }
+
+    @Test
+    void returns409WithTheTransferIdWhenTheOriginalIsStillInProgress() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(transferService.execute(FROM, TO, AMOUNT, SUBJECT, KEY)).thenThrow(new TransferInProgressException(id));
+
+        mockMvc.perform(post("/transfers").header("Idempotency-Key", KEY).contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(transferExecutor()))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("TRANSFER_IN_PROGRESS"))
+                .andExpect(jsonPath("$.transferId").value(id.toString()))
+                .andExpect(jsonPath("$.transferStatus").value("PENDING"));
     }
 
     @Test

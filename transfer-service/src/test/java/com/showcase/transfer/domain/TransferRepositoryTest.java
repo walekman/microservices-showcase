@@ -5,6 +5,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Limit;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -19,6 +20,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase.Replace.NONE;
 
 @DataJpaTest
@@ -111,5 +113,43 @@ class TransferRepositoryTest {
                 TransferStatus.PENDING, Instant.now().minus(Duration.ofSeconds(120)), Limit.of(1));
 
         assertThat(found).hasSize(1);
+    }
+
+    @Test
+    void findsATransferByInitiatorAndIdempotencyKey() {
+        UUID initiator = UUID.randomUUID();
+        Transfer saved = transferRepository.saveAndFlush(
+                new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("25.00"), initiator, "key-a"));
+
+        assertThat(transferRepository.findByInitiatorIdAndIdempotencyKey(initiator, "key-a"))
+                .map(Transfer::getId).contains(saved.getId());
+        // Scoped per initiator: another caller's lookup with the same key finds nothing.
+        assertThat(transferRepository.findByInitiatorIdAndIdempotencyKey(UUID.randomUUID(), "key-a")).isEmpty();
+    }
+
+    @Test
+    void rejectsADuplicateIdempotencyKeyForTheSameInitiator() {
+        UUID initiator = UUID.randomUUID();
+        transferRepository.saveAndFlush(
+                new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("25.00"), initiator, "key-b"));
+
+        assertThatThrownBy(() -> transferRepository.saveAndFlush(
+                new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("25.00"), initiator, "key-b")))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void allowsTheSameIdempotencyKeyForDifferentInitiatorsAndManyKeylessRows() {
+        transferRepository.saveAndFlush(
+                new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("25.00"), UUID.randomUUID(), "key-c"));
+        transferRepository.saveAndFlush(
+                new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("25.00"), UUID.randomUUID(), "key-c"));
+
+        // Pre-idempotency rows have a null key; the constraint must not treat them as duplicates.
+        UUID initiator = UUID.randomUUID();
+        transferRepository.saveAndFlush(
+                new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("25.00"), initiator));
+        transferRepository.saveAndFlush(
+                new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("25.00"), initiator));
     }
 }

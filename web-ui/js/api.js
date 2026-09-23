@@ -11,6 +11,8 @@ const ERROR_MESSAGES = {
     ACCOUNT_SERVICE_UNAVAILABLE: 'The banking system is temporarily unavailable. Please try again shortly.',
     SOURCE_FRAUD_SERVICE_UNAVAILABLE: 'The banking system is temporarily unavailable. Please try again shortly.',
     DESTINATION_FRAUD_SERVICE_UNAVAILABLE: 'The banking system is temporarily unavailable. Please try again shortly.',
+    TRANSFER_IN_PROGRESS: 'Your transfer is still being processed. Check your history in a moment.',
+    IDEMPOTENCY_KEY_CONFLICT: 'Something went wrong sending that transfer. Please try again.',
     COMPENSATION_REQUIRED: 'The transfer could not be completed and is being reversed automatically.',
     VALIDATION_FAILED: 'Please check the values you entered.',
     UNEXPECTED_ERROR: 'Something went wrong completing the transfer. Please try again.',
@@ -28,12 +30,13 @@ class ApiError extends Error {
     }
 }
 
-async function request(method, path, body) {
+async function request(method, path, body, extraHeaders) {
     const response = await fetch(GATEWAY_BASE + path, {
         method,
         headers: {
             'Content-Type': 'application/json',
             Authorization: 'Bearer ' + Auth.getToken(),
+            ...extraHeaders,
         },
         body: body ? JSON.stringify(body) : undefined,
     });
@@ -57,5 +60,5 @@ async function request(method, path, body) {
 
 const Api = {
     get: (path) => request('GET', path),
-    post: (path, body) => request('POST', path, body),
+    post: (path, body, headers) => request('POST', path, body, headers),
 };

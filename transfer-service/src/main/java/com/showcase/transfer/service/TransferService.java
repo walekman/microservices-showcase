@@ -6,18 +6,22 @@ import com.showcase.transfer.client.AccountServiceUnavailableException;
 import com.showcase.transfer.client.FraudClient;
 import com.showcase.transfer.client.FraudRejectedException;
 import com.showcase.transfer.client.FraudServiceUnavailableException;
+import com.showcase.transfer.domain.IdempotencyKeyConflictException;
 import com.showcase.transfer.domain.Transfer;
 import com.showcase.transfer.domain.TransferFailureCode;
+import com.showcase.transfer.domain.TransferInProgressException;
 import com.showcase.transfer.domain.TransferNotFoundException;
 import com.showcase.transfer.domain.TransferRepository;
 import com.showcase.transfer.domain.TransferStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -48,11 +52,31 @@ public class TransferService {
         this.transferSaveService = transferSaveService;
     }
 
-    public Transfer execute(UUID fromAccountId, UUID toAccountId, BigDecimal amount, UUID initiatorId) {
+    public Transfer execute(UUID fromAccountId, UUID toAccountId, BigDecimal amount, UUID initiatorId,
+                            String idempotencyKey) {
+        // A caller retrying the same request (a double-click, a retry after a lost response)
+        // gets the transfer its first attempt created, never a second saga moving the money again.
+        Optional<Transfer> earlier = transferRepository.findByInitiatorIdAndIdempotencyKey(initiatorId, idempotencyKey);
+        if (earlier.isPresent()) {
+            return replay(earlier.get(), fromAccountId, toAccountId, amount, idempotencyKey);
+        }
+
         // Constructor guards reject a self-transfer before anything is persisted.
         // This save stays OUTSIDE the try below on purpose: SameAccountTransferException
         // must propagate to the caller as a 400, not be swallowed into UNEXPECTED_ERROR.
-        Transfer transfer = transferRepository.save(new Transfer(fromAccountId, toAccountId, amount, initiatorId));
+        Transfer transfer;
+        try {
+            transfer = transferRepository.save(
+                    new Transfer(fromAccountId, toAccountId, amount, initiatorId, idempotencyKey));
+        } catch (DataIntegrityViolationException ex) {
+            // Two requests with the same key both missed the lookup above; the unique constraint
+            // on (initiator_id, idempotency_key) let exactly one insert through. Nothing has moved
+            // for this request, so it becomes a replay of the winner. No winner means the
+            // violation was something else -- rethrow it.
+            Transfer winner = transferRepository.findByInitiatorIdAndIdempotencyKey(initiatorId, idempotencyKey)
+                    .orElseThrow(() -> ex);
+            return replay(winner, fromAccountId, toAccountId, amount, idempotencyKey);
+        }
         log.info("Transfer {} started: {} -> {} amount {}", transfer.getId(), fromAccountId, toAccountId, amount);
 
         // Tracks whether the debit leg committed, so the catch-all below knows whether an
@@ -155,6 +179,19 @@ public class TransferService {
                     ? strand(transfer, TransferFailureCode.UNEXPECTED_ERROR, ex.toString())
                     : fail(transfer, TransferFailureCode.UNEXPECTED_ERROR, ex.toString());
         }
+    }
+
+    private Transfer replay(Transfer earlier, UUID fromAccountId, UUID toAccountId, BigDecimal amount,
+                            String idempotencyKey) {
+        if (earlier.conflictsWith(fromAccountId, toAccountId, amount)) {
+            throw new IdempotencyKeyConflictException(idempotencyKey);
+        }
+        if (earlier.getStatus() == TransferStatus.PENDING) {
+            throw new TransferInProgressException(earlier.getId());
+        }
+        log.info("Transfer {} replayed for idempotency key {}: already {}",
+                earlier.getId(), idempotencyKey, earlier.getStatus());
+        return earlier;
     }
 
     // Scoped to the initiator or the destination account's owner -- see

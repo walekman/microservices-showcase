@@ -100,22 +100,53 @@ function renderTransferForm(account, transfers, prefillAccountId) {
             <p id="transfer-success" hidden></p>
         </div>`;
 
-    document.getElementById('submit-transfer-button').addEventListener('click', async () => {
+    // One Idempotency-Key per intended transfer. Resending the same transfer (a double-click,
+    // a retry after a lost response) reuses it, so Transfer Service replays the first attempt
+    // instead of moving the money twice. Editing either field makes it a different transfer.
+    let idempotencyKey = crypto.randomUUID();
+    const startNewTransfer = () => { idempotencyKey = crypto.randomUUID(); };
+    document.getElementById('to-account').addEventListener('input', startNewTransfer);
+    document.getElementById('amount').addEventListener('input', startNewTransfer);
+
+    const submitButton = document.getElementById('submit-transfer-button');
+    submitButton.addEventListener('click', async () => {
         const toAccountId = document.getElementById('to-account').value.trim();
         const amount = document.getElementById('amount').value;
         const errorEl = document.getElementById('transfer-error');
         const successEl = document.getElementById('transfer-success');
         errorEl.hidden = true;
         successEl.hidden = true;
+        submitButton.disabled = true;
         try {
-            await Api.post('/transfers', { fromAccountId: account.id, toAccountId, amount });
+            await Api.post('/transfers', { fromAccountId: account.id, toAccountId, amount },
+                { 'Idempotency-Key': idempotencyKey });
             const refreshedAccounts = await Api.get('/accounts/mine');
             await renderDashboard(refreshedAccounts[0], { flashMessage: 'Transfer completed.' });
         } catch (err) {
+            if (reportsASettledTransfer(err)) {
+                // That key is spent: its transfer ended unsuccessfully, and replaying it would
+                // only repeat the same failure. A retry (say, after topping up) is a new transfer.
+                startNewTransfer();
+            }
+            // Anything else -- no response at all, TRANSFER_IN_PROGRESS, a 500 that names no
+            // outcome -- leaves the first attempt's fate unknown, so the key is kept.
             errorEl.textContent = err.friendlyMessage ? err.friendlyMessage() : err.message;
             errorEl.hidden = false;
+        } finally {
+            submitButton.disabled = false;
         }
     });
+}
+
+// Transfer Service stamps transferStatus on the problem only when it knows the transfer's
+// state; PENDING means it is not settled yet. IDEMPOTENCY_KEY_CONFLICT means this key is
+// already spent on a different transfer.
+function reportsASettledTransfer(err) {
+    if (!(err instanceof ApiError)) {
+        return false;
+    }
+    const status = err.problem.transferStatus;
+    return err.code === 'IDEMPOTENCY_KEY_CONFLICT' || (Boolean(status) && status !== 'PENDING');
 }
 
 async function renderQuickTransfers(transfers) {
