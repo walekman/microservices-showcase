@@ -30,11 +30,8 @@ Deferred items and findings carried over between phases live in each phase's own
 "Deferred / Known Gaps", "Scope Boundary", "Design Decisions", or "Final Review" section), not
 here — this file stays an index, per the note at the top.
 
-Open system-level gaps that no phase has picked up yet:
-
-- A live-saga debit that times out is recorded `FAILED` + `ACCOUNT_SERVICE_UNAVAILABLE` and never
-  reconciled — `CompensationScheduler` sweeps only `COMPENSATION_REQUIRED` and stale `PENDING`. See
-  `docs/microservices-showcase-design.md` §4.
+Every item still open across those docs — gaps, planned work, tech debt, and what was
+deliberately ruled out — is collected in [`open-items.md`](open-items.md).
 
 ## Investigations
 
