@@ -1713,6 +1713,8 @@ Expected: FAIL — compilation error, `TransferService` does not exist.
 
 - [ ] **Step 3: Write the orchestrator**
 
+> **Superseded:** the debit leg's `AccountServiceUnavailableException` branch below records `FAILED`. It now leaves the transfer `PENDING` and throws `DebitOutcomeUnknownException`, so the stale-`PENDING` sweep reconciles it. See §4 of `microservices-showcase-design.md` and the current `TransferService` before copying this block.
+
 ```java
 // transfer-service/src/main/java/com/showcase/transfer/service/TransferService.java
 package com.showcase.transfer.service;

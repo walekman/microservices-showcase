@@ -25,7 +25,7 @@ See `docs/microservices-showcase-design.md` for the architecture, and `docs/phas
 
 **Preserve this when touching the saga or compensator:** a downstream call that fails with `ACCOUNT_SERVICE_UNAVAILABLE` has an **unknown** outcome, not a failed one — a read timeout cannot be distinguished from a non-delivery. Compensating blindly invents money on the debit leg and duplicates it on the credit leg, so the compensator reconciles by replaying the same idempotency key against Account (Phase 3's `AccountOperation` ledger) rather than crediting anything back on a guess. The original findings are in the deferral table of `docs/phase-2-transfer-service-saga.md`.
 
-Known gap: `CompensationScheduler` sweeps only `COMPENSATION_REQUIRED` and stale `PENDING` rows. A live-saga debit that times out is recorded `FAILED` + `ACCOUNT_SERVICE_UNAVAILABLE` ("debit not confirmed") and is never revisited — see §4 of the design doc. Don't read those rows as "no money moved".
+A live-saga debit whose outcome is unknown is therefore left `PENDING` (the API answers `503` with `transferStatus: PENDING`), and `CompensationScheduler`'s stale-`PENDING` sweep settles it by replaying `<transferId>:debit` — see §4 of the design doc. Never settle such a row as `FAILED`: nothing revisits `FAILED`.
 
 ## Documentation conventions
 

@@ -1275,6 +1275,8 @@ public enum TransferFailureCode {
 
 Replace `execute()`'s body with:
 
+> **Superseded:** the debit leg's `AccountServiceUnavailableException` branch below records `FAILED`. It now leaves the transfer `PENDING` and throws `DebitOutcomeUnknownException`, so the stale-`PENDING` sweep reconciles it. See §4 of `microservices-showcase-design.md` and the current `TransferService` before copying this block.
+
 ```java
     public Transfer execute(UUID fromAccountId, UUID toAccountId, BigDecimal amount) {
         // Constructor guards reject a self-transfer before anything is persisted.

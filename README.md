@@ -161,7 +161,7 @@ Live request (`TransferService.execute()`):
 | 4 | source account blocklisted | `FAILED` (`SOURCE_ACCOUNT_BLOCKED`) |
 | 5 | Fraud Service unreachable checking the source | `FAILED` (`SOURCE_FRAUD_SERVICE_UNAVAILABLE`) |
 | 6 | debit rejected (e.g. `INSUFFICIENT_FUNDS`) | `FAILED` |
-| 7 | debit call unreachable, retries/circuit breaker exhausted | `FAILED` (`ACCOUNT_SERVICE_UNAVAILABLE`) — terminal, not reconciled |
+| 7 | debit call unreachable, retries/circuit breaker exhausted (outcome unknown) | stays `PENDING`, `503` with `transferStatus: PENDING` → scheduler resolves |
 | 8 | destination account blocklisted | `COMPENSATION_REQUIRED` (`DESTINATION_ACCOUNT_BLOCKED`) → scheduler compensates |
 | 9 | Fraud Service unreachable checking the destination | `COMPENSATION_REQUIRED` (`DESTINATION_FRAUD_SERVICE_UNAVAILABLE`) → scheduler retries |
 | 10 | credit rejected | `COMPENSATION_REQUIRED` → scheduler compensates |
@@ -252,17 +252,15 @@ from the debit leg.
     curl "http://localhost:8082/transfers?status=COMPENSATED" -H "Authorization: Bearer $ADMIN_TOKEN"
     curl "http://localhost:8082/transfers?status=COMPENSATION_FAILED" -H "Authorization: Bearer $ADMIN_TOKEN"
 
-Known gap, narrower than Phase 2's: a transfer recorded `FAILED` with
-`ACCOUNT_SERVICE_UNAVAILABLE` on the debit leg still needs reconciliation — the debit may
-have committed despite the 503. Retry now resolves most of these on its own (a retry
-replays the same idempotency key, so a merely-lost response gets confirmed within the live
-saga itself); this only remains open for the rarer case where every retry attempt, not just
-the first, fails to get back a definitive answer. Either way, this state is terminal
-(`FAILED`, not `PENDING`), so it is not touched by either sweep above. The same gap exists
-for a stale-`PENDING` row recovered as `FAILED` because the source account came back
-blocklisted: that recovery never establishes whether the debit itself had already landed
-before the crash either, for the same underlying reason — no operation-lookup endpoint
-exists on Account Service to check.
+A debit whose outcome is unknown after every retry (row 7 above) is left `PENDING` for this
+sweep rather than recorded `FAILED`: the debit may have committed despite the 503, so only
+the replayed key can say. The caller gets `503 ACCOUNT_SERVICE_UNAVAILABLE` with
+`transferStatus: PENDING`, and should keep the same `Idempotency-Key` and poll
+`GET /transfers/{id}` — the transfer can still complete.
+
+Known gap: a stale-`PENDING` row recovered as `FAILED` because the source account came back
+blocklisted never establishes whether the debit itself had already landed — no
+operation-lookup endpoint exists on Account Service to check.
 
 ## Kafka and Notification Service
 

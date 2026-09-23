@@ -1,6 +1,7 @@
 package com.showcase.transfer.api;
 
 import com.showcase.transfer.client.AccountServiceUnavailableException;
+import com.showcase.transfer.domain.DebitOutcomeUnknownException;
 import com.showcase.transfer.domain.IdempotencyKeyConflictException;
 import com.showcase.transfer.domain.SameAccountTransferException;
 import com.showcase.transfer.domain.Transfer;
@@ -154,6 +155,23 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
                 "A transfer with this idempotency key is still in progress");
         // The id is what lets the caller poll GET /transfers/{id} for the outcome instead of
         // retrying blind.
+        problem.setProperty("transferId", ex.getTransferId());
+        problem.setProperty("transferStatus", TransferStatus.PENDING);
+        return problem;
+    }
+
+    /**
+     * The live debit's outcome is unknown and the transfer was left PENDING for
+     * CompensationScheduler to reconcile. Same code and status as any other Account outage, but
+     * transferStatus PENDING tells the caller the transfer is not settled: keep the same
+     * Idempotency-Key and poll GET /transfers/{id} rather than starting a new transfer, which
+     * could move the money twice if this one completes.
+     */
+    @ExceptionHandler(DebitOutcomeUnknownException.class)
+    public ProblemDetail handleDebitOutcomeUnknown(DebitOutcomeUnknownException ex) {
+        ProblemDetail problem = Problems.of(HttpStatus.SERVICE_UNAVAILABLE, "ACCOUNT_SERVICE_UNAVAILABLE",
+                "Account Service unavailable",
+                "Account Service did not confirm the debit; the transfer is still being processed");
         problem.setProperty("transferId", ex.getTransferId());
         problem.setProperty("transferStatus", TransferStatus.PENDING);
         return problem;
