@@ -121,7 +121,7 @@ Each task is its own branch/PR off the current `master`, per this project's work
 ## Roadmap Changes
 
 - `docs/roadmap.md` row 8 already narrowed to this phase's actual scope, linked to this document, ahead of implementation (done in this spec PR at the user's request, rather than waiting for Task 6 as every prior phase did); a new row 9, "Not started," forecasts the end-to-end saga test module.
-- `docs/microservices-showcase-design.md` §5 gets "Jaeger (or Grafana Tempo)" resolved to "Grafana Tempo"; the Spring Cloud Contract line (§8) is removed entirely, not marked deferred. Still pending — lands in Task 6.
+- `docs/microservices-showcase-design.md` §5 gets "Jaeger (or Grafana Tempo)" resolved to "Grafana Tempo"; the Spring Cloud Contract line (§8) is removed entirely, not marked deferred. Done in Task 6.
 
 ---
 

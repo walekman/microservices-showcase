@@ -31,8 +31,6 @@ lands, and add new ones as phases defer them.
 | # | Item | Source | Status in code |
 |---|---|---|---|
 | 16 | `AccountControllerIT`'s same-key concurrency test is `@Disabled`. The root cause (a second serialization factor on CI) is unknown, and a rewrite is recommended. `returns409ForConcurrentUpdateConflict` may carry the same risk. | `investigation-account-controller-it-concurrency-flake.md` | Open |
-| 17 | `phase-8-observability.md` (Roadmap Changes) still says the design-doc edits are "Still pending — lands in Task 6". | `phase-8-observability.md` | Stale wording; the edits are done |
-| 18 | `phase-4-outbox-kafka-notification.md`'s Final Review still lists the missing host-side Kafka listener as deferred, but `docker-compose.yml` now has it (`HOST://localhost:29092`). | `phase-4-outbox-kafka-notification.md` Final Review | Stale wording; already fixed in code |
 
 ## 4. Deliberately not planned
 
