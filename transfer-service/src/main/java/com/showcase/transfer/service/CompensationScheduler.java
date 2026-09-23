@@ -160,11 +160,15 @@ public class CompensationScheduler implements SchedulingConfigurer {
         try {
             fraudClient.check(transfer.getFromAccountId());
         } catch (FraudRejectedException blocked) {
-            transfer.markFailed(TransferFailureCode.SOURCE_ACCOUNT_BLOCKED, blocked.getDetail());
-            transferSaveService.save(transfer);
-            log.error("Transfer {} recovered from stale PENDING as FAILED: source account blocklisted [{}]. "
-                            + "The debit's own outcome was never established by this recovery -- if it had "
-                            + "already landed before the crash, this FAILED row does not reflect that.",
+            // The debit's outcome is unknown, and the key replay below is not a read-only
+            // lookup: if the debit never landed, replaying it would move money out of a now
+            // blocked account. Marking FAILED instead would guess "never landed", and nothing
+            // revisits FAILED. So the row stays PENDING and this repeats every sweep until the
+            // block is lifted. Reaching this needs the source blocklisted after the live saga's
+            // own screen passed, i.e. a Fraud reconfiguration and restart.
+            log.error("Transfer {} still stale PENDING: source account is now blocklisted [{}], so its debit "
+                            + "cannot be safely replayed and its outcome is unknown. Will retry next sweep; "
+                            + "resolves once the block is lifted.",
                     transfer.getId(), blocked.getDetail());
             return;
         } catch (FraudServiceUnavailableException stillUnavailable) {

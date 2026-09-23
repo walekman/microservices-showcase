@@ -287,18 +287,20 @@ class CompensationSchedulerTest {
     }
 
     @Test
-    void staleSourceBlockedMarksTheTransferFailedWithoutDebiting() {
+    void staleSourceBlockedStaysPendingWithoutDebiting() {
+        // The debit's outcome is unknown here, and replaying its key against a blocked source
+        // would move the money if it never landed. Settling FAILED instead would be a guess,
+        // and nothing revisits FAILED -- so the row stays PENDING until the block is lifted.
         Transfer transfer = stalePendingTransfer();
         when(transferRepository.findByStatusAndCreatedAtBefore(eq(TransferStatus.PENDING), any(), any()))
                 .thenReturn(List.of(transfer));
-        when(transferRepository.save(transfer)).thenReturn(transfer);
         doThrow(new FraudRejectedException("Account is blocklisted: " + FROM)).when(fraudClient).check(FROM);
 
         scheduler.sweepStalePending();
 
-        assertThat(transfer.getStatus()).isEqualTo(TransferStatus.FAILED);
-        assertThat(transfer.getFailureCode()).isEqualTo(TransferFailureCode.SOURCE_ACCOUNT_BLOCKED);
+        assertThat(transfer.getStatus()).isEqualTo(TransferStatus.PENDING);
         verify(accountClient, never()).debit(any(), any(), any());
+        verify(transferRepository, never()).save(any());
     }
 
     @Test

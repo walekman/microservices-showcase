@@ -172,7 +172,7 @@ Live request (`TransferService.execute()`):
 
 Background scheduler resolution:
 
-- **stale `PENDING`** → re-check source fraud: blocked → `FAILED`; unreachable → stays `PENDING`, retried next sweep; clear → (idempotent) debit attempt exactly as today (lands → promoted to `COMPENSATION_REQUIRED`; rejected → `FAILED`; unreachable → stays `PENDING`)
+- **stale `PENDING`** → re-check source fraud: blocked → stays `PENDING` (the debit cannot be safely replayed, see below), retried every sweep until the block is lifted; unreachable → stays `PENDING`, retried next sweep; clear → (idempotent) debit attempt exactly as today (lands → promoted to `COMPENSATION_REQUIRED`; rejected → `FAILED`; unreachable → stays `PENDING`)
 - **`COMPENSATION_REQUIRED`** → re-check destination fraud, unconditionally: blocked → compensate the source (as today's rejected-credit path); unreachable → stays `COMPENSATION_REQUIRED`, retried next sweep; clear → (idempotent) credit attempt exactly as today (lands → `COMPLETED`; rejected → compensate; unreachable → stays `COMPENSATION_REQUIRED`)
 
     # Transfer money (replace the ids with two accounts you created). Idempotency-Key is
@@ -258,9 +258,12 @@ the replayed key can say. The caller gets `503 ACCOUNT_SERVICE_UNAVAILABLE` with
 `transferStatus: PENDING`, and should keep the same `Idempotency-Key` and poll
 `GET /transfers/{id}` — the transfer can still complete.
 
-Known gap: a stale-`PENDING` row recovered as `FAILED` because the source account came back
-blocklisted never establishes whether the debit itself had already landed — no
-operation-lookup endpoint exists on Account Service to check.
+If the source account has been blocklisted by the time the sweep reaches a stale `PENDING`
+row, the row stays `PENDING` and the sweep logs an ERROR each pass. Replaying the debit key is
+not a read-only check (if the debit never landed, the replay would perform it), and marking
+the row `FAILED` would guess that the debit never landed. The row resolves once the block is
+lifted. Reaching this needs the source blocklisted after the live saga's own fraud screen
+passed, which means reconfiguring and restarting Fraud Service.
 
 ## Kafka and Notification Service
 
