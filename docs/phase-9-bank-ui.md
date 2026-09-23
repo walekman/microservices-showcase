@@ -927,7 +927,7 @@ In `showcase-realm.json`, add `"registrationAllowed": true` and `"loginTheme": "
 {
   "clientId": "showcase-ui",
   "name": "Showcase UI",
-  "description": "Represents any human caller: curl/Postman today, a future login UI later",
+  "description": "Represents any human caller: the Bank UI (Authorization Code + PKCE) and curl/Postman (password grant)",
   "enabled": true,
   "publicClient": true,
   "protocol": "openid-connect",
@@ -935,13 +935,16 @@ In `showcase-realm.json`, add `"registrationAllowed": true` and `"loginTheme": "
   "implicitFlowEnabled": false,
   "directAccessGrantsEnabled": true,
   "serviceAccountsEnabled": false,
-  "redirectUris": ["http://localhost:*", "http://localhost:3000/*"],
-  "webOrigins": ["*"],
+  "redirectUris": ["http://localhost:8090/"],
+  "webOrigins": ["http://localhost:8090"],
   "attributes": {
-    "pkce.code.challenge.method": "S256"
+    "pkce.code.challenge.method": "S256",
+    "post.logout.redirect.uris": "http://localhost:8090/"
   }
 }
 ```
+
+**Update, post-Phase 9 (`open-items.md` #3):** this block originally shipped `showcase-ui` with Phase 7's placeholder `"redirectUris": ["http://localhost:*", "http://localhost:3000/*"]` and `"webOrigins": ["*"]`, leaving a live Authorization Code flow on a public client that accepted any localhost redirect. It is now synced to the realm file: the one URI the UI uses (`window.location.origin + '/'` in `auth.js`), for both login and logout.
 
 Add a default-roles composite so a self-registered user (who otherwise has zero realm roles) gets `customer`'s capabilities automatically. Add to `roles.realm`:
 
