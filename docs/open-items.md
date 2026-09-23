@@ -30,7 +30,6 @@ lands, and add new ones as phases defer them.
 
 | # | Item | Source | Status in code |
 |---|---|---|---|
-| 12 | `KafkaProducerConfig` has a redundant `@EnableConfigurationProperties(OutboxPublisherProperties.class)`. | `phase-4-outbox-kafka-notification.md` Final Review | Still there |
 | 13 | Kafka ITs run against `confluentinc/cp-kafka:7.7.1`, but Compose ships `apache/kafka`. | `phase-4-outbox-kafka-notification.md` Final Review | Still true |
 | 14 | No explicit `NewTopic` beans; the partition count comes from the broker's auto-create default. | `phase-4-outbox-kafka-notification.md` Final Review | Still true |
 | 15 | The `outbox_events` table is never pruned and grows forever. The phase doc waits for Flyway (#8) to carry a retention policy. | `phase-4-outbox-kafka-notification.md` Final Review | Still true |
