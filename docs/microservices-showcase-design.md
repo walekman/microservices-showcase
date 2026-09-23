@@ -44,7 +44,9 @@ Each stateful service owns its data exclusively — no service queries another's
 
 ## 4. Core Flow — The Transfer Saga
 
-`POST /transfers {fromAccountId, toAccountId, amount}` via the Gateway (JWT validated) into Transfer Service.
+`POST /transfers {fromAccountId, toAccountId, amount}` via the Gateway (JWT validated) into Transfer Service, with a required `Idempotency-Key` header.
+
+**Caller idempotency:** the key is stored on the `Transfer`, unique per initiator (`(initiator_id, idempotency_key)`). A repeat of a key the caller already used starts no new saga. It returns the earlier transfer's outcome (`201` if it completed, the same problem if it failed), `409 TRANSFER_IN_PROGRESS` with the `transferId` while that transfer is still `PENDING`, or `409 IDEMPOTENCY_KEY_CONFLICT` if the key was used for a different from/to/amount. Two concurrent requests with one key are settled by the unique constraint: the loser becomes a replay of the winner. The Bank UI keeps one key per intended transfer, so a double-click or a retry after a lost response cannot move the money twice.
 
 **Happy path:**
 1. Transfer Service creates a `Transfer` record, status `PENDING`, in its own DB, then pre-validates that both accounts exist.

@@ -38,7 +38,7 @@ No new infrastructure (no Kafka, no outbox, no second service) — this stays in
 | Deferred | Why not now | Lands in |
 |---|---|---|
 | Resilience4j TimeLimiter | Would require wrapping blocking `RestClient` calls in `CompletableFuture` on a dedicated bulkhead executor purely to let Resilience4j enforce a second, redundant deadline — `AccountClientProperties`' existing connect/read timeouts already bound how long a call can hang. Revisit only if the existing timeouts prove insufficient in practice. | not planned |
-| Idempotency key on `POST /transfers` (caller → Transfer) | Protects against a *caller* retrying transfer creation, not Transfer retrying into Account — a different gap. No automated caller exists yet to retry it (no Gateway, no Fraud calling Transfer). | Phase 5 or 6, once one exists |
+| Idempotency key on `POST /transfers` (caller → Transfer) | Protects against a *caller* retrying transfer creation, not Transfer retrying into Account — a different gap. No automated caller exists yet to retry it (no Gateway, no Fraud calling Transfer). | **Landed** after Phase 9, once the Bank UI became that caller — see §4 of `microservices-showcase-design.md` |
 | Transactional outbox + Kafka publisher | Distinct subsystem, its own container and test infrastructure | Phase 4 |
 | Fraud Service (the saga's third call) | The saga is built to accept another step; adding one is additive | Phase 5 |
 | Flyway migrations | Would require baselining two existing schemas — real work outside this slice | its own phase |

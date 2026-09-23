@@ -7,6 +7,7 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import jakarta.persistence.Version;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -18,7 +19,12 @@ import java.util.Arrays;
 import java.util.UUID;
 
 @Entity
-@Table(name = "transfers")
+// Scoped per initiator: one caller's key can neither collide with nor reveal another's transfer.
+// Pre-idempotency rows carry a null key, and Postgres lets any number of NULLs share a unique
+// constraint -- which is what lets ddl-auto: update add it over a populated table.
+@Table(name = "transfers",
+        uniqueConstraints = @UniqueConstraint(name = "uk_transfers_initiator_idempotency_key",
+                columnNames = {"initiator_id", "idempotency_key"}))
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Transfer {
@@ -37,6 +43,11 @@ public class Transfer {
     // already sees that token. See docs/phase-7b-account-ownership-authorization.md.
     @Column(nullable = false, updatable = false)
     private UUID initiatorId;
+
+    // The caller's Idempotency-Key on POST /transfers. Nullable only because rows created before
+    // the header became required have none. See docs/microservices-showcase-design.md.
+    @Column(length = 255, updatable = false)
+    private String idempotencyKey;
 
     // scale 2, matching Account.balance -- see the comment there.
     @Column(nullable = false, precision = 19, scale = 2, updatable = false)
@@ -62,6 +73,11 @@ public class Transfer {
     private Instant settledAt;
 
     public Transfer(UUID fromAccountId, UUID toAccountId, BigDecimal amount, UUID initiatorId) {
+        this(fromAccountId, toAccountId, amount, initiatorId, null);
+    }
+
+    public Transfer(UUID fromAccountId, UUID toAccountId, BigDecimal amount, UUID initiatorId,
+                    String idempotencyKey) {
         if (fromAccountId == null || toAccountId == null) {
             throw new IllegalArgumentException("Both account ids are required");
         }
@@ -75,8 +91,20 @@ public class Transfer {
         this.toAccountId = toAccountId;
         this.amount = amount;
         this.initiatorId = initiatorId;
+        this.idempotencyKey = idempotencyKey;
         this.status = TransferStatus.PENDING;
         this.createdAt = Instant.now();
+    }
+
+    /**
+     * True when a replayed POST /transfers reused this transfer's idempotency key for a
+     * different transfer. compareTo, not equals, for the amount: "40" and "40.00" are the
+     * same request.
+     */
+    public boolean conflictsWith(UUID fromAccountId, UUID toAccountId, BigDecimal amount) {
+        return !this.fromAccountId.equals(fromAccountId)
+                || !this.toAccountId.equals(toAccountId)
+                || this.amount.compareTo(amount) != 0;
     }
 
     /** Reachable from PENDING (the live saga) or COMPENSATION_REQUIRED (reconciliation found the credit had already landed). */

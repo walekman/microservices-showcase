@@ -1,12 +1,16 @@
 package com.showcase.transfer.api;
 
 import com.showcase.transfer.client.AccountServiceUnavailableException;
+import com.showcase.transfer.domain.IdempotencyKeyConflictException;
 import com.showcase.transfer.domain.SameAccountTransferException;
 import com.showcase.transfer.domain.Transfer;
 import com.showcase.transfer.domain.TransferFailureCode;
+import com.showcase.transfer.domain.TransferInProgressException;
 import com.showcase.transfer.domain.TransferNotFoundException;
 import com.showcase.transfer.domain.TransferStatus;
 import com.showcase.transfer.service.TransferPersistenceException;
+import jakarta.validation.ConstraintViolationException;
+import jakarta.validation.Path;
 
 import java.time.Instant;
 import org.springframework.beans.TypeMismatchException;
@@ -17,6 +21,8 @@ import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingRequestHeaderException;
+import org.springframework.web.bind.ServletRequestBindingException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
@@ -137,6 +143,45 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
      * fell through to the generic 500 below instead of this project's usual 503
      * ACCOUNT_SERVICE_UNAVAILABLE for exactly that condition. Found in code review.
      */
+    @ExceptionHandler(IdempotencyKeyConflictException.class)
+    public ProblemDetail handleIdempotencyConflict(IdempotencyKeyConflictException ex) {
+        return Problems.of(HttpStatus.CONFLICT, "IDEMPOTENCY_KEY_CONFLICT", "Idempotency key conflict", ex.getMessage());
+    }
+
+    @ExceptionHandler(TransferInProgressException.class)
+    public ProblemDetail handleInProgress(TransferInProgressException ex) {
+        ProblemDetail problem = Problems.of(HttpStatus.CONFLICT, "TRANSFER_IN_PROGRESS", "Transfer in progress",
+                "A transfer with this idempotency key is still in progress");
+        // The id is what lets the caller poll GET /transfers/{id} for the outcome instead of
+        // retrying blind.
+        problem.setProperty("transferId", ex.getTransferId());
+        problem.setProperty("transferStatus", TransferStatus.PENDING);
+        return problem;
+    }
+
+    /**
+     * @Validated on TransferController routes the constraints on its Idempotency-Key
+     * @RequestHeader through Spring's AOP MethodValidationInterceptor, which throws this rather
+     * than the MethodArgumentNotValidException handled below. Without it a blank or overlong key
+     * fell through to the generic 500. Same handler as account-service's.
+     */
+    @ExceptionHandler(ConstraintViolationException.class)
+    public ProblemDetail handleConstraintViolation(ConstraintViolationException ex) {
+        String detail = ex.getConstraintViolations().stream()
+                .findFirst()
+                .map(violation -> lastPathSegment(violation.getPropertyPath()) + " " + violation.getMessage())
+                .orElse("Validation failed");
+        return Problems.of(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "Validation failed", detail);
+    }
+
+    private static String lastPathSegment(Path path) {
+        String last = "request";
+        for (Path.Node node : path) {
+            last = node.getName();
+        }
+        return last;
+    }
+
     @ExceptionHandler(AccountServiceUnavailableException.class)
     public ProblemDetail handleAccountUnavailable(AccountServiceUnavailableException ex) {
         return Problems.of(HttpStatus.SERVICE_UNAVAILABLE, "ACCOUNT_SERVICE_UNAVAILABLE",
@@ -157,6 +202,22 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
                 .findFirst()
                 .map(error -> error.getField() + " " + error.getDefaultMessage())
                 .orElse("Validation failed");
+        return ResponseEntity.badRequest()
+                .body(Problems.of(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "Validation failed", detail));
+    }
+
+    /**
+     * A missing Idempotency-Key arrives as {@link MissingRequestHeaderException}, which
+     * {@code ResponseEntityExceptionHandler} routes through this general hook -- without the
+     * override it would get the generic REQUEST_REJECTED code rather than VALIDATION_FAILED.
+     * Mirrors account-service's handler.
+     */
+    @Override
+    protected ResponseEntity<Object> handleServletRequestBindingException(
+            ServletRequestBindingException ex, HttpHeaders headers, HttpStatusCode status, WebRequest request) {
+        String detail = (ex instanceof MissingRequestHeaderException missingHeader)
+                ? "Missing required header: " + missingHeader.getHeaderName()
+                : "Malformed request";
         return ResponseEntity.badRequest()
                 .body(Problems.of(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "Validation failed", detail));
     }
