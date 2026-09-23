@@ -4,6 +4,9 @@ import com.showcase.transfer.domain.OutboxEvent;
 import com.showcase.transfer.domain.OutboxEventRepository;
 import com.showcase.transfer.domain.OutboxEventType;
 import com.showcase.transfer.client.StubServiceTokenTestConfig;
+import org.apache.kafka.clients.admin.AdminClient;
+import org.apache.kafka.clients.admin.AdminClientConfig;
+import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -25,6 +28,7 @@ import org.testcontainers.kafka.KafkaContainer;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -51,11 +55,19 @@ class OutboxPublisherIT {
     // on Spring Boot 3.3.4 -- found live during Task 3's implementation. Wire the bootstrap
     // address manually instead; Spring Boot's own Kafka autoconfiguration takes it from there.
     @Container
-    static KafkaContainer kafka = new KafkaContainer("apache/kafka:3.8.0");
+    //
+    // Topic auto-creation is off, as on a hardened production broker: the outbox topics must
+    // then come from KafkaTopicConfig's NewTopic beans, so every publish below also proves
+    // those beans work. With it on, a missing bean would be invisible.
+    static KafkaContainer kafka = new KafkaContainer("apache/kafka:3.8.0")
+            .withEnv("KAFKA_AUTO_CREATE_TOPICS_ENABLE", "false");
 
     @DynamicPropertySource
     static void kafkaProperties(DynamicPropertyRegistry registry) {
         registry.add("spring.kafka.bootstrap-servers", kafka::getBootstrapServers);
+        // src/test/resources/config/application.yml turns topic creation off for the ITs that
+        // have no broker; this one has a broker and must create the topics.
+        registry.add("spring.kafka.admin.auto-create", () -> "true");
         // OutboxPublisher.publishPending() has no claim/lock step (single-instance deployment,
         // see its class javadoc) -- it's only safe against ONE caller at a time. This class's
         // tests invoke it directly (see the comment on the package-private method itself), but
@@ -80,6 +92,20 @@ class OutboxPublisherIT {
     private OutboxPublisherProperties outboxPublisherProperties;
 
     @Test
+    void createsBothOutboxTopicsWithOnePartitionAtStartup() throws Exception {
+        String completed = outboxPublisherProperties.topics().completed();
+        String failed = outboxPublisherProperties.topics().failed();
+        try (AdminClient admin = AdminClient.create(
+                Map.of(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, kafka.getBootstrapServers()))) {
+            Map<String, TopicDescription> topics = admin.describeTopics(List.of(completed, failed))
+                    .allTopicNames().get();
+
+            assertThat(topics.get(completed).partitions()).hasSize(1);
+            assertThat(topics.get(failed).partitions()).hasSize(1);
+        }
+    }
+
+    @Test
     void publishesAnUnpublishedEventAndMarksItPublished() {
         UUID transferId = UUID.randomUUID();
         String payload = "{\"status\":\"COMPLETED\"}";
@@ -92,8 +118,8 @@ class OutboxPublisherIT {
         assertThat(reloaded.getPublishedAt()).isNotNull();
 
         // Only asserting publishedAt is non-null does not prove anything about WHERE the
-        // message went or what it carried: because the test broker auto-creates topics,
-        // topicFor() routing to the wrong topic string would still leave this test green.
+        // message went or what it carried: the send can succeed against the other declared
+        // topic, so topicFor() routing to the wrong topic string would still leave this test green.
         // Attach a real consumer to the topic OutboxPublisherProperties says TRANSFER_COMPLETED
         // routes to, and prove the key/value contract directly -- this is the one thing nothing
         // else in the suite protects.
