@@ -21,7 +21,7 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.kafka.ConfluentKafkaContainer;
+import org.testcontainers.kafka.KafkaContainer;
 
 import java.time.Duration;
 import java.util.List;
@@ -47,11 +47,11 @@ class OutboxPublisherIT {
     @ServiceConnection
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
-    // @ServiceConnection on ConfluentKafkaContainer throws ConnectionDetailsNotFoundException
+    // @ServiceConnection on the Kafka container threw ConnectionDetailsNotFoundException
     // on Spring Boot 3.3.4 -- found live during Task 3's implementation. Wire the bootstrap
     // address manually instead; Spring Boot's own Kafka autoconfiguration takes it from there.
     @Container
-    static ConfluentKafkaContainer kafka = new ConfluentKafkaContainer("confluentinc/cp-kafka:7.7.1");
+    static KafkaContainer kafka = new KafkaContainer("apache/kafka:3.8.0");
 
     @DynamicPropertySource
     static void kafkaProperties(DynamicPropertyRegistry registry) {

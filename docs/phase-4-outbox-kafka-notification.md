@@ -949,7 +949,7 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.kafka.ConfluentKafkaContainer;
+import org.testcontainers.kafka.KafkaContainer;
 
 import java.time.Duration;
 import java.util.List;
@@ -965,11 +965,11 @@ class OutboxPublisherIT {
     @ServiceConnection
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
-    // @ServiceConnection on ConfluentKafkaContainer throws ConnectionDetailsNotFoundException
+    // @ServiceConnection on the Kafka container threw ConnectionDetailsNotFoundException
     // on Spring Boot 3.3.4 -- found live during Task 3's implementation. Wire the bootstrap
     // address manually instead; Spring Boot's own Kafka autoconfiguration takes it from there.
     @Container
-    static ConfluentKafkaContainer kafka = new ConfluentKafkaContainer("confluentinc/cp-kafka:7.7.1");
+    static KafkaContainer kafka = new KafkaContainer("apache/kafka:3.8.0");
 
     @DynamicPropertySource
     static void kafkaProperties(DynamicPropertyRegistry registry) {
@@ -1257,7 +1257,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.kafka.ConfluentKafkaContainer;
+import org.testcontainers.kafka.KafkaContainer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -1266,11 +1266,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 @ExtendWith(OutputCaptureExtension.class)
 class NotificationListenerIT {
 
-    // @ServiceConnection on ConfluentKafkaContainer throws ConnectionDetailsNotFoundException
+    // @ServiceConnection on the Kafka container threw ConnectionDetailsNotFoundException
     // on Spring Boot 3.3.4 -- same finding as transfer-service's OutboxPublisherIT. Wire the
     // bootstrap address manually instead.
     @Container
-    static ConfluentKafkaContainer kafka = new ConfluentKafkaContainer("confluentinc/cp-kafka:7.7.1");
+    static KafkaContainer kafka = new KafkaContainer("apache/kafka:3.8.0");
 
     @DynamicPropertySource
     static void kafkaProperties(DynamicPropertyRegistry registry) {
@@ -1523,7 +1523,7 @@ Critical and Important findings from the final review were fixed before closing 
 - `KafkaProducerConfig`'s `@EnableConfigurationProperties(OutboxPublisherProperties.class)` is redundant with `TransferServiceApplication`'s existing `@ConfigurationPropertiesScan` — harmless, but undocumented and mislocated (an outbox concern registered from the Kafka producer config class). Remove once confirmed nothing relies on it. **Resolved post-Phase 9:** removed; `OutboxPublisherProperties` is still bound through the `@ConfigurationPropertiesScan`.
 - Kafka's advertised listener (`PLAINTEXT://kafka:9092`) is only resolvable from inside the Compose network — a host-side client (e.g. `kafka-console-consumer` for manual debugging) cannot connect even though port 9092 is published. Add a second `PLAINTEXT_HOST` listener advertised as `localhost:29092` if host-side debugging access is wanted.
 - `transfer.outbox.backlog` (the Micrometer gauge `OutboxPublisher` registers) is unobservable until Prometheus is wired up (Phase 8) — `management.endpoints.web.exposure` currently exposes only `health`. Also currently untested either way.
-- `OutboxPublisherIT`/`NotificationListenerIT` run against `confluentinc/cp-kafka:7.7.1` (Testcontainers) while Compose ships `apache/kafka:3.8.0` — both are KRaft-mode Kafka, but tests don't exercise the exact image that actually ships. Consider Testcontainers' `org.testcontainers.kafka.KafkaContainer` against `apache/kafka` instead.
+- `OutboxPublisherIT`/`NotificationListenerIT` run against `confluentinc/cp-kafka:7.7.1` (Testcontainers) while Compose ships `apache/kafka:3.8.0` — both are KRaft-mode Kafka, but tests don't exercise the exact image that actually ships. Consider Testcontainers' `org.testcontainers.kafka.KafkaContainer` against `apache/kafka` instead. **Resolved post-Phase 9:** every Kafka IT (these two plus `BuildInfoIT` and `TracingBridgeIT`) now runs `KafkaContainer` against `apache/kafka:3.8.0`, the image Compose ships; the code blocks above are synced to match.
 - No explicit `NewTopic` beans for `transfer.completed`/`transfer.failed` — partition count and replication factor are whatever the broker's auto-create default produces. Fine for a single-broker demo; worth making explicit if partition count ever matters.
 - `OutboxEventType.forStatus()` maps `COMPENSATION_FAILED` (debit landed, credit and the reversal both failed — manual review, balance is actually down) onto the same `TRANSFER_FAILED` event as a clean `FAILED`/`COMPENSATED` outcome. Harmless today since Notification only logs and the payload's own `status`/`failureReason` fields still carry the distinction — but if a later phase makes notifications customer-facing, this mapping would tell a customer "your transfer failed" when the real statement is "your money moved and the reversal needs manual review." Revisit the event-type mapping before that happens.
 - `outbox_events` has no pruning: nothing deletes a row once it's published, so the table grows with total transfer history forever. The final review's index fix (`idx_outbox_unpublished` on `publishedAt, createdAt`) keeps the poll query and the backlog gauge cheap regardless of table size, but disk growth itself is untouched — deliberately out of scope for the review-fix pass. Revisit with a retention policy (e.g. delete published rows older than N days) once Flyway lands and can carry the migration.

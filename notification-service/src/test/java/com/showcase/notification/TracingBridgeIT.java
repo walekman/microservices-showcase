@@ -9,7 +9,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.kafka.ConfluentKafkaContainer;
+import org.testcontainers.kafka.KafkaContainer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class TracingBridgeIT {
 
     @Container
-    static ConfluentKafkaContainer kafka = new ConfluentKafkaContainer("confluentinc/cp-kafka:7.7.1");
+    static KafkaContainer kafka = new KafkaContainer("apache/kafka:3.8.0");
 
     @DynamicPropertySource
     static void kafkaProperties(DynamicPropertyRegistry registry) {
