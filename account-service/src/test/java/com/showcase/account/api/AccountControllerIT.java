@@ -268,6 +268,23 @@ class AccountControllerIT {
     }
 
     @Test
+    void refusesACreditFromACustomerAndLeavesTheBalanceUntouched() {
+        // A real customer token (account-editor, no account-crediter) crediting directly -- the
+        // money-minting path open-items.md #2 described. The balance check proves nothing moved.
+        UUID id = createAccount(new BigDecimal("100.00"));
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("Idempotency-Key", "credit-key-customer");
+        headers.setBearerAuth(TestSecurityConfig.freshCustomerToken());
+
+        ResponseEntity<String> response = restTemplate.exchange("/accounts/" + id + "/credit", HttpMethod.POST,
+                new HttpEntity<>(new AmountRequest(new BigDecimal("1000000.00")), headers), String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(restTemplate.getForEntity("/accounts/" + id, AccountResponse.class).getBody().balance())
+                .isEqualByComparingTo("100.00");
+    }
+
+    @Test
     void rejectsADebitWithNoIdempotencyKeyHeader() {
         UUID id = createAccount(new BigDecimal("100.00"));
 
@@ -563,8 +580,12 @@ class AccountControllerIT {
                 "/accounts/" + id + "/debit", HttpMethod.POST, amountRequest(amount, idempotencyKey), AccountResponse.class);
     }
 
+    // As transfer-service: credit requires account-crediter, which no customer holds.
     private ResponseEntity<AccountResponse> credit(UUID id, BigDecimal amount, String idempotencyKey) {
-        return restTemplate.exchange(
-                "/accounts/" + id + "/credit", HttpMethod.POST, amountRequest(amount, idempotencyKey), AccountResponse.class);
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("Idempotency-Key", idempotencyKey);
+        headers.setBearerAuth(TestSecurityConfig.TRANSFER_SERVICE_TOKEN);
+        return restTemplate.exchange("/accounts/" + id + "/credit", HttpMethod.POST,
+                new HttpEntity<>(new AmountRequest(amount), headers), AccountResponse.class);
     }
 }

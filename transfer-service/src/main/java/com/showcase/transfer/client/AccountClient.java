@@ -107,18 +107,22 @@ public class AccountClient {
     @CircuitBreaker(name = "accountService")
     @Retry(name = "accountService", fallbackMethod = "debitCreditFallback")
     public void debit(UUID accountId, BigDecimal amount, String idempotencyKey) {
-        post(accountId, amount, "debit", idempotencyKey);
+        post(accountId, amount, "debit", idempotencyKey, false);
     }
 
     @CircuitBreaker(name = "accountService")
     @Retry(name = "accountService", fallbackMethod = "debitCreditFallback")
     public void credit(UUID accountId, BigDecimal amount, String idempotencyKey) {
-        post(accountId, amount, "credit", idempotencyKey);
+        // Always as transfer-service itself: Account requires account-crediter for credit, which
+        // no customer holds. See AuthorizationPropagatingInterceptor.USE_SERVICE_IDENTITY.
+        post(accountId, amount, "credit", idempotencyKey, true);
     }
 
-    private void post(UUID accountId, BigDecimal amount, String operation, String idempotencyKey) {
+    private void post(UUID accountId, BigDecimal amount, String operation, String idempotencyKey,
+                      boolean serviceIdentity) {
         call(() -> restClient.post()
                 .uri("/accounts/{id}/{operation}", accountId, operation)
+                .attribute(AuthorizationPropagatingInterceptor.USE_SERVICE_IDENTITY, serviceIdentity)
                 .contentType(MediaType.APPLICATION_JSON)
                 .header("Idempotency-Key", idempotencyKey)
                 .body(Map.of("amount", amount))

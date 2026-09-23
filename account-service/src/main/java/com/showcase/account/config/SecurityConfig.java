@@ -59,7 +59,12 @@ public class SecurityConfig {
                         // AccountService.getAccount, which HEAD reaches too (same handler as GET).
                         .requestMatchers(HttpMethod.GET, "/accounts/*").hasAuthority("account-reader")
                         .requestMatchers(HttpMethod.HEAD, "/accounts/*").hasAuthority("account-reader")
-                        .requestMatchers(HttpMethod.POST, "/accounts", "/accounts/*/debit", "/accounts/*/credit")
+                        // credit has no ownership check (a transfer credits someone else's account),
+                        // so it takes its own authority, held only by transfer-service's machine
+                        // identity. Under account-editor, which the customer composite carries, any
+                        // customer could credit any account directly on port 8081 and create money.
+                        .requestMatchers(HttpMethod.POST, "/accounts/*/credit").hasAuthority("account-crediter")
+                        .requestMatchers(HttpMethod.POST, "/accounts", "/accounts/*/debit")
                         .hasAuthority("account-editor")
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt

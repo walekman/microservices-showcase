@@ -304,20 +304,23 @@ class AccountSecurityIT {
     }
 
     @Test
-    void creditReturns403WithoutAccountEditorAuthority() throws Exception {
+    void creditReturns403ForACustomerHoldingAccountEditor() throws Exception {
+        // The customer composite carries account-editor. Before credit required its own
+        // authority, any customer could credit any account directly on port 8081 -- creating
+        // money with no matching debit (docs/open-items.md #2, now closed).
         mockMvc.perform(post("/accounts/" + UUID.randomUUID() + "/credit")
                         .contentType("application/json")
                         .header("Idempotency-Key", "test-key")
                         .content("{\"amount\":10.00}")
-                        .with(jwt().authorities(() -> "account-reader")))
+                        .with(jwt().authorities(() -> "account-editor", () -> "account-reader")))
                 .andExpect(status().isForbidden());
     }
 
     @Test
-    void creditReturns200WithAccountEditorAuthorityRegardlessOfOwnership() throws Exception {
-        // credit never gained an ownership check -- see docs/phase-7b-account-ownership-authorization.md's
-        // Design Decisions for why it can't (a real transfer's credit call never carries the
-        // destination owner's token).
+    void creditReturns200WithAccountCrediterAuthorityRegardlessOfOwnership() throws Exception {
+        // account-crediter is held only by transfer-service's machine identity. credit has no
+        // ownership check -- see docs/phase-7b-account-ownership-authorization.md's Design
+        // Decisions for why it can't (a transfer credits someone else's account).
         UUID subject = UUID.randomUUID();
         when(accountService.credit(any(), any(), any())).thenReturn(new Account(subject, "Ada", new BigDecimal("60.00")));
 
@@ -325,7 +328,7 @@ class AccountSecurityIT {
                         .contentType("application/json")
                         .header("Idempotency-Key", "test-key")
                         .content("{\"amount\":10.00}")
-                        .with(jwt().authorities(() -> "account-editor")))
+                        .with(jwt().authorities(() -> "account-crediter")))
                 .andExpect(status().isOk());
     }
 }

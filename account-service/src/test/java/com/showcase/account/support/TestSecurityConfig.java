@@ -41,6 +41,9 @@ public class TestSecurityConfig {
     public static final String CUSTOMER_TOKEN = "test-customer-token";
     public static final String CUSTOMER2_TOKEN = "test-customer2-token";
     public static final String ADMIN_TOKEN = "test-admin-token";
+    // transfer-service's machine identity, with the realm roles its service account holds --
+    // the only identity with account-crediter, which credit requires.
+    public static final String TRANSFER_SERVICE_TOKEN = "test-transfer-service-token";
     public static final UUID CUSTOMER_SUBJECT = UUID.fromString("22222222-2222-2222-2222-222222222222");
     public static final UUID CUSTOMER2_SUBJECT = UUID.fromString("33333333-3333-3333-3333-333333333333");
 
@@ -77,6 +80,17 @@ public class TestSecurityConfig {
                         .header("alg", "none")
                         .subject(UUID.randomUUID().toString())
                         .claim("realm_access", Map.of("roles", List.of("account-admin")))
+                        .issuedAt(Instant.now())
+                        .expiresAt(Instant.now().plusSeconds(3600))
+                        .build();
+            }
+            if (TRANSFER_SERVICE_TOKEN.equals(token)) {
+                return Jwt.withTokenValue(token)
+                        .header("alg", "none")
+                        .subject(UUID.randomUUID().toString())
+                        .claim("azp", "transfer-service")
+                        .claim("realm_access", Map.of("roles",
+                                List.of("account-editor", "fraud-checker", "account-crediter")))
                         .issuedAt(Instant.now())
                         .expiresAt(Instant.now().plusSeconds(3600))
                         .build();

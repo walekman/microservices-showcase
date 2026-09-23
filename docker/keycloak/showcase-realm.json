@@ -16,7 +16,11 @@
       },
       {
         "name": "account-editor",
-        "description": "Can create accounts and move money (debit/credit)"
+        "description": "Can create accounts and debit (a customer only their own account; see account-crediter for credit)"
+      },
+      {
+        "name": "account-crediter",
+        "description": "Can credit any account -- held only by transfer-service's machine identity, never by the customer composite"
       },
       {
         "name": "fraud-checker",
@@ -113,7 +117,7 @@
       "username": "service-account-transfer-service",
       "enabled": true,
       "serviceAccountClientId": "transfer-service",
-      "realmRoles": ["account-editor", "fraud-checker"]
+      "realmRoles": ["account-editor", "fraud-checker", "account-crediter"]
     },
     {
       "username": "admin",

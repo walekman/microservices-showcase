@@ -79,15 +79,14 @@ A single entry point at `http://localhost:8080` routes to the two client-facing 
 - `POST /accounts`, `GET /accounts`, `GET /accounts/{id}` → Account Service
 
 Account's `/accounts/{id}/debit` and `/accounts/{id}/credit` are intentionally **not** routed
-— they're internal saga calls Transfer Service makes directly on the Docker network. That keeps
-them unreachable *through the Gateway*, but **not unreachable outright**: Account's own port
-(8081) is published for local dev, and any `customer` token can still call `credit` directly,
-since a real transfer's credit call is made with the *source* customer's own token, never the
-destination owner's — there is no ownership check that could distinguish the two (see
-`docs/phase-7b-account-ownership-authorization.md`'s Design Decisions). `debit` no longer has
-this gap: as of Phase 7b it's owner-gated, so a `customer` token can only debit an account it
-created — calling it directly against someone else's account now 404s, the same answer a
-genuinely missing account would give. Every other example in this README still targets each
+— they're internal saga calls Transfer Service makes directly on the Docker network. Account's
+own port (8081) is still published for local dev, so both are reachable directly, but neither
+lets a customer move someone else's money. `debit` is owner-gated (Phase 7b): a `customer` token
+can only debit an account it created, and calling it against someone else's account 404s, the
+same answer a genuinely missing account would give. `credit` has no ownership check (a transfer
+credits someone else's account), so it requires the `account-crediter` role, which only Transfer
+Service's own machine identity holds. Transfer makes every credit call as itself, and a
+`customer` token calling `credit` directly gets `403`. Every other example in this README still targets each
 service's own port directly (8081/8082/8083/8084); the Gateway doesn't replace those, it adds a
 second, narrower way in. Every routed path requires a bearer JWT with the matching permission,
 same as calling each service directly (see "Authentication" above) — the Gateway and the service
@@ -136,7 +135,8 @@ omitted here to keep the examples focused on each endpoint's own request shape.
       -H "Idempotency-Key: demo-debit-<id>" \
       -d '{"amount": 40.00}'
 
-    # Credit it
+    # Crediting it directly is refused (403): credit needs the account-crediter role, which only
+    # Transfer Service's machine identity holds. Money only arrives through a transfer.
     curl -X POST http://localhost:8081/accounts/<id>/credit \
       -H "Content-Type: application/json" \
       -H "Idempotency-Key: demo-credit-<id>" \
