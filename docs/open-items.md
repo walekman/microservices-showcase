@@ -30,7 +30,6 @@ lands, and add new ones as phases defer them.
 
 | # | Item | Source | Status in code |
 |---|---|---|---|
-| 15 | The `outbox_events` table is never pruned and grows forever. The phase doc waits for Flyway (#8) to carry a retention policy. | `phase-4-outbox-kafka-notification.md` Final Review | Still true |
 | 16 | `AccountControllerIT`'s same-key concurrency test is `@Disabled`. The root cause (a second serialization factor on CI) is unknown, and a rewrite is recommended. `returns409ForConcurrentUpdateConflict` may carry the same risk. | `investigation-account-controller-it-concurrency-flake.md` | Open |
 | 17 | `phase-8-observability.md` (Roadmap Changes) still says the design-doc edits are "Still pending — lands in Task 6". | `phase-8-observability.md` | Stale wording; the edits are done |
 | 18 | `phase-4-outbox-kafka-notification.md`'s Final Review still lists the missing host-side Kafka listener as deferred, but `docker-compose.yml` now has it (`HOST://localhost:29092`). | `phase-4-outbox-kafka-notification.md` Final Review | Stale wording; already fixed in code |
@@ -45,4 +44,5 @@ decision.
 | Fraud | Amount/velocity rules; an admin API or a persisted blocklist | `phase-5-fraud-service.md` |
 | Gateway | Rate limiting, CORS and logging filters; a Gateway-level resilience layer | `phase-6-api-gateway.md` |
 | Auth | Keycloak Authorization Services; `oauth2Login` for Swagger; silent token refresh; email/password-reset flows; admin views in the UI | `phase-7-auth-keycloak-jwt.md`, `phase-7b-account-ownership-authorization.md`, `phase-9-bank-ui.md` |
+| Transfer outbox | Pruning published `outbox_events` rows (a retention policy); the table grows forever, which is irrelevant at demo scale, and the index on `publishedAt` keeps the poll query cheap regardless | `phase-4-outbox-kafka-notification.md` Final Review |
 | Observability and platform | Alerting; trace-to-metrics exemplars; log aggregation; a Resilience4j TimeLimiter; multi-account per user | `phase-3-resilience-compensation-idempotency.md`, `phase-8-observability.md`, `phase-9-bank-ui.md` |
