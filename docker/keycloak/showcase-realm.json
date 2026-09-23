@@ -55,7 +55,7 @@
     {
       "clientId": "showcase-ui",
       "name": "Showcase UI",
-      "description": "Represents any human caller: curl/Postman today, a future login UI later",
+      "description": "Represents any human caller: the Bank UI (Authorization Code + PKCE) and curl/Postman (password grant)",
       "enabled": true,
       "publicClient": true,
       "protocol": "openid-connect",
@@ -63,10 +63,11 @@
       "implicitFlowEnabled": false,
       "directAccessGrantsEnabled": true,
       "serviceAccountsEnabled": false,
-      "redirectUris": ["http://localhost:*", "http://localhost:3000/*"],
-      "webOrigins": ["*"],
+      "redirectUris": ["http://localhost:8090/"],
+      "webOrigins": ["http://localhost:8090"],
       "attributes": {
-        "pkce.code.challenge.method": "S256"
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:8090/"
       }
     },
     {
