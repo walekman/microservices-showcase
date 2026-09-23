@@ -1488,18 +1488,20 @@ void destinationFraudStillUnavailableLeavesTheTransferAwaitingTheNextSweep() {
 }
 
 @Test
-void staleSourceBlockedMarksTheTransferFailedWithoutDebiting() {
+void staleSourceBlockedStaysPendingWithoutDebiting() {
+    // The debit's outcome is unknown here, and replaying its key against a blocked source
+    // would move the money if it never landed. Settling FAILED instead would be a guess,
+    // and nothing revisits FAILED -- so the row stays PENDING until the block is lifted.
     Transfer transfer = stalePendingTransfer();
     when(transferRepository.findByStatusAndCreatedAtBefore(eq(TransferStatus.PENDING), any(), any()))
             .thenReturn(List.of(transfer));
-    when(transferRepository.save(transfer)).thenReturn(transfer);
     doThrow(new FraudRejectedException("Account is blocklisted: " + FROM)).when(fraudClient).check(FROM);
 
     scheduler.sweepStalePending();
 
-    assertThat(transfer.getStatus()).isEqualTo(TransferStatus.FAILED);
-    assertThat(transfer.getFailureCode()).isEqualTo(TransferFailureCode.SOURCE_ACCOUNT_BLOCKED);
+    assertThat(transfer.getStatus()).isEqualTo(TransferStatus.PENDING);
     verify(accountClient, never()).debit(any(), any(), any());
+    verify(transferRepository, never()).save(any());
 }
 
 @Test
@@ -1579,14 +1581,22 @@ Replace `reconcileCredit()` with a version that gates on the destination fraud c
 
 Replace `reconcileDebit()` with a version that gates on the source fraud check first:
 
+**Update, post-Phase 9 (`open-items.md` #19):** this block and `staleSourceBlockedStaysPendingWithoutDebiting` above originally marked a blocked source's stale row `FAILED` (`SOURCE_ACCOUNT_BLOCKED`) without learning whether the debit had landed. Once a live debit with an unknown outcome could also be left `PENDING`, that guess could hide a committed debit, so the row now stays `PENDING`. Both blocks are synced to the merged code.
+
 ```java
     private void reconcileDebit(Transfer transfer) {
         try {
             fraudClient.check(transfer.getFromAccountId());
         } catch (FraudRejectedException blocked) {
-            transfer.markFailed(TransferFailureCode.SOURCE_ACCOUNT_BLOCKED, blocked.getDetail());
-            transferSaveService.save(transfer);
-            log.info("Transfer {} recovered from stale PENDING as FAILED: source account blocklisted [{}]",
+            // The debit's outcome is unknown, and the key replay below is not a read-only
+            // lookup: if the debit never landed, replaying it would move money out of a now
+            // blocked account. Marking FAILED instead would guess "never landed", and nothing
+            // revisits FAILED. So the row stays PENDING and this repeats every sweep until the
+            // block is lifted. Reaching this needs the source blocklisted after the live saga's
+            // own screen passed, i.e. a Fraud reconfiguration and restart.
+            log.error("Transfer {} still stale PENDING: source account is now blocklisted [{}], so its debit "
+                            + "cannot be safely replayed and its outcome is unknown. Will retry next sweep; "
+                            + "resolves once the block is lifted.",
                     transfer.getId(), blocked.getDetail());
             return;
         } catch (FraudServiceUnavailableException stillUnavailable) {
