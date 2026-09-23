@@ -1,0 +1,12 @@
+# Test-only overlay. Spring Boot loads classpath:/config/application.yml in addition to the
+# main classpath:/application.yml (and it wins on conflicts), so this adds to the service's
+# config rather than replacing it.
+#
+# Only OutboxPublisherIT starts a Kafka broker. In every other @SpringBootTest context,
+# KafkaAdmin would try to create KafkaTopicConfig's topics against the unreachable default
+# broker and block startup for ~40s before giving up -- measured at +40s per test class.
+# OutboxPublisherIT sets this back to true.
+spring:
+  kafka:
+    admin:
+      auto-create: false

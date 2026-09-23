@@ -69,6 +69,8 @@ Every downstream call (steps 2–5) is wrapped in Resilience4j CircuitBreaker + 
 > `toAccountId`, `amount`, `failureCode`, `failureReason`, `settledAt`). Plain JSON over the
 > Kafka topics — no Avro, no schema registry, consistent with "keeps deployment footprint
 > manageable."
+> Transfer, as the producer, declares both topics (`KafkaTopicConfig`: one partition, one replica)
+> and creates them at startup, so they do not depend on the broker auto-creating them.
 
 **Failure & compensation paths:**
 

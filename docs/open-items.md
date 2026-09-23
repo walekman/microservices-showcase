@@ -30,7 +30,6 @@ lands, and add new ones as phases defer them.
 
 | # | Item | Source | Status in code |
 |---|---|---|---|
-| 14 | No explicit `NewTopic` beans; the partition count comes from the broker's auto-create default. | `phase-4-outbox-kafka-notification.md` Final Review | Still true |
 | 15 | The `outbox_events` table is never pruned and grows forever. The phase doc waits for Flyway (#8) to carry a retention policy. | `phase-4-outbox-kafka-notification.md` Final Review | Still true |
 | 16 | `AccountControllerIT`'s same-key concurrency test is `@Disabled`. The root cause (a second serialization factor on CI) is unknown, and a rewrite is recommended. `returns409ForConcurrentUpdateConflict` may carry the same risk. | `investigation-account-controller-it-concurrency-flake.md` | Open |
 | 17 | `phase-8-observability.md` (Roadmap Changes) still says the design-doc edits are "Still pending — lands in Task 6". | `phase-8-observability.md` | Stale wording; the edits are done |
