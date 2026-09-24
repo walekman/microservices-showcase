@@ -270,7 +270,7 @@ class AccountControllerIT {
     @Test
     void refusesACreditFromACustomerAndLeavesTheBalanceUntouched() {
         // A real customer token (account-editor, no account-crediter) crediting directly -- the
-        // money-minting path open-items.md #2 described. The balance check proves nothing moved.
+        // money-minting path that was once an open item. The balance check proves nothing moved.
         UUID id = createAccount(new BigDecimal("100.00"));
         HttpHeaders headers = new HttpHeaders();
         headers.set("Idempotency-Key", "credit-key-customer");

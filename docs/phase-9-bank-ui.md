@@ -944,7 +944,7 @@ In `showcase-realm.json`, add `"registrationAllowed": true` and `"loginTheme": "
 }
 ```
 
-**Update, post-Phase 9 (`open-items.md` #3):** this block originally shipped `showcase-ui` with Phase 7's placeholder `"redirectUris": ["http://localhost:*", "http://localhost:3000/*"]` and `"webOrigins": ["*"]`, leaving a live Authorization Code flow on a public client that accepted any localhost redirect. It is now synced to the realm file: the one URI the UI uses (`window.location.origin + '/'` in `auth.js`), for both login and logout.
+**Update, post-Phase 9:** this block originally shipped `showcase-ui` with Phase 7's placeholder `"redirectUris": ["http://localhost:*", "http://localhost:3000/*"]` and `"webOrigins": ["*"]`, leaving a live Authorization Code flow on a public client that accepted any localhost redirect. It is now synced to the realm file: the one URI the UI uses (`window.location.origin + '/'` in `auth.js`), for both login and logout.
 
 Add a default-roles composite so a self-registered user (who otherwise has zero realm roles) gets `customer`'s capabilities automatically. Add to `roles.realm`:
 

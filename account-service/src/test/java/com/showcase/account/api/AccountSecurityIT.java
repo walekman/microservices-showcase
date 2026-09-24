@@ -307,7 +307,7 @@ class AccountSecurityIT {
     void creditReturns403ForACustomerHoldingAccountEditor() throws Exception {
         // The customer composite carries account-editor. Before credit required its own
         // authority, any customer could credit any account directly on port 8081 -- creating
-        // money with no matching debit (docs/open-items.md #2, now closed).
+        // money with no matching debit (a former open item, now closed).
         mockMvc.perform(post("/accounts/" + UUID.randomUUID() + "/credit")
                         .contentType("application/json")
                         .header("Idempotency-Key", "test-key")

@@ -1581,7 +1581,7 @@ Replace `reconcileCredit()` with a version that gates on the destination fraud c
 
 Replace `reconcileDebit()` with a version that gates on the source fraud check first:
 
-**Update, post-Phase 9 (`open-items.md` #19):** this block and `staleSourceBlockedStaysPendingWithoutDebiting` above originally marked a blocked source's stale row `FAILED` (`SOURCE_ACCOUNT_BLOCKED`) without learning whether the debit had landed. Once a live debit with an unknown outcome could also be left `PENDING`, that guess could hide a committed debit, so the row now stays `PENDING`. Both blocks are synced to the merged code.
+**Update, post-Phase 9:** this block and `staleSourceBlockedStaysPendingWithoutDebiting` above originally marked a blocked source's stale row `FAILED` (`SOURCE_ACCOUNT_BLOCKED`) without learning whether the debit had landed. Once a live debit with an unknown outcome could also be left `PENDING`, that guess could hide a committed debit, so the row now stays `PENDING`. Both blocks are synced to the merged code.
 
 ```java
     private void reconcileDebit(Transfer transfer) {
