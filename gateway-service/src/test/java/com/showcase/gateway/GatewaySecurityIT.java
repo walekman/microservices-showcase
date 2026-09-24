@@ -97,4 +97,16 @@ class GatewaySecurityIT {
         ResponseEntity<String> response = requestWithAuthorities("/transfers/mine", HttpMethod.GET, "transfer-executor");
         assertThat(response.getStatusCode()).isNotEqualTo(HttpStatus.FORBIDDEN);
     }
+
+    @Test
+    void fxRatesRouteReturns403WithoutFxReaderAuthority() {
+        ResponseEntity<String> response = requestWithAuthorities("/fx/rates?base=PLN&quote=EUR", HttpMethod.GET, "transfer-executor");
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    }
+
+    @Test
+    void fxRatesRouteAcceptsFxReaderAuthority() {
+        ResponseEntity<String> response = requestWithAuthorities("/fx/rates?base=PLN&quote=EUR", HttpMethod.GET, "fx-reader");
+        assertThat(response.getStatusCode()).isNotEqualTo(HttpStatus.FORBIDDEN);
+    }
 }

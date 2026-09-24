@@ -16,6 +16,8 @@ const ERROR_MESSAGES = {
     COMPENSATION_REQUIRED: 'The transfer could not be completed and is being reversed automatically.',
     VALIDATION_FAILED: 'Please check the values you entered.',
     UNEXPECTED_ERROR: 'Something went wrong completing the transfer. Please try again.',
+    FX_SERVICE_UNAVAILABLE: 'Currency conversion is temporarily unavailable. Transfers in the same currency still work.',
+    AMOUNT_TOO_SMALL: 'That amount is too small to convert into the recipient\u2019s currency.',
 };
 
 class ApiError extends Error {

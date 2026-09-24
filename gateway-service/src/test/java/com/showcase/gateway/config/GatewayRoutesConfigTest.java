@@ -19,6 +19,8 @@ class GatewayRoutesConfigTest {
             config.transferRoutes(new TransferServiceProperties("http://transfer-service:8082"));
     private final RouterFunction<ServerResponse> accountRoutes =
             config.accountRoutes(new AccountServiceProperties("http://account-service:8081"));
+    private final RouterFunction<ServerResponse> fxRoutes =
+            config.fxRoutes(new FxServiceProperties("http://fx-service:8085"));
 
     /**
      * Checks only whether a route predicate matches -- RouterFunction.route() never invokes
@@ -70,5 +72,17 @@ class GatewayRoutesConfigTest {
     @Test
     void accountSummaryMatches() {
         assertThat(matches(accountRoutes, "GET", "/accounts/123/summary")).isTrue();
+    }
+
+    @Test
+    void fxRatesMatchesGetOnly() {
+        assertThat(matches(fxRoutes, "GET", "/fx/rates")).isTrue();
+        assertThat(matches(fxRoutes, "POST", "/fx/rates")).isFalse();
+    }
+
+    @Test
+    void nothingElseUnderFxHasARoute() {
+        assertThat(matches(fxRoutes, "GET", "/fx/anything-else")).isFalse();
+        assertThat(matches(fxRoutes, "GET", "/transfers")).isFalse();
     }
 }

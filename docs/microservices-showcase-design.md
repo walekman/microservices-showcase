@@ -15,9 +15,10 @@ Non-goals: this is not a production banking system. No real payment rails, no do
 |---|---|---|
 | **API Gateway** | Single entry point; routes requests to services; validates JWT | stateless |
 | **Auth** | Issues/validates JWT via OAuth2/OIDC | Keycloak (containerized, pre-configured realm) |
-| **Account** | Owns accounts & balances; debit/credit with optimistic locking | PostgreSQL (own database) |
+| **Account** | Owns accounts & balances; debit/credit with optimistic locking; each account held in one currency, fixed at creation | PostgreSQL (own database) |
 | **Transfer** | Orchestrates the transfer saga; owns transfer/ledger history + transactional outbox | PostgreSQL (own database) |
 | **Fraud** | Screens each account in a transfer against a configured blocklist (no amount/velocity rules) | stateless (no database) |
+| **FX** | Exchange rates for cross-currency transfers, from the Frankfurter/ECB feed behind a Redis cache (fresh TTL, last-known fallback, cross-instance single-flight lock) | stateless (Redis is a cache, not a store) |
 | **Notification** | Consumes transfer-outcome events; stores one notification per transfer (a redelivery is skipped) and logs a "notification sent"; dead-letters events it cannot read or accept | PostgreSQL (own database) |
 | **Bank UI** | Static browser single-page app for customer self-service (signup/onboarding, balance, transfers, history, quick-transfer); calls the Gateway directly from the browser | stateless (no build tooling — plain HTML/CSS/JS served by nginx) |
 
@@ -29,8 +30,9 @@ Each stateful service owns its data exclusively — no service queries another's
 - **Web:** Spring MVC (blocking, not WebFlux) with **virtual threads enabled** (`spring.threads.virtual.enabled=true`) — gets Java 21's concurrency model with plain sequential blocking code, no reactive programming model. Rationale: Transfer Service's saga makes a sequential chain of blocking downstream calls per request; virtual threads let that scale to many concurrent in-flight transfers without exhausting a platform-thread pool, and without rewriting the orchestration as reactive/async code. Out of scope: explicit thread-pinning verification/diagnostics tooling — the flag is enabled and left at that.
 - **Persistence:** Spring Data JPA + PostgreSQL, one logical database per stateful service (Account, Transfer, Notification), provisioned as separate databases inside a single Postgres container via init script.
 - **Messaging:** Apache Kafka, **KRaft mode** (no Zookeeper).
+- **Cache:** Redis (single node, no persistence), used only by FX Service in front of its external rate provider. An optimisation, never a dependency: with Redis down, FX Service calls the provider directly. See `docs/phase-12-fx-rates-redis-cache.md`.
 - **Auth:** Keycloak (OAuth2/OIDC), JWT validated at the Gateway and by each resource service via Spring Security Resource Server.
-- **Resilience:** Resilience4j — CircuitBreaker + Retry on synchronous inter-service calls (Transfer → Account, Transfer → Fraud). Call timeouts come from the `RestClient`'s connect/read timeouts, not a Resilience4j TimeLimiter.
+- **Resilience:** Resilience4j — CircuitBreaker + Retry on synchronous inter-service calls (Transfer → Account, Transfer → Fraud, Transfer → FX). Call timeouts come from the `RestClient`'s connect/read timeouts, not a Resilience4j TimeLimiter.
 - **Error contract:** every service returns RFC 7807 `application/problem+json` on error,
   carrying a stable machine-readable `code` property alongside the standard `type`,
   `title`, `status` and `detail` fields. Consumers branch on `code`, never on the prose in
@@ -49,16 +51,18 @@ Each stateful service owns its data exclusively — no service queries another's
 **Caller idempotency:** the key is stored on the `Transfer`, unique per initiator (`(initiator_id, idempotency_key)`). A repeat of a key the caller already used starts no new saga. It returns the earlier transfer's outcome (`201` if it completed, the same problem if it failed), `409 TRANSFER_IN_PROGRESS` with the `transferId` while that transfer is still `PENDING`, or `409 IDEMPOTENCY_KEY_CONFLICT` if the key was used for a different from/to/amount. Two concurrent requests with one key are settled by the unique constraint: the loser becomes a replay of the winner. The Bank UI keeps one key per intended transfer, so a double-click or a retry after a lost response cannot move the money twice.
 
 **Happy path:**
-1. Transfer Service creates a `Transfer` record, status `PENDING`, in its own DB, then pre-validates that both accounts exist.
+1. Transfer Service pre-validates that both accounts exist, learning each one's currency. If the currencies differ it asks FX Service for a rate (see **Rate locking** below). It then inserts the `Transfer` record, status `PENDING`, with the conversion already on it. A failure at this step inserts the record as `FAILED` instead, and nothing moves.
 2. **Sync call** → Fraud Service: screen the source account (before the debit — see `docs/phase-5-fraud-service.md`'s Design Decisions for why the check runs twice). A block fails the transfer clean, no money moved.
 3. **Sync call** → Account Service: debit the source account (optimistic locking on balance; rejects on insufficient funds, and rejects unless the relayed JWT's subject owns the account), carrying an `Idempotency-Key` of `<transferId>:debit`.
 4. **Sync call** → Fraud Service: screen the destination account (before the credit). A block strands the transfer for compensation — the deliberate trigger for the compensation path below.
-5. **Sync call** → Account Service: credit the destination account (`Idempotency-Key` `<transferId>:credit`). Made as Transfer's own machine identity, not with the relayed customer token: credit has no ownership check (the destination belongs to someone else), so it requires `account-crediter`, which only that identity holds.
+5. **Sync call** → Account Service: credit the destination account (`Idempotency-Key` `<transferId>:credit`). Made as Transfer's own machine identity, not with the relayed customer token: credit has no ownership check (the destination belongs to someone else), so it requires `account-crediter`, which only that identity holds. It credits the locked `creditAmount`, in the destination's currency.
 6. Transfer Service marks the `Transfer` `COMPLETED` and writes an outbox row **in the same local DB transaction** (transactional outbox — guarantees the event and the DB state are consistent).
 7. A scheduled **outbox publisher** (polling, not Debezium — keeps deployment footprint manageable) reads unpublished outbox rows, publishes `TransferCompleted`/`TransferFailed` to Kafka, marks them published.
 8. Notification Service consumes the Kafka event, stores it once (an identical redelivery from the at-least-once outbox is acknowledged and skipped), and logs a "notification sent." A database outage is retried in place, without limit and in order; an event that cannot be read or cannot be a real outcome goes to a dead-letter topic (`<topic>-dlt`) on the first attempt — see `docs/phase-11-notification-persistence-error-handling.md`.
 
-Every downstream call (steps 2–5) is wrapped in Resilience4j CircuitBreaker + Retry — retry only on transient errors, never on business rejections.
+**Rate locking:** a transfer's amount is always in the source account's currency. The rate, its publication date and the resulting `creditAmount` (HALF_EVEN, 2 places) are fixed on the row by the same insert that creates it, so no `PENDING` row ever lacks them. Every leg and every compensator replay sends exactly those values and never asks FX again: a re-priced replay would send a new amount under an idempotency key Account has already recorded. Account rejects a debit or credit labelled with the wrong currency (`422 CURRENCY_MISMATCH`), but only for an operation it has not already applied. See `docs/phase-12-fx-rates-redis-cache.md`.
+
+Every downstream call (steps 1–5) is wrapped in Resilience4j CircuitBreaker + Retry — retry only on transient errors, never on business rejections.
 
 > **Settled in Phase 4** (see `docs/phase-4-outbox-kafka-notification.md`): two Kafka topics,
 > `transfer.completed` and `transfer.failed` — one per event type, not one combined topic.
@@ -66,7 +70,8 @@ Every downstream call (steps 2–5) is wrapped in Resilience4j CircuitBreaker + 
 > `Transfer` statuses that reach them: `FAILED`, and the two compensation-outcome statuses Phase
 > 3 added (`COMPENSATED`, `COMPENSATION_FAILED`), all publish to `transfer.failed`, distinguished
 > by a `status` field in the JSON payload (which also carries `transferId`, `fromAccountId`,
-> `toAccountId`, `amount`, `failureCode`, `failureReason`, `settledAt`). Plain JSON over the
+> `toAccountId`, `amount`, `failureCode`, `failureReason`, `settledAt`, and since Phase 12
+> `sourceCurrency`, `destinationCurrency`, `rate`, `creditAmount`). Plain JSON over the
 > Kafka topics — no Avro, no schema registry, consistent with "keeps deployment footprint
 > manageable."
 > Transfer, as the producer, declares both topics (`KafkaTopicConfig`: one partition, one replica)
@@ -76,7 +81,7 @@ Every downstream call (steps 2–5) is wrapped in Resilience4j CircuitBreaker + 
 
 The governing rule: a call that fails with `ACCOUNT_SERVICE_UNAVAILABLE` (a timeout or a 5xx, after retries) has an **unknown** outcome, not a failed one — a read timeout cannot be told apart from a request that never arrived. Nothing is ever credited back on a guess; the compensator reconciles by replaying the original idempotency key against Account, whose `AccountOperation` ledger returns the original result if the operation already committed. See `docs/phase-2-transfer-service-saga.md` (deferral table) and `docs/phase-3-resilience-compensation-idempotency.md` (Design Decisions).
 
-- **Rejected before or at the debit** (missing account, caller not the owner, source blocked by Fraud, insufficient funds, Fraud unreachable on the source check): transfer is marked `FAILED`. Nothing moved, nothing to compensate.
+- **Rejected before or at the debit** (missing account, caller not the owner, no exchange rate available (`FX_SERVICE_UNAVAILABLE`), an amount that converts to nothing (`AMOUNT_TOO_SMALL`), source blocked by Fraud, insufficient funds, Fraud unreachable on the source check): transfer is marked `FAILED`. Nothing moved, nothing to compensate.
 - **Destination blocked, or the credit fails, after a confirmed debit:** the transfer is marked `COMPENSATION_REQUIRED`. `CompensationScheduler` (a periodic sweep) re-screens the destination and replays the credit with its original key. If the credit lands, the transfer is `COMPLETED`. If the destination is still blocked or Account definitively rejects the credit, the scheduler credits the source back and marks the transfer `COMPENSATED`. An unreachable service leaves the row for the next sweep.
 - **Transfer left `PENDING`** (e.g. the process died mid-saga): a stale-`PENDING` sweep replays the debit key to learn whether the debit landed — `FAILED` if it did not, promoted to `COMPENSATION_REQUIRED` (then resolved as above) if it did. If the source has been blocklisted by then, the row stays `PENDING` and is retried every sweep until the block is lifted: replaying the debit key would perform the debit if it never landed, and marking it `FAILED` would guess that it did not. Settling such a row without lifting the block would need a read-only (or void-if-absent) operation lookup on Account, which is deliberately not planned (`open-items.md` §3).
 - **The credit-back itself is rejected:** the transfer is marked `COMPENSATION_FAILED` — the manual-review terminal state. It is the one outcome the system deliberately does not resolve on its own.

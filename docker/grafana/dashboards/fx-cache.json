@@ -1,0 +1,56 @@
+{
+  "title": "Microservices Showcase — FX Cache",
+  "uid": "showcase-fx-cache",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-15m", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Cache hit ratio (5m)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 } },
+      "targets": [
+        {
+          "expr": "sum(increase(fx_cache_requests_total{result=\"hit\"}[5m])) / clamp_min(sum(increase(fx_cache_requests_total[5m])), 1)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Cache lookups by result",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 18, "x": 6, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "sum by (result) (rate(fx_cache_requests_total[1m]))", "legendFormat": "{{result}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Provider calls by outcome",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "sum by (outcome) (rate(fx_provider_calls_total[1m]))", "legendFormat": "{{outcome}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Stale serves and Redis bypasses (since start)",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "sum(fx_cache_requests_total{result=\"stale\"})", "legendFormat": "stale", "refId": "A" },
+        { "expr": "sum(fx_cache_requests_total{result=\"bypass\"})", "legendFormat": "bypass", "refId": "B" }
+      ]
+    }
+  ]
+}

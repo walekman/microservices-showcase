@@ -27,7 +27,7 @@ Then:
 
     docker compose up --build
 
-This starts Postgres, Account Service (8081), Transfer Service (8082), Fraud Service (8084), Kafka, Notification Service (8083), the API Gateway (8080), the Bank UI (8090), Keycloak (8180), and the observability stack: OTel Collector, Grafana Tempo (3200), Prometheus (9090), and Grafana (3001).
+This starts Postgres, Account Service (8081), Transfer Service (8082), Fraud Service (8084), FX Service (8085), Redis (6379), Kafka, Notification Service (8083), the API Gateway (8080), the Bank UI (8090), Keycloak (8180), and the observability stack: OTel Collector, Grafana Tempo (3200), Prometheus (9090), and Grafana (3001).
 
 ## Authentication (Keycloak)
 
@@ -63,12 +63,13 @@ token for the `admin` user instead:
 
 ## Try it (Swagger UI & Bank UI)
 
-All three backend APIs are browsable and callable straight from a browser. Each has an **Authorize**
+All four backend APIs are browsable and callable straight from a browser. Each has an **Authorize**
 button (top right) — paste in a token obtained as above to make "Try it out" calls succeed:
 
 - Account Service — http://localhost:8081/swagger-ui.html
 - Transfer Service — http://localhost:8082/swagger-ui.html
 - Fraud Service — http://localhost:8084/swagger-ui.html
+- FX Service — http://localhost:8085/swagger-ui.html
 
 The Bank UI (customer-facing web app) is at:
 
@@ -79,7 +80,8 @@ The Bank UI (customer-facing web app) is at:
 A single entry point at `http://localhost:8080` routes to the two client-facing services:
 
 - `/transfers/**` → Transfer Service (full API)
-- `POST /accounts`, `GET /accounts`, `GET /accounts/{id}` → Account Service
+- `POST /accounts`, `GET /accounts`, `GET /accounts/mine`, `GET /accounts/{id}`, `GET /accounts/{id}/summary` → Account Service
+- `GET /fx/rates` → FX Service (the Bank UI's quote before sending; needs the `fx-reader` role, which every `customer` holds)
 
 Account's `/accounts/{id}/debit` and `/accounts/{id}/credit` are intentionally **not** routed
 — they're internal saga calls Transfer Service makes directly on the Docker network. Account's
@@ -97,10 +99,10 @@ behind it each independently check the token.
 
 ## Observability
 
-Grafana at http://localhost:3001 (no login needed — anonymous viewer access) has three dashboards
+Grafana at http://localhost:3001 (no login needed — anonymous viewer access) has four dashboards
 provisioned on startup: a JVM/Micrometer dashboard, a business-metrics dashboard (transfer
-completed/failed/fraud-rejected counters, outbox backlog, circuit-breaker state), and a Service Versions dashboard. The Service Versions dashboard shows which version and commit each service is running, from the `application_info` metric every service publishes; the same facts are at `/actuator/info` on each service's port, no token needed. Pass the commit when building — `GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build` — or it shows as `unknown`. Prometheus
-(http://localhost:9090) scrapes `/actuator/prometheus` on all five services every 10s — check
+completed/failed/fraud-rejected counters, outbox backlog, circuit-breaker state), a Service Versions dashboard, and an FX Cache dashboard (cache hit ratio, stale serves, Redis bypasses, provider calls). The Service Versions dashboard shows which version and commit each service is running, from the `application_info` metric every service publishes; the same facts are at `/actuator/info` on each service's port, no token needed. Pass the commit when building — `GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build` — or it shows as `unknown`. Prometheus
+(http://localhost:9090) scrapes `/actuator/prometheus` on all six services every 10s — check
 its Targets page if a Grafana panel shows "No data." Every service also exports traces via
 OTLP through an OTel Collector to Grafana Tempo; trigger any transfer below, then open Grafana
 Explore against the Tempo data source to see a single trace spanning Gateway → Transfer →
@@ -151,6 +153,16 @@ A transfer is a saga: Transfer Service checks both accounts, debits the source, 
 credits the destination, recording the outcome in its own database at each step. There
 is no distributed transaction — each step commits independently, which is why the
 failure states below exist.
+
+**Currencies.** Every account is held in one currency (EUR, USD, GBP or PLN), picked at signup.
+A transfer's amount is in the sender's currency. When the recipient's differs, Transfer asks FX
+Service for the ECB reference rate and locks the rate, its date and the credited amount
+(rounded half-even to cents) onto the transfer before any money moves; every retry and
+compensation reuses those. FX Service caches rates in Redis (fresh for 10 minutes, last-known
+for 24 hours, served as stale while the provider is down) and calls the provider directly if
+Redis is down. Without internet access, cross-currency transfers fail as `FX_SERVICE_UNAVAILABLE`
+once the cache is empty; same-currency transfers never need FX. See
+`docs/phase-12-fx-rates-redis-cache.md`.
 
 ### All saga outcomes
 
