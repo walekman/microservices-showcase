@@ -847,7 +847,9 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 class RateProviderTest {
 
     private static final String BASE_URL = "http://provider.test";
-    private static final String PLN_URL = BASE_URL + "/latest?base=PLN&symbols=EUR,USD,GBP";
+    // Spring encodes URI variable values in full, so the comma arrives as %2C. Frankfurter decodes it
+    // (verified live on 2026-09-24: same body as with a literal comma).
+    private static final String PLN_URL = BASE_URL + "/latest?base=PLN&symbols=EUR%2CUSD%2CGBP";
 
     private MockRestServiceServer server;
     private RateProvider provider;
@@ -1011,9 +1013,9 @@ public class ProviderClientConfig {
 ```
 
 Run: `./mvnw -pl fx-service -Dtest=RateProviderTest test`
-Expected: 5 tests PASS. If `fetchesEvery…` fails because the comma in `symbols` was encoded as
-`%2C`, report it; don't change the expected URL to match. (Commas are legal in a query string,
-and Spring should leave them alone.)
+Expected: 5 tests PASS. (As built: Spring encodes the comma in `symbols` as `%2C`, because
+URI-variable values are encoded in full. Frankfurter decodes it identically, so the test expects
+the encoded form; see "Implementation Notes" at the end of this document.)
 
 - [ ] **Step 9: Write the failing `FxRateServiceTest`**
 
@@ -4294,3 +4296,36 @@ reviewed together on a more capable model (see `CLAUDE.md`'s subagent model poli
 the Review Focus list, the single-insert rate lock, and the three compensator call sites.
 Dispatch it only if the user asks.
 
+---
+
+## Implementation Notes (as built)
+
+Phase 12 shipped as PRs #112 (Task 1), #113 (Task 2), #114 (Task 3) and the Task 4 PR. Where the
+merged code departs from the plan above, the plan was wrong and the code is right:
+
+- **Task 1, `RateProviderTest`:** Spring's `RestClient` encodes URI-variable values in full, so the
+  `symbols` comma is sent as `%2C`. Verified live that `api.frankfurter.dev` returns the same body
+  for `%2C`. The test's expected URL is the encoded form (the code block above is re-synced).
+- **Task 1, live check:** on an existing stack, `docker compose up` reuses the Keycloak container,
+  and `--import-realm` skips a realm that already exists, so the new `fx-reader` role did not
+  appear until Keycloak was recreated (`docker compose up -d --force-recreate --no-deps keycloak`,
+  or `docker compose down` first). Any realm change needs this.
+- **Task 2, `AccountControllerIT`:** besides the `createAccount` helper, three tests build
+  `CreateAccountRequest` directly (`createsAndFetchesAnAccount`, `rejectsASecondAccountForTheSameOwner`,
+  `rejectsNegativeInitialBalance`). They pass `SupportedCurrency.PLN`, like the helper.
+- **Task 2, `AccountSecurityIT`:** the two `verify(accountService).debit(...)` assertions gain
+  `isNull()` for the currency, since those requests send none.
+- **Task 3, `AuthorizationPropagatingInterceptorTest`:** calls `AccountClient.debit`/`credit`
+  directly, so it passes `"EUR"` as the new currency argument.
+- **Task 3, `CompensationSchedulerIT`:** its fake Account answered `/accounts/exists/` with an
+  empty 200. Under the new contract that means "no currency", so the live saga failed at
+  pre-validation and never reached the timed-out debit the test exercises. The fake returns
+  `{"currency":"EUR"}`, like the real Account.
+- **Verification order (Tasks 2 and 3):** Maven compiles a module's whole test tree at once, so
+  steps that change a signature together were verified in one run after the last of them. Each
+  new test was still seen failing first.
+- **Live checks and existing data:** Task 2 adds only a nullable column, so its live check kept
+  the existing volume and used it to check pre-Phase-12 rows (they read as EUR). Task 3's ran on a
+  fresh volume (`docker compose down -v`). On a cold `up --build`, Compose may give up waiting for
+  Postgres and Keycloak while images are still building; a second `docker compose up -d` starts
+  the rest.

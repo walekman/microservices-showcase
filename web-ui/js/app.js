@@ -3,6 +3,16 @@ function escapeHtml(value) {
         ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+// "100.00 PLN → 22.82 EUR" for a converted transfer; "40.00 EUR" otherwise. A transfer from before
+// currencies existed has no currency fields at all, and shows the bare amount.
+function formatTransferAmount(t) {
+    const sent = `${Number(t.amount).toFixed(2)} ${escapeHtml(t.sourceCurrency || '')}`.trim();
+    if (t.creditAmount == null || t.destinationCurrency === t.sourceCurrency) {
+        return sent;
+    }
+    return `${sent} → ${Number(t.creditAmount).toFixed(2)} ${escapeHtml(t.destinationCurrency)}`;
+}
+
 async function bootstrap() {
     try {
         await Auth.handleRedirectCallback();
@@ -102,6 +112,7 @@ function renderTransferForm(account, transfers, prefillAccountId) {
             <input id="to-account" type="text" value="${prefillAccountId || ''}" />
             <label for="amount">Amount</label>
             <input id="amount" type="number" step="0.01" min="0.01" />
+            <p id="transfer-quote" class="hint" hidden></p>
             <button id="submit-transfer-button" type="button">Send</button>
             <p id="transfer-error" class="error" hidden></p>
             <p id="transfer-success" hidden></p>
@@ -112,8 +123,38 @@ function renderTransferForm(account, transfers, prefillAccountId) {
     // instead of moving the money twice. Editing either field makes it a different transfer.
     let idempotencyKey = crypto.randomUUID();
     const startNewTransfer = () => { idempotencyKey = crypto.randomUUID(); };
-    document.getElementById('to-account').addEventListener('input', startNewTransfer);
-    document.getElementById('amount').addEventListener('input', startNewTransfer);
+
+    // An approximate quote while the user types. Advisory only: Transfer Service prices the
+    // transfer itself when it is sent, and the result shows the amount it actually locked.
+    const quoteEl = document.getElementById('transfer-quote');
+    let latestQuote = 0;
+    const refreshQuote = async () => {
+        const requestId = ++latestQuote;
+        quoteEl.hidden = true;
+        const toAccountId = document.getElementById('to-account').value.trim();
+        const amount = Number(document.getElementById('amount').value);
+        if (!toAccountId || !(amount > 0)) {
+            return;
+        }
+        try {
+            const recipient = await Api.get(`/accounts/${encodeURIComponent(toAccountId)}/summary`);
+            if (requestId !== latestQuote || recipient.currency === account.currency) {
+                return;
+            }
+            const fx = await Api.get(`/fx/rates?base=${account.currency}&quote=${recipient.currency}`);
+            if (requestId !== latestQuote) {
+                return; // a newer edit superseded this quote
+            }
+            quoteEl.textContent = `${recipient.ownerName} receives ≈ ${(amount * fx.rate).toFixed(2)} ${recipient.currency}`
+                + ` (1 ${account.currency} = ${fx.rate} ${recipient.currency}, as of ${fx.asOf}`
+                + `${fx.stale ? ' — last known rate' : ''}). The exact amount is fixed when you send.`;
+            quoteEl.hidden = false;
+        } catch (err) {
+            // No quote is not a form error: sending still works, and the server prices it.
+        }
+    };
+    document.getElementById('to-account').addEventListener('input', () => { startNewTransfer(); refreshQuote(); });
+    document.getElementById('amount').addEventListener('input', () => { startNewTransfer(); refreshQuote(); });
 
     const submitButton = document.getElementById('submit-transfer-button');
     submitButton.addEventListener('click', async () => {
@@ -125,10 +166,15 @@ function renderTransferForm(account, transfers, prefillAccountId) {
         successEl.hidden = true;
         submitButton.disabled = true;
         try {
-            await Api.post('/transfers', { fromAccountId: account.id, toAccountId, amount },
+            const transfer = await Api.post('/transfers', { fromAccountId: account.id, toAccountId, amount },
                 { 'Idempotency-Key': idempotencyKey });
             const refreshedAccounts = await Api.get('/accounts/mine');
-            await renderDashboard(refreshedAccounts[0], { flashMessage: 'Transfer completed.' });
+            const converted = transfer.destinationCurrency && transfer.destinationCurrency !== transfer.sourceCurrency;
+            await renderDashboard(refreshedAccounts[0], {
+                flashMessage: converted
+                    ? `Transfer completed: the recipient received ${Number(transfer.creditAmount).toFixed(2)} ${transfer.destinationCurrency}.`
+                    : 'Transfer completed.',
+            });
         } catch (err) {
             if (reportsASettledTransfer(err)) {
                 // That key is spent: its transfer ended unsuccessfully, and replaying it would
@@ -221,7 +267,7 @@ async function renderHistory(transfers) {
     const rows = [...transfers]
         .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
         .map((t) => `<tr><td>${new Date(t.createdAt).toLocaleString()}</td><td>${escapeHtml(nameByAccountId[t.toAccountId])}</td>
-            <td>$${Number(t.amount).toFixed(2)}</td><td>${t.status}</td></tr>`)
+            <td>${formatTransferAmount(t)}</td><td>${t.status}</td></tr>`)
         .join('');
     section.innerHTML = `
         <div class="card">

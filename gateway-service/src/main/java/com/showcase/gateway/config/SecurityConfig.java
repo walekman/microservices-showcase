@@ -61,6 +61,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/accounts", "/accounts/*")
                         .hasAnyAuthority("account-reader", "account-admin")
                         .requestMatchers(HttpMethod.POST, "/accounts").hasAuthority("account-editor")
+                        .requestMatchers(HttpMethod.GET, "/fx/rates").hasAuthority("fx-reader")
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt
                         .decoder(jwtDecoder)

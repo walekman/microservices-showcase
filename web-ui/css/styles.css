@@ -55,3 +55,8 @@ button {
     font-size: 2rem;
     font-weight: 700;
 }
+
+.hint {
+    color: #555;
+    font-size: 0.9rem;
+}

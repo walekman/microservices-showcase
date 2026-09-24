@@ -221,6 +221,7 @@ services:
     environment:
       ACCOUNT_SERVICE_URL: http://account-service:8081
       TRANSFER_SERVICE_URL: http://transfer-service:8082
+      FX_SERVICE_URL: http://fx-service:8085
       KEYCLOAK_JWK_SET_URI: http://keycloak:8080/realms/showcase/protocol/openid-connect/certs
       KEYCLOAK_ISSUER_URI: http://localhost:8180/realms/showcase
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
@@ -230,6 +231,8 @@ services:
       account-service:
         condition: service_healthy
       transfer-service:
+        condition: service_healthy
+      fx-service:
         condition: service_healthy
       keycloak:
         condition: service_healthy
