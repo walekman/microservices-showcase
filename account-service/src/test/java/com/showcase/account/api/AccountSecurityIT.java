@@ -2,6 +2,7 @@ package com.showcase.account.api;
 
 import com.showcase.account.domain.Account;
 import com.showcase.account.domain.AccountNotFoundException;
+import com.showcase.account.domain.SupportedCurrency;
 import com.showcase.account.service.AccountService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -20,6 +21,7 @@ import java.util.UUID;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -88,7 +90,7 @@ class AccountSecurityIT {
     void postAccountsReturns403WithoutAccountEditorAuthority() throws Exception {
         mockMvc.perform(post("/accounts")
                         .contentType("application/json")
-                        .content("{\"ownerName\":\"Ada\",\"initialBalance\":10.00}")
+                        .content("{\"ownerName\":\"Ada\",\"initialBalance\":10.00,\"currency\":\"EUR\"}")
                         .with(jwt().authorities(() -> "account-reader")))
                 .andExpect(status().isForbidden());
     }
@@ -96,17 +98,17 @@ class AccountSecurityIT {
     @Test
     void postAccountsBindsOwnerIdToTheCallersSubject() throws Exception {
         UUID subject = UUID.randomUUID();
-        when(accountService.createAccount(any(), any(), any()))
-                .thenReturn(new Account(subject, "Ada", new BigDecimal("10.00")));
+        when(accountService.createAccount(any(), any(), any(), any()))
+                .thenReturn(new Account(subject, "Ada", new BigDecimal("10.00"), SupportedCurrency.EUR));
 
         mockMvc.perform(post("/accounts")
                         .contentType("application/json")
-                        .content("{\"ownerName\":\"Ada\",\"initialBalance\":10.00}")
+                        .content("{\"ownerName\":\"Ada\",\"initialBalance\":10.00,\"currency\":\"EUR\"}")
                         .with(jwt().jwt(builder -> builder.subject(subject.toString()))
                                 .authorities(() -> "account-editor")))
                 .andExpect(status().isCreated());
 
-        verify(accountService).createAccount(eq(subject), eq("Ada"), eq(new BigDecimal("10.00")));
+        verify(accountService).createAccount(eq(subject), eq("Ada"), eq(new BigDecimal("10.00")), eq(SupportedCurrency.EUR));
     }
 
     @Test
@@ -139,7 +141,7 @@ class AccountSecurityIT {
     void getAccountPassesTheCallersSubjectToTheService() throws Exception {
         UUID id = UUID.randomUUID();
         UUID subject = UUID.randomUUID();
-        when(accountService.getAccount(id, subject)).thenReturn(new Account(subject, "Ada", new BigDecimal("60.00")));
+        when(accountService.getAccount(id, subject)).thenReturn(new Account(subject, "Ada", new BigDecimal("60.00"), SupportedCurrency.EUR));
 
         mockMvc.perform(get("/accounts/" + id)
                         .with(jwt().jwt(builder -> builder.subject(subject.toString()))
@@ -188,16 +190,18 @@ class AccountSecurityIT {
     void accountExistsReturns200WithAccountReaderAuthorityRegardlessOfOwnership() throws Exception {
         UUID id = UUID.randomUUID();
 
+        when(accountService.getCurrency(id)).thenReturn(SupportedCurrency.EUR);
+
         mockMvc.perform(get("/accounts/exists/" + id).with(jwt().authorities(() -> "account-reader")))
                 .andExpect(status().isOk());
 
-        verify(accountService).requireAccountExists(id);
+        verify(accountService).getCurrency(id);
     }
 
     @Test
     void accountExistsReturns404WhenMissing() throws Exception {
         UUID id = UUID.randomUUID();
-        doThrow(new AccountNotFoundException(id)).when(accountService).requireAccountExists(id);
+        when(accountService.getCurrency(id)).thenThrow(new AccountNotFoundException(id));
 
         mockMvc.perform(get("/accounts/exists/" + id).with(jwt().authorities(() -> "account-reader")))
                 .andExpect(status().isNotFound());
@@ -228,8 +232,8 @@ class AccountSecurityIT {
     @Test
     void debitReturns200WithAccountEditorAuthority() throws Exception {
         UUID subject = UUID.randomUUID();
-        when(accountService.debit(any(), any(), any(), any(), anyBoolean()))
-                .thenReturn(new Account(subject, "Ada", new BigDecimal("60.00")));
+        when(accountService.debit(any(), any(), any(), any(), any(), anyBoolean()))
+                .thenReturn(new Account(subject, "Ada", new BigDecimal("60.00"), SupportedCurrency.EUR));
 
         mockMvc.perform(post("/accounts/" + UUID.randomUUID() + "/debit")
                         .contentType("application/json")
@@ -244,8 +248,8 @@ class AccountSecurityIT {
     void debitPassesTheCallersSubjectAndServiceCallerFalseForAnOrdinaryCustomer() throws Exception {
         UUID id = UUID.randomUUID();
         UUID subject = UUID.randomUUID();
-        when(accountService.debit(any(), any(), any(), any(), anyBoolean()))
-                .thenReturn(new Account(subject, "Ada", new BigDecimal("60.00")));
+        when(accountService.debit(any(), any(), any(), any(), any(), anyBoolean()))
+                .thenReturn(new Account(subject, "Ada", new BigDecimal("60.00"), SupportedCurrency.EUR));
 
         mockMvc.perform(post("/accounts/" + id + "/debit")
                         .contentType("application/json")
@@ -255,7 +259,7 @@ class AccountSecurityIT {
                                 .authorities(() -> "account-editor")))
                 .andExpect(status().isOk());
 
-        verify(accountService).debit(eq(id), eq(new BigDecimal("10.00")), eq("test-key"), eq(subject), eq(false));
+        verify(accountService).debit(eq(id), eq(new BigDecimal("10.00")), isNull(), eq("test-key"), eq(subject), eq(false));
     }
 
     @Test
@@ -265,8 +269,8 @@ class AccountSecurityIT {
         // why transfer-service's machine identity is exempted from the ownership check.
         UUID id = UUID.randomUUID();
         UUID subject = UUID.randomUUID();
-        when(accountService.debit(any(), any(), any(), any(), anyBoolean()))
-                .thenReturn(new Account(subject, "Ada", new BigDecimal("60.00")));
+        when(accountService.debit(any(), any(), any(), any(), any(), anyBoolean()))
+                .thenReturn(new Account(subject, "Ada", new BigDecimal("60.00"), SupportedCurrency.EUR));
 
         mockMvc.perform(post("/accounts/" + id + "/debit")
                         .contentType("application/json")
@@ -276,13 +280,13 @@ class AccountSecurityIT {
                                 .authorities(() -> "account-editor")))
                 .andExpect(status().isOk());
 
-        verify(accountService).debit(eq(id), eq(new BigDecimal("10.00")), eq("test-key"), eq(subject), eq(true));
+        verify(accountService).debit(eq(id), eq(new BigDecimal("10.00")), isNull(), eq("test-key"), eq(subject), eq(true));
     }
 
     @Test
     void debitReturns404WhenTheServiceRejectsOwnership() throws Exception {
         UUID id = UUID.randomUUID();
-        when(accountService.debit(eq(id), any(), any(), any(), eq(false)))
+        when(accountService.debit(eq(id), any(), any(), any(), any(), eq(false)))
                 .thenThrow(new AccountNotFoundException(id));
 
         mockMvc.perform(post("/accounts/" + id + "/debit")
@@ -322,7 +326,7 @@ class AccountSecurityIT {
         // ownership check -- see docs/phase-7b-account-ownership-authorization.md's Design
         // Decisions for why it can't (a transfer credits someone else's account).
         UUID subject = UUID.randomUUID();
-        when(accountService.credit(any(), any(), any())).thenReturn(new Account(subject, "Ada", new BigDecimal("60.00")));
+        when(accountService.credit(any(), any(), any(), any())).thenReturn(new Account(subject, "Ada", new BigDecimal("60.00"), SupportedCurrency.EUR));
 
         mockMvc.perform(post("/accounts/" + UUID.randomUUID() + "/credit")
                         .contentType("application/json")

@@ -37,7 +37,7 @@ class AccountRepositoryTest {
     @Test
     void savesAndReloadsAnAccount() {
         UUID ownerId = UUID.randomUUID();
-        Account saved = accountRepository.save(new Account(ownerId, "Ada Lovelace", new BigDecimal("100.00")));
+        Account saved = accountRepository.save(new Account(ownerId, "Ada Lovelace", new BigDecimal("100.00"), SupportedCurrency.EUR));
 
         Optional<Account> found = accountRepository.findById(saved.getId());
 
@@ -49,7 +49,7 @@ class AccountRepositoryTest {
 
     @Test
     void concurrentUpdatesAreRejectedByOptimisticLocking() {
-        Account saved = accountRepository.save(new Account(UUID.randomUUID(), "Ada Lovelace", new BigDecimal("100.00")));
+        Account saved = accountRepository.save(new Account(UUID.randomUUID(), "Ada Lovelace", new BigDecimal("100.00"), SupportedCurrency.EUR));
         accountRepository.flush();
         entityManager.clear();
 

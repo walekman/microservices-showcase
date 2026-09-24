@@ -15,9 +15,10 @@ public record AccountResponse(
         UUID id,
         String ownerName,
         BigDecimal balance,
+        String currency,
         Instant createdAt) {
 
     public static AccountResponse from(Account account) {
-        return new AccountResponse(account.getId(), account.getOwnerName(), account.getBalance(), account.getCreatedAt());
+        return new AccountResponse(account.getId(), account.getOwnerName(), account.getBalance(), account.getCurrency().name(), account.getCreatedAt());
     }
 }

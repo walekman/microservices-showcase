@@ -3,6 +3,7 @@ package com.showcase.account.api;
 import com.showcase.account.domain.AccountAlreadyExistsException;
 import com.showcase.account.domain.AccountNotFoundException;
 import com.showcase.account.domain.AccountOperationConflictException;
+import com.showcase.account.domain.CurrencyMismatchException;
 import com.showcase.account.domain.InsufficientFundsException;
 import jakarta.validation.ConstraintViolationException;
 import jakarta.validation.Path;
@@ -40,6 +41,11 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(InsufficientFundsException.class)
     public ProblemDetail handleInsufficientFunds(InsufficientFundsException ex) {
         return Problems.of(HttpStatus.UNPROCESSABLE_ENTITY, "INSUFFICIENT_FUNDS", "Insufficient funds", ex.getMessage());
+    }
+
+    @ExceptionHandler(CurrencyMismatchException.class)
+    public ProblemDetail handleCurrencyMismatch(CurrencyMismatchException ex) {
+        return Problems.of(HttpStatus.UNPROCESSABLE_ENTITY, "CURRENCY_MISMATCH", "Currency mismatch", ex.getMessage());
     }
 
     @ExceptionHandler(ObjectOptimisticLockingFailureException.class)

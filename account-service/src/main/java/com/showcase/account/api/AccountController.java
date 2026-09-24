@@ -46,7 +46,7 @@ public class AccountController {
     public ResponseEntity<AccountResponse> createAccount(@AuthenticationPrincipal Jwt jwt,
                                                            @Valid @RequestBody CreateAccountRequest request) {
         Account account = accountService.createAccount(
-                UUID.fromString(jwt.getSubject()), request.ownerName(), request.initialBalance());
+                UUID.fromString(jwt.getSubject()), request.ownerName(), request.initialBalance(), request.currency());
         return ResponseEntity.created(URI.create("/accounts/" + account.getId()))
                 .body(AccountResponse.from(account));
     }
@@ -81,13 +81,13 @@ public class AccountController {
         return AccountSummaryResponse.from(accountService.getAccountSummary(id));
     }
 
-    // Existence only, no body, no ownership check -- see docs/phase-7b-account-ownership-authorization.md.
-    // Deliberately not reused as HEAD /accounts/{id}: HEAD shares getAccount's handler, so it
-    // would inherit that endpoint's ownership check instead of staying a general probe.
+    // Existence and currency only, no ownership check -- see docs/phase-7b-account-ownership-authorization.md
+    // and docs/phase-12-fx-rates-redis-cache.md. Deliberately not reused as HEAD /accounts/{id}: HEAD
+    // shares getAccount's handler, so it would inherit that endpoint's ownership check instead of
+    // staying a general probe.
     @GetMapping("/exists/{id}")
-    public ResponseEntity<Void> accountExists(@PathVariable UUID id) {
-        accountService.requireAccountExists(id);
-        return ResponseEntity.ok().build();
+    public AccountExistsResponse accountExists(@PathVariable UUID id) {
+        return new AccountExistsResponse(accountService.getCurrency(id).name());
     }
 
     @PostMapping("/{id}/debit")
@@ -96,12 +96,12 @@ public class AccountController {
                                   @RequestHeader("Idempotency-Key") @NotBlank @Size(max = 255) String idempotencyKey) {
         UUID callerId = UUID.fromString(jwt.getSubject());
         boolean serviceCaller = TRUSTED_SERVICE_CLIENT_ID.equals(jwt.getClaimAsString("azp"));
-        return AccountResponse.from(accountService.debit(id, request.amount(), idempotencyKey, callerId, serviceCaller));
+        return AccountResponse.from(accountService.debit(id, request.amount(), request.currency(), idempotencyKey, callerId, serviceCaller));
     }
 
     @PostMapping("/{id}/credit")
     public AccountResponse credit(@PathVariable UUID id, @Valid @RequestBody AmountRequest request,
                                    @RequestHeader("Idempotency-Key") @NotBlank @Size(max = 255) String idempotencyKey) {
-        return AccountResponse.from(accountService.credit(id, request.amount(), idempotencyKey));
+        return AccountResponse.from(accountService.credit(id, request.amount(), request.currency(), idempotencyKey));
     }
 }
