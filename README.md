@@ -10,8 +10,11 @@ First time only:
 
     cp .env.example .env
 
+An `.env` copied before Phase 11 lacks `NOTIFICATION_DB_PASSWORD`; add that line from
+`.env.example`.
+
 If you ran an earlier version of this stack, destroy the Postgres volume first — the
-second database is created by an init script that only runs on an empty data directory
+per-service databases are created by an init script that only runs on an empty data directory
 (this discards any locally created accounts). This also matters if you last ran the stack
 before Phase 7b (`docs/phase-7b-account-ownership-authorization.md`): Hibernate can't add
 the new `ownerId`/`initiatorId` columns as `NOT NULL` over existing rows, so accounts/transfers
@@ -270,8 +273,8 @@ passed, which means reconfiguring and restarting Fraud Service.
 Transfer outcomes (completed or failed) are published to Kafka topics (`transfer.completed` and
 `transfer.failed`) via an outbox table and polling publisher in Transfer Service.
 
-The Notification Service (port 8083) is a stateless consumer that listens to both topics and
-logs transfer notifications. To watch notifications as they arrive:
+The Notification Service (port 8083) listens to both topics, stores one row per transfer
+outcome in its own `notification` database, and logs transfer notifications. To watch notifications as they arrive:
 
     docker compose logs -f notification-service
 
@@ -281,8 +284,15 @@ Look for lines like:
 
 Delivery is at-least-once: if the publisher crashes after Kafka acknowledges a message but
 before the outbox row is marked published, the same event is republished on the next poll. The
-Notification Service just logs, so a duplicate log line is the entire blast radius — this is an
-accepted characteristic of the outbox pattern, not a bug.
+Notification Service recognises the redelivery by its `transferId`, acknowledges it and stores
+nothing — this is an accepted characteristic of the outbox pattern, not a bug.
+
+Events it cannot use are not retried: a payload that is not valid JSON, an event with no
+`transferId`, or a second, *different* outcome for an already-notified transfer goes to a
+dead-letter topic (`transfer.completed-dlt` / `transfer.failed-dlt`) and is logged at ERROR. If
+its database is unreachable, it retries the same event in place (backoff up to 30s, no limit)
+until the database is back. How to trigger each case by hand is in
+`docs/phase-11-notification-persistence-error-handling.md`, "Running It Locally".
 
 The Notification Service health endpoint is available at:
 

@@ -22,3 +22,14 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "transfer" <<-EOSQL
     GRANT ALL PRIVILEGES ON SCHEMA public TO transfer_service;
     ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO transfer_service;
 EOSQL
+
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+    CREATE DATABASE notification;
+    CREATE USER notification_service WITH PASSWORD '$NOTIFICATION_DB_PASSWORD';
+    GRANT ALL PRIVILEGES ON DATABASE notification TO notification_service;
+EOSQL
+
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "notification" <<-EOSQL
+    GRANT ALL PRIVILEGES ON SCHEMA public TO notification_service;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO notification_service;
+EOSQL

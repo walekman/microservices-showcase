@@ -10,6 +10,8 @@
 
 **Spec:** [docs/microservices-showcase-design.md](microservices-showcase-design.md) §2, §3, §4, §5, §6, §7. Design decisions for this phase were brainstormed with the user on 2026-09-15; see this doc's Design Decisions section for what was decided and why.
 
+> **Superseded in part by Phase 11** (`docs/phase-11-notification-persistence-error-handling.md`): Notification is no longer stateless. It stores each outcome in its own `notification` database, consumes JSON through `ErrorHandlingDeserializer` rather than raw `String`s, and dead-letters what it cannot use. The Task 4 code blocks below describe the Phase 4 service; do not copy them into new work.
+
 ## Global Constraints
 
 - Java 21 floor; Spring Boot 3.3.4. Use `C:\dev\openjdk-21.0.2` and set `JAVA_HOME` before running Maven. (CLAUDE.md)

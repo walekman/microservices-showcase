@@ -18,7 +18,7 @@ Non-goals: this is not a production banking system. No real payment rails, no do
 | **Account** | Owns accounts & balances; debit/credit with optimistic locking | PostgreSQL (own database) |
 | **Transfer** | Orchestrates the transfer saga; owns transfer/ledger history + transactional outbox | PostgreSQL (own database) |
 | **Fraud** | Screens each account in a transfer against a configured blocklist (no amount/velocity rules) | stateless (no database) |
-| **Notification** | Consumes transfer-outcome events; logs a "notification sent" | stateless |
+| **Notification** | Consumes transfer-outcome events; stores one notification per transfer (a redelivery is skipped) and logs a "notification sent"; dead-letters events it cannot read or accept | PostgreSQL (own database) |
 | **Bank UI** | Static browser single-page app for customer self-service (signup/onboarding, balance, transfers, history, quick-transfer); calls the Gateway directly from the browser | stateless (no build tooling — plain HTML/CSS/JS served by nginx) |
 
 Each stateful service owns its data exclusively — no service queries another's database directly (database-per-service).
@@ -27,7 +27,7 @@ Each stateful service owns its data exclusively — no service queries another's
 
 - **Language/runtime:** Java 21, Spring Boot 3.x
 - **Web:** Spring MVC (blocking, not WebFlux) with **virtual threads enabled** (`spring.threads.virtual.enabled=true`) — gets Java 21's concurrency model with plain sequential blocking code, no reactive programming model. Rationale: Transfer Service's saga makes a sequential chain of blocking downstream calls per request; virtual threads let that scale to many concurrent in-flight transfers without exhausting a platform-thread pool, and without rewriting the orchestration as reactive/async code. Out of scope: explicit thread-pinning verification/diagnostics tooling — the flag is enabled and left at that.
-- **Persistence:** Spring Data JPA + PostgreSQL, one logical database per stateful service (Account, Transfer), provisioned as separate databases inside a single Postgres container via init script.
+- **Persistence:** Spring Data JPA + PostgreSQL, one logical database per stateful service (Account, Transfer, Notification), provisioned as separate databases inside a single Postgres container via init script.
 - **Messaging:** Apache Kafka, **KRaft mode** (no Zookeeper).
 - **Auth:** Keycloak (OAuth2/OIDC), JWT validated at the Gateway and by each resource service via Spring Security Resource Server.
 - **Resilience:** Resilience4j — CircuitBreaker + Retry on synchronous inter-service calls (Transfer → Account, Transfer → Fraud). Call timeouts come from the `RestClient`'s connect/read timeouts, not a Resilience4j TimeLimiter.
@@ -56,7 +56,7 @@ Each stateful service owns its data exclusively — no service queries another's
 5. **Sync call** → Account Service: credit the destination account (`Idempotency-Key` `<transferId>:credit`). Made as Transfer's own machine identity, not with the relayed customer token: credit has no ownership check (the destination belongs to someone else), so it requires `account-crediter`, which only that identity holds.
 6. Transfer Service marks the `Transfer` `COMPLETED` and writes an outbox row **in the same local DB transaction** (transactional outbox — guarantees the event and the DB state are consistent).
 7. A scheduled **outbox publisher** (polling, not Debezium — keeps deployment footprint manageable) reads unpublished outbox rows, publishes `TransferCompleted`/`TransferFailed` to Kafka, marks them published.
-8. Notification Service consumes the Kafka event, logs a "notification sent."
+8. Notification Service consumes the Kafka event, stores it once (an identical redelivery from the at-least-once outbox is acknowledged and skipped), and logs a "notification sent." A database outage is retried in place, without limit and in order; an event that cannot be read or cannot be a real outcome goes to a dead-letter topic (`<topic>-dlt`) on the first attempt — see `docs/phase-11-notification-persistence-error-handling.md`.
 
 Every downstream call (steps 2–5) is wrapped in Resilience4j CircuitBreaker + Retry — retry only on transient errors, never on business rejections.
 
