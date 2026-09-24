@@ -904,6 +904,8 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 
 Every existing `debit`/`credit` call needs an `Idempotency-Key` header now, and the 10-concurrent-requests test needs a **distinct** key per request — giving them the same key would make 9 of the 10 short-circuit on the dedup path instead of racing on the optimistic lock, defeating the point of that test.
 
+> **Superseded (2026-09-24):** don't copy the `CyclicBarrier`-released `returns409ForConcurrentUpdateConflict` below. A barrier cannot make a few-millisecond race reliable, and it flaked on CI. The merged `AccountControllerIT` gates both concurrency tests with a Postgres row lock (`sendWhileAccountRowIsLocked`) and uses two requests. See `docs/investigation-account-controller-it-concurrency-flake.md`.
+
 ```java
 // account-service/src/test/java/com/showcase/account/api/AccountControllerIT.java
 package com.showcase.account.api;

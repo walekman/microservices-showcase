@@ -1,6 +1,46 @@
 # Investigation: `AccountControllerIT` concurrency-test CI flakiness
 
-## Status (2026-09-21): the same-key test is disabled
+## Status (2026-09-24): resolved, both tests deterministic and re-enabled
+
+**Root cause.** The "second factor" below was never a second resource limit. It was the width of the
+race window. A same-key request loses only if its `findById(idempotencyKey)` runs between the
+winner's own lookup and the winner's commit: a handful of DB round trips, a few milliseconds. The
+tests released their requests with a `CyclicBarrier` *above* the HTTP layer, so each request then
+crossed the HTTP client, Tomcat, the security filter chain, MVC dispatch and connection checkout
+before reaching that window. On a CI runner the jitter across those layers regularly exceeds a few
+milliseconds, so the requests arrive one after another. That produced the fast (0.155 s), orderly,
+all-`200 OK` signature. A small pool was one way to widen the gap between arrivals, and dispatch
+jitter was the other. A barrier can't make a few-ms timing race reliable on shared hardware.
+
+**Fix.** The tests no longer rely on timing. `sendWhileAccountRowIsLocked` takes
+`SELECT … FOR UPDATE` on the account row, on the test's own non-pooled connection, before firing the
+requests. Plain reads are not blocked, so every request passes its idempotency-key check and loads
+the account, then parks in Postgres:
+- On `UPDATE accounts`, which the row lock blocks.
+- For same-key requests, on the `INSERT` of a primary key that another open transaction has already
+  written.
+
+The test polls `pg_locks` until every request is waiting, then releases the lock. The outcome is
+exact and asserted exactly:
+- Same key: one `200` and the rest `500`. Losers fail with a unique violation once the winner
+  commits.
+- Distinct keys: one `200` and the rest `409`. Postgres re-checks each loser's `WHERE version = ?`
+  against the committed row.
+
+`AccountService` and its Spring wiring are untouched, which was the objection to Attempt 1.
+`CONCURRENT_REQUESTS` dropped from 10 to 2, and the pool warm-up and pool-size overrides from
+Attempt 3 are gone. If requests ever failed to reach the database, the poll times out with
+`only k of N requests reached a lock wait` instead of passing falsely.
+
+Verified locally:
+- 200 repetitions of the two tests, all passing.
+- With the account `UPDATE` flushed before the operation `INSERT`, the same-key test fails with
+  `409` instead of `500`. It still guards the flush-order invariant.
+- With the lock removed, both tests fail with the timeout message.
+
+The history below is kept for context.
+
+## Status (2026-09-21, superseded): the same-key test is disabled
 
 `concurrentDebitsWithTheSameIdempotencyKeyNeverDoubleApplyAndTheLoserGets500` is now `@Disabled`. It failed on CI again with the identical all-`200 OK` signature on two docs-only PRs the same day (each passed on re-run), i.e. PR #63's pool warm-up reduced the flake but did not remove it, and it now costs a manual CI re-run per PR.
 

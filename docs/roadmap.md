@@ -38,4 +38,4 @@ deliberately ruled out — is collected in [`open-items.md`](open-items.md).
 Standalone write-ups that aren't tied to a single phase:
 
 - [`AccountControllerIT` concurrency-test CI flakiness](investigation-account-controller-it-concurrency-flake.md)
-  — the same-idempotency-key concurrency test is `@Disabled` pending a rewrite.
+  — resolved: both concurrency tests are now gated by a Postgres row lock rather than timed.

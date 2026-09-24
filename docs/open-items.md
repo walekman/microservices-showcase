@@ -15,13 +15,7 @@ lands, and add new ones as phases defer them.
 | 4 | **Release automation**: versions from git tags, an image registry, a changelog. | `phase-8b-version-visibility.md` Scope Boundary |
 | 5 | **Automated browser tests for the Bank UI** (e.g. Playwright). | `phase-9-bank-ui.md` Scope Boundary |
 
-## 2. Minor tech debt
-
-| # | Item | Source | Status in code |
-|---|---|---|---|
-| 6 | `AccountControllerIT`'s same-key concurrency test is `@Disabled`. The root cause (a second serialization factor on CI) is unknown, and a rewrite is recommended. `returns409ForConcurrentUpdateConflict` may carry the same risk. | `investigation-account-controller-it-concurrency-flake.md` | Open |
-
-## 3. Deliberately not planned
+## 2. Deliberately not planned
 
 These were decided against rather than postponed. They only come back if someone revisits the
 decision.
