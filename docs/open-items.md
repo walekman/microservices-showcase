@@ -7,9 +7,7 @@ lands, and add new ones as phases defer them.
 
 ## 1. Correctness and security gaps
 
-| # | Item | Source | Status in code |
-|---|---|---|---|
-| 20 | **Rows written before the unknown-debit fix are not migrated.** A database from before it can still hold transfers recorded `FAILED` + `ACCOUNT_SERVICE_UNAVAILABLE` on the debit leg. No sweep revisits them, and the debit may have committed. `docker compose down -v` clears them locally. | `microservices-showcase-design.md` §4 | Open (legacy data only) |
+None open.
 
 ## 2. Planned phases and features
 
