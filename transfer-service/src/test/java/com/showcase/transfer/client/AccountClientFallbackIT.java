@@ -112,7 +112,7 @@ class AccountClientFallbackIT {
         // Asserting the exact type and code is itself conclusive proof the fake backend was
         // reached: a real connection failure would surface as
         // AccountServiceUnavailableException instead, never this specific rejection code.
-        assertThatThrownBy(() -> accountClient.accountExists(ACCOUNT_ID))
+        assertThatThrownBy(() -> accountClient.accountCurrency(ACCOUNT_ID))
                 .asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.type(AccountRejectedException.class))
                 .extracting(AccountRejectedException::getCode)
                 .isEqualTo("ACCOUNT_NOT_FOUND");
@@ -120,7 +120,7 @@ class AccountClientFallbackIT {
 
     /**
      * debitCreditFallback is the fallback CompensationScheduler actually depends on --
-     * accountExists's fallback above proves nothing about it, since Resilience4j wires a
+     * accountCurrency's fallback above proves nothing about it, since Resilience4j wires a
      * fallbackMethod per decorated method, not per class. Without this test's own explicit
      * passthrough coverage, the exact Task 6 bug (a definitive rejection silently
      * miscategorized as AccountServiceUnavailableException) could recur here undetected --
@@ -128,7 +128,7 @@ class AccountClientFallbackIT {
      */
     @Test
     void debitsDefinitiveRejectionPassesThroughTheRealAopProxyUnchanged() {
-        assertThatThrownBy(() -> accountClient.debit(ACCOUNT_ID, new java.math.BigDecimal("40.00"), "fallback-it:debit"))
+        assertThatThrownBy(() -> accountClient.debit(ACCOUNT_ID, new java.math.BigDecimal("40.00"), "EUR", "fallback-it:debit"))
                 .asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.type(AccountRejectedException.class))
                 .extracting(AccountRejectedException::getCode)
                 .isEqualTo("INSUFFICIENT_FUNDS");
@@ -136,7 +136,7 @@ class AccountClientFallbackIT {
 
     @Test
     void creditsDefinitiveRejectionPassesThroughTheRealAopProxyUnchanged() {
-        assertThatThrownBy(() -> accountClient.credit(ACCOUNT_ID, new java.math.BigDecimal("40.00"), "fallback-it:credit"))
+        assertThatThrownBy(() -> accountClient.credit(ACCOUNT_ID, new java.math.BigDecimal("40.00"), "EUR", "fallback-it:credit"))
                 .asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.type(AccountRejectedException.class))
                 .extracting(AccountRejectedException::getCode)
                 .isEqualTo("INSUFFICIENT_FUNDS");

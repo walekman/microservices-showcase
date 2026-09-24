@@ -6,6 +6,7 @@ import com.showcase.transfer.domain.TransferStatus;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.UUID;
 
 public record TransferResponse(
@@ -13,6 +14,11 @@ public record TransferResponse(
         UUID fromAccountId,
         UUID toAccountId,
         BigDecimal amount,
+        String sourceCurrency,
+        String destinationCurrency,
+        BigDecimal rate,
+        LocalDate rateAsOf,
+        BigDecimal creditAmount,
         TransferStatus status,
         TransferFailureCode failureCode,
         String failureReason,
@@ -25,6 +31,12 @@ public record TransferResponse(
                 transfer.getFromAccountId(),
                 transfer.getToAccountId(),
                 transfer.getAmount(),
+                transfer.getSourceCurrency(),
+                transfer.getDestinationCurrency(),
+                transfer.getRate(),
+                transfer.getRateAsOf(),
+                // Raw, not amountToCredit(): a transfer that failed before it was priced has no credit amount.
+                transfer.getCreditAmount(),
                 transfer.getStatus(),
                 transfer.getFailureCode(),
                 transfer.getFailureReason(),

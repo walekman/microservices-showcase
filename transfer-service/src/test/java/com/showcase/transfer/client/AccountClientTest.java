@@ -37,22 +37,42 @@ class AccountClientTest {
     }
 
     @Test
-    void accountExistsSucceedsWhenTheAccountExists() {
+    void accountCurrencyReturnsTheCurrencyWhenTheAccountExists() {
         server.expect(requestTo(BASE_URL + "/accounts/exists/" + ACCOUNT_ID))
                 .andExpect(method(org.springframework.http.HttpMethod.GET))
-                .andRespond(withStatus(HttpStatus.OK));
+                .andRespond(withSuccess("{\"currency\":\"PLN\"}", MediaType.APPLICATION_JSON));
 
-        accountClient.accountExists(ACCOUNT_ID);
+        assertThat(accountClient.accountCurrency(ACCOUNT_ID)).isEqualTo("PLN");
 
         server.verify();
     }
 
     @Test
-    void accountExistsThrowsRejectedWithAccountCodeOn404() {
+    void accountCurrencyIsUnavailableWhenTheBodyHasNoCurrency() {
+        server.expect(requestTo(BASE_URL + "/accounts/exists/" + ACCOUNT_ID)).andRespond(withStatus(HttpStatus.OK));
+
+        assertThatThrownBy(() -> accountClient.accountCurrency(ACCOUNT_ID))
+                .isInstanceOf(AccountServiceUnavailableException.class);
+    }
+
+    @Test
+    void aReplayWithoutACurrencyOmitsTheFieldEntirely() {
+        server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID + "/credit"))
+                .andExpect(jsonPath("$.amount").value(40.00))
+                .andExpect(jsonPath("$.currency").doesNotExist())
+                .andRespond(withStatus(HttpStatus.OK));
+
+        accountClient.credit(ACCOUNT_ID, new BigDecimal("40.00"), null, "transfer-1:credit");
+
+        server.verify();
+    }
+
+    @Test
+    void accountCurrencyThrowsRejectedWithAccountCodeOn404() {
         server.expect(requestTo(BASE_URL + "/accounts/exists/" + ACCOUNT_ID))
                 .andRespond(problem(HttpStatus.NOT_FOUND, "ACCOUNT_NOT_FOUND", "Account not found: " + ACCOUNT_ID));
 
-        assertThatThrownBy(() -> accountClient.accountExists(ACCOUNT_ID))
+        assertThatThrownBy(() -> accountClient.accountCurrency(ACCOUNT_ID))
                 .isInstanceOf(AccountRejectedException.class)
                 .satisfies(thrown -> {
                     assertThat(((AccountRejectedException) thrown).getCode()).isEqualTo("ACCOUNT_NOT_FOUND");
@@ -122,12 +142,13 @@ class AccountClientTest {
         server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID + "/debit"))
                 .andExpect(method(org.springframework.http.HttpMethod.POST))
                 .andExpect(jsonPath("$.amount").value(40.00))
+                .andExpect(jsonPath("$.currency").value("PLN"))
                 .andExpect(header("Idempotency-Key", "transfer-1:debit"))
                 .andRespond(withSuccess("""
                         {"id":"%s","ownerName":"Ada Lovelace","balance":60.00,"createdAt":"2026-09-10T12:00:00Z"}
                         """.formatted(ACCOUNT_ID), MediaType.APPLICATION_JSON));
 
-        accountClient.debit(ACCOUNT_ID, new BigDecimal("40.00"), "transfer-1:debit");
+        accountClient.debit(ACCOUNT_ID, new BigDecimal("40.00"), "PLN", "transfer-1:debit");
 
         server.verify();
     }
@@ -137,7 +158,7 @@ class AccountClientTest {
         server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID + "/debit"))
                 .andRespond(problem(HttpStatus.UNPROCESSABLE_ENTITY, "INSUFFICIENT_FUNDS", "not enough money"));
 
-        assertThatThrownBy(() -> accountClient.debit(ACCOUNT_ID, new BigDecimal("40.00"), "transfer-1:debit"))
+        assertThatThrownBy(() -> accountClient.debit(ACCOUNT_ID, new BigDecimal("40.00"), "PLN", "transfer-1:debit"))
                 .isInstanceOf(AccountRejectedException.class)
                 .satisfies(thrown -> assertThat(((AccountRejectedException) thrown).getCode())
                         .isEqualTo("INSUFFICIENT_FUNDS"));
@@ -154,7 +175,7 @@ class AccountClientTest {
         server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID + "/debit"))
                 .andRespond(problem(HttpStatus.CONFLICT, "CONCURRENT_MODIFICATION", "Account was modified concurrently, please retry"));
 
-        assertThatThrownBy(() -> accountClient.debit(ACCOUNT_ID, new BigDecimal("40.00"), "transfer-1:debit"))
+        assertThatThrownBy(() -> accountClient.debit(ACCOUNT_ID, new BigDecimal("40.00"), "PLN", "transfer-1:debit"))
                 .isInstanceOf(AccountServiceUnavailableException.class)
                 .isNotInstanceOf(AccountRejectedException.class);
         server.verify();
@@ -173,7 +194,7 @@ class AccountClientTest {
         server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID + "/debit"))
                 .andRespond(withStatus(HttpStatus.UNAUTHORIZED));
 
-        assertThatThrownBy(() -> accountClient.debit(ACCOUNT_ID, new BigDecimal("40.00"), "transfer-1:debit"))
+        assertThatThrownBy(() -> accountClient.debit(ACCOUNT_ID, new BigDecimal("40.00"), "PLN", "transfer-1:debit"))
                 .isInstanceOf(AccountServiceUnavailableException.class)
                 .isNotInstanceOf(AccountRejectedException.class);
         server.verify();
@@ -184,7 +205,7 @@ class AccountClientTest {
         server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID + "/debit"))
                 .andRespond(withStatus(HttpStatus.FORBIDDEN));
 
-        assertThatThrownBy(() -> accountClient.debit(ACCOUNT_ID, new BigDecimal("40.00"), "transfer-1:debit"))
+        assertThatThrownBy(() -> accountClient.debit(ACCOUNT_ID, new BigDecimal("40.00"), "PLN", "transfer-1:debit"))
                 .isInstanceOf(AccountServiceUnavailableException.class)
                 .isNotInstanceOf(AccountRejectedException.class);
         server.verify();
@@ -199,7 +220,7 @@ class AccountClientTest {
         server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID + "/debit"))
                 .andRespond(problem(HttpStatus.CONFLICT, "IDEMPOTENCY_KEY_CONFLICT", "Idempotency key already used with different parameters"));
 
-        assertThatThrownBy(() -> accountClient.debit(ACCOUNT_ID, new BigDecimal("40.00"), "transfer-1:debit"))
+        assertThatThrownBy(() -> accountClient.debit(ACCOUNT_ID, new BigDecimal("40.00"), "PLN", "transfer-1:debit"))
                 .isInstanceOf(AccountRejectedException.class)
                 .satisfies(thrown -> assertThat(((AccountRejectedException) thrown).getCode())
                         .isEqualTo("IDEMPOTENCY_KEY_CONFLICT"));
@@ -214,7 +235,7 @@ class AccountClientTest {
                         {"id":"%s","ownerName":"Ada Lovelace","balance":140.00,"createdAt":"2026-09-10T12:00:00Z"}
                         """.formatted(ACCOUNT_ID), MediaType.APPLICATION_JSON));
 
-        accountClient.credit(ACCOUNT_ID, new BigDecimal("40.00"), "transfer-1:credit");
+        accountClient.credit(ACCOUNT_ID, new BigDecimal("40.00"), "PLN", "transfer-1:credit");
 
         server.verify();
     }
@@ -224,7 +245,7 @@ class AccountClientTest {
         server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID + "/credit"))
                 .andRespond(withStatus(HttpStatus.INTERNAL_SERVER_ERROR));
 
-        assertThatThrownBy(() -> accountClient.credit(ACCOUNT_ID, new BigDecimal("40.00"), "transfer-1:credit"))
+        assertThatThrownBy(() -> accountClient.credit(ACCOUNT_ID, new BigDecimal("40.00"), "PLN", "transfer-1:credit"))
                 .isInstanceOf(AccountServiceUnavailableException.class);
         server.verify();
     }
@@ -234,7 +255,7 @@ class AccountClientTest {
         server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID + "/credit"))
                 .andRespond(withException(new java.net.ConnectException("connection refused")));
 
-        assertThatThrownBy(() -> accountClient.credit(ACCOUNT_ID, new BigDecimal("40.00"), "transfer-1:credit"))
+        assertThatThrownBy(() -> accountClient.credit(ACCOUNT_ID, new BigDecimal("40.00"), "PLN", "transfer-1:credit"))
                 .isInstanceOf(AccountServiceUnavailableException.class);
         server.verify();
     }
@@ -246,7 +267,7 @@ class AccountClientTest {
                         .contentType(MediaType.TEXT_HTML)
                         .body("<html>gateway says no</html>"));
 
-        assertThatThrownBy(() -> accountClient.accountExists(ACCOUNT_ID))
+        assertThatThrownBy(() -> accountClient.accountCurrency(ACCOUNT_ID))
                 .isInstanceOf(AccountRejectedException.class)
                 .satisfies(thrown -> assertThat(((AccountRejectedException) thrown).getCode())
                         .isEqualTo("UNKNOWN"));
@@ -258,7 +279,7 @@ class AccountClientTest {
         server.expect(requestTo(BASE_URL + "/accounts/exists/" + ACCOUNT_ID))
                 .andRespond(withStatus(HttpStatus.BAD_REQUEST));
 
-        assertThatThrownBy(() -> accountClient.accountExists(ACCOUNT_ID))
+        assertThatThrownBy(() -> accountClient.accountCurrency(ACCOUNT_ID))
                 .isInstanceOf(AccountRejectedException.class)
                 .satisfies(thrown -> assertThat(((AccountRejectedException) thrown).getCode())
                         .isEqualTo("UNKNOWN"));
@@ -270,17 +291,17 @@ class AccountClientTest {
         server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID + "/debit"))
                 .andRespond(withStatus(HttpStatus.FOUND));
 
-        assertThatThrownBy(() -> accountClient.debit(ACCOUNT_ID, new BigDecimal("40.00"), "transfer-1:debit"))
+        assertThatThrownBy(() -> accountClient.debit(ACCOUNT_ID, new BigDecimal("40.00"), "PLN", "transfer-1:debit"))
                 .isInstanceOf(AccountServiceUnavailableException.class);
         server.verify();
     }
 
     @Test
-    void accountExistsThrowsUnavailableOn3xxRedirect() {
+    void accountCurrencyThrowsUnavailableOn3xxRedirect() {
         server.expect(requestTo(BASE_URL + "/accounts/exists/" + ACCOUNT_ID))
                 .andRespond(withStatus(HttpStatus.FOUND));
 
-        assertThatThrownBy(() -> accountClient.accountExists(ACCOUNT_ID))
+        assertThatThrownBy(() -> accountClient.accountCurrency(ACCOUNT_ID))
                 .isInstanceOf(AccountServiceUnavailableException.class);
         server.verify();
     }

@@ -46,6 +46,19 @@ public class Notification {
     @Column(precision = 19, scale = 2)
     private BigDecimal amount;
 
+    // The conversion Transfer locked (Phase 12). Null for a same-currency-era event that predates it.
+    @Column(length = 3)
+    private String sourceCurrency;
+
+    @Column(length = 3)
+    private String destinationCurrency;
+
+    @Column(precision = 19, scale = 10)
+    private BigDecimal rate;
+
+    @Column(precision = 19, scale = 2)
+    private BigDecimal creditAmount;
+
     @Column(length = 64)
     private String failureCode;
 
@@ -74,6 +87,10 @@ public class Notification {
         this.fromAccountId = event.fromAccountId();
         this.toAccountId = event.toAccountId();
         this.amount = event.amount();
+        this.sourceCurrency = event.sourceCurrency();
+        this.destinationCurrency = event.destinationCurrency();
+        this.rate = event.rate();
+        this.creditAmount = event.creditAmount();
         this.failureCode = event.failureCode();
         this.failureReason = event.failureReason();
         this.settledAt = event.settledAt();

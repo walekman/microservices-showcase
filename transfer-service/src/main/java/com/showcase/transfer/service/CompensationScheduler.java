@@ -32,6 +32,9 @@ import java.util.List;
  * {@link java.time.Duration#parse}, which requires strict ISO-8601 ("PT15S"), not the "15s"
  * shorthand this project's application.yml files use everywhere else. Registering the interval
  * from {@link CompensationProperties} as milliseconds sidesteps that mismatch entirely.
+ *
+ * <p>Every replay sends the amounts and currencies locked on the row and never asks FX Service
+ * for a rate (this class has no FxClient, by design); see docs/phase-12-fx-rates-redis-cache.md.
  */
 @Component
 public class CompensationScheduler implements SchedulingConfigurer {
@@ -115,7 +118,8 @@ public class CompensationScheduler implements SchedulingConfigurer {
         }
 
         try {
-            accountClient.credit(transfer.getToAccountId(), transfer.getAmount(), transfer.getId() + ":credit");
+            accountClient.credit(transfer.getToAccountId(), transfer.amountToCredit(), transfer.getDestinationCurrency(),
+                    transfer.getId() + ":credit");
             transfer.markCompleted();
             transferSaveService.save(transfer);
             log.info("Transfer {} reconciled as COMPLETED: the credit had already landed", transfer.getId());
@@ -129,7 +133,8 @@ public class CompensationScheduler implements SchedulingConfigurer {
 
     private void compensateSource(Transfer transfer, String rejectionDetail) {
         try {
-            accountClient.credit(transfer.getFromAccountId(), transfer.getAmount(), transfer.getId() + ":compensate");
+            accountClient.credit(transfer.getFromAccountId(), transfer.getAmount(), transfer.getSourceCurrency(),
+                    transfer.getId() + ":compensate");
             transfer.markCompensated();
             transferSaveService.save(transfer);
             log.info("Transfer {} COMPENSATED: source credited back after destination definitively rejected [{}]",
@@ -178,7 +183,8 @@ public class CompensationScheduler implements SchedulingConfigurer {
         }
 
         try {
-            accountClient.debit(transfer.getFromAccountId(), transfer.getAmount(), transfer.getId() + ":debit");
+            accountClient.debit(transfer.getFromAccountId(), transfer.getAmount(), transfer.getSourceCurrency(),
+                    transfer.getId() + ":debit");
             transfer.markCompensationRequired(TransferFailureCode.UNEXPECTED_ERROR,
                     "Recovered from a stale PENDING row: the debit leg is confirmed landed, the credit leg is unresolved");
             transferSaveService.save(transfer);

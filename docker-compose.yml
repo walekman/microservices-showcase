@@ -64,6 +64,7 @@ services:
       DB_PASSWORD: ${TRANSFER_DB_PASSWORD}
       ACCOUNT_SERVICE_URL: http://account-service:8081
       FRAUD_SERVICE_URL: http://fraud-service:8084
+      FX_SERVICE_URL: http://fx-service:8085
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KEYCLOAK_JWK_SET_URI: http://keycloak:8080/realms/showcase/protocol/openid-connect/certs
       KEYCLOAK_ISSUER_URI: http://localhost:8180/realms/showcase
@@ -78,6 +79,8 @@ services:
       account-service:
         condition: service_healthy
       fraud-service:
+        condition: service_healthy
+      fx-service:
         condition: service_healthy
       kafka:
         condition: service_healthy

@@ -92,7 +92,10 @@ public class TransferSaveService {
             return objectMapper.writeValueAsString(new TransferEventPayload(
                     transfer.getId(), transfer.getFromAccountId(), transfer.getToAccountId(),
                     transfer.getAmount(), transfer.getStatus(), transfer.getFailureCode(),
-                    transfer.getFailureReason(), transfer.getSettledAt()));
+                    transfer.getFailureReason(), transfer.getSettledAt(),
+                    // Raw getCreditAmount(), as in TransferResponse: null when the transfer failed before it was priced.
+                    transfer.getSourceCurrency(), transfer.getDestinationCurrency(), transfer.getRate(),
+                    transfer.getCreditAmount()));
         } catch (JsonProcessingException impossible) {
             // Every field here is a UUID/BigDecimal/enum/String/Instant -- Jackson has no
             // way to fail serializing this record once JavaTimeModule is registered (it is,
@@ -106,6 +109,8 @@ public class TransferSaveService {
 
     private record TransferEventPayload(UUID transferId, UUID fromAccountId, UUID toAccountId, BigDecimal amount,
                                          TransferStatus status, TransferFailureCode failureCode,
-                                         String failureReason, Instant settledAt) {
+                                         String failureReason, Instant settledAt,
+                                         String sourceCurrency, String destinationCurrency, BigDecimal rate,
+                                         BigDecimal creditAmount) {
     }
 }

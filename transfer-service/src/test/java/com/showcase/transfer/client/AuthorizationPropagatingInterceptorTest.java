@@ -68,7 +68,7 @@ class AuthorizationPropagatingInterceptorTest {
                 .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer " + USER_TOKEN))
                 .andRespond(withSuccess("{}", MediaType.APPLICATION_JSON));
 
-        accountClient.debit(ACCOUNT_ID, new BigDecimal("10.00"), "t-1:debit");
+        accountClient.debit(ACCOUNT_ID, new BigDecimal("10.00"), "EUR", "t-1:debit");
 
         server.verify();
     }
@@ -82,7 +82,7 @@ class AuthorizationPropagatingInterceptorTest {
                 .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer " + SERVICE_TOKEN))
                 .andRespond(withSuccess("{}", MediaType.APPLICATION_JSON));
 
-        accountClient.credit(ACCOUNT_ID, new BigDecimal("10.00"), "t-1:credit");
+        accountClient.credit(ACCOUNT_ID, new BigDecimal("10.00"), "EUR", "t-1:credit");
 
         server.verify();
     }

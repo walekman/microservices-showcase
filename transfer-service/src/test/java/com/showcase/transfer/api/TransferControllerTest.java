@@ -116,6 +116,46 @@ class TransferControllerTest {
     }
 
     @Test
+    void returns503WhenNoExchangeRateIsAvailable() throws Exception {
+        Transfer transfer = pendingTransfer();
+        transfer.markFailed(TransferFailureCode.FX_SERVICE_UNAVAILABLE, "FX Service returned 503 from fx-service:8085");
+        when(transferService.execute(FROM, TO, AMOUNT, SUBJECT, KEY)).thenReturn(transfer);
+
+        mockMvc.perform(post("/transfers").header("Idempotency-Key", KEY).contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(transferExecutor()))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code").value("FX_SERVICE_UNAVAILABLE"))
+                .andExpect(jsonPath("$.detail").value("FX Service is currently unavailable"));
+    }
+
+    @Test
+    void returns422WhenTheConvertedAmountRoundsToNothing() throws Exception {
+        Transfer transfer = pendingTransfer();
+        transfer.markFailed(TransferFailureCode.AMOUNT_TOO_SMALL, "0.01 PLN converts to 0.00 EUR at rate 0.22819");
+        when(transferService.execute(FROM, TO, AMOUNT, SUBJECT, KEY)).thenReturn(transfer);
+
+        mockMvc.perform(post("/transfers").header("Idempotency-Key", KEY).contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(transferExecutor()))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("AMOUNT_TOO_SMALL"))
+                .andExpect(jsonPath("$.detail").value("0.01 PLN converts to 0.00 EUR at rate 0.22819"));
+    }
+
+    @Test
+    void theResponseCarriesTheLockedConversion() throws Exception {
+        Transfer transfer = pendingTransfer();
+        transfer.lockConversion("PLN", "EUR", new BigDecimal("0.22819"), java.time.LocalDate.of(2026, 9, 23));
+        transfer.markCompleted();
+        when(transferService.execute(FROM, TO, AMOUNT, SUBJECT, KEY)).thenReturn(transfer);
+
+        mockMvc.perform(post("/transfers").header("Idempotency-Key", KEY).contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(transferExecutor()))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.sourceCurrency").value("PLN"))
+                .andExpect(jsonPath("$.destinationCurrency").value("EUR"))
+                .andExpect(jsonPath("$.rate").value(0.22819))
+                .andExpect(jsonPath("$.rateAsOf").value("2026-09-23"))
+                .andExpect(jsonPath("$.creditAmount").value(9.13));
+    }
+
+    @Test
     void doesNotLeakInternalExceptionTextForAnUnexpectedError() throws Exception {
         Transfer transfer = pendingTransfer();
         transfer.markFailed(TransferFailureCode.UNEXPECTED_ERROR,

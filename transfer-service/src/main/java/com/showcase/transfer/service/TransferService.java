@@ -6,6 +6,9 @@ import com.showcase.transfer.client.AccountServiceUnavailableException;
 import com.showcase.transfer.client.FraudClient;
 import com.showcase.transfer.client.FraudRejectedException;
 import com.showcase.transfer.client.FraudServiceUnavailableException;
+import com.showcase.transfer.client.FxClient;
+import com.showcase.transfer.client.FxRate;
+import com.showcase.transfer.client.FxServiceUnavailableException;
 import com.showcase.transfer.domain.DebitOutcomeUnknownException;
 import com.showcase.transfer.domain.IdempotencyKeyConflictException;
 import com.showcase.transfer.domain.Transfer;
@@ -43,13 +46,15 @@ public class TransferService {
     private final TransferRepository transferRepository;
     private final AccountClient accountClient;
     private final FraudClient fraudClient;
+    private final FxClient fxClient;
     private final TransferSaveService transferSaveService;
 
     public TransferService(TransferRepository transferRepository, AccountClient accountClient,
-                            FraudClient fraudClient, TransferSaveService transferSaveService) {
+                            FraudClient fraudClient, FxClient fxClient, TransferSaveService transferSaveService) {
         this.transferRepository = transferRepository;
         this.accountClient = accountClient;
         this.fraudClient = fraudClient;
+        this.fxClient = fxClient;
         this.transferSaveService = transferSaveService;
     }
 
@@ -62,55 +67,113 @@ public class TransferService {
             return replay(earlier.get(), fromAccountId, toAccountId, amount, idempotencyKey);
         }
 
-        // Constructor guards reject a self-transfer before anything is persisted.
-        // This save stays OUTSIDE the try below on purpose: SameAccountTransferException
-        // must propagate to the caller as a 400, not be swallowed into UNEXPECTED_ERROR.
-        Transfer transfer;
+        // Constructor guards reject a self-transfer before anything is looked up or persisted:
+        // SameAccountTransferException must propagate to the caller as a 400.
+        Transfer transfer = new Transfer(fromAccountId, toAccountId, amount, initiatorId, idempotencyKey);
+
+        // Steps 1-2, entirely in memory: validate both accounts and lock the conversion. Nothing
+        // here moves money, so every failure settles the transfer as FAILED before it is inserted.
+        prepare(transfer);
+
+        // The single insert. A PENDING row is born with its conversion locked, so no sweep can
+        // ever find a PENDING row without the amounts it must replay (docs/phase-12-fx-rates-redis-cache.md).
+        // A FAILED row goes through the outbox choke point like every other terminal write.
         try {
-            transfer = transferRepository.save(
-                    new Transfer(fromAccountId, toAccountId, amount, initiatorId, idempotencyKey));
+            transfer = transfer.getStatus() == TransferStatus.PENDING
+                    ? transferRepository.save(transfer)
+                    : transferSaveService.save(transfer);
         } catch (DataIntegrityViolationException ex) {
             // Two requests with the same key both missed the lookup above; the unique constraint
             // on (initiator_id, idempotency_key) let exactly one insert through. Nothing has moved
-            // for this request, so it becomes a replay of the winner. No winner means the
-            // violation was something else -- rethrow it.
+            // for this request -- prepare() only reads -- so it becomes a replay of the winner. No
+            // winner means the violation was something else -- rethrow it.
             Transfer winner = transferRepository.findByInitiatorIdAndIdempotencyKey(initiatorId, idempotencyKey)
                     .orElseThrow(() -> ex);
             return replay(winner, fromAccountId, toAccountId, amount, idempotencyKey);
         }
-        log.info("Transfer {} started: {} -> {} amount {}", transfer.getId(), fromAccountId, toAccountId, amount);
+        if (transfer.getStatus() != TransferStatus.PENDING) {
+            log.info("Transfer {} failed before any money moved [{}]: {}",
+                    transfer.getId(), transfer.getFailureCode(), transfer.getFailureReason());
+            return transfer;
+        }
+        log.info("Transfer {} started: {} -> {} amount {} {}, credits {} {}", transfer.getId(), fromAccountId,
+                toAccountId, amount, transfer.getSourceCurrency(), transfer.getCreditAmount(),
+                transfer.getDestinationCurrency());
+        return moveMoney(transfer);
+    }
 
+    /**
+     * Steps 1-2. Marks the transfer FAILED in memory on any failure, or locks its conversion. Never
+     * persists and never moves money, which is what makes the single insert in execute() safe.
+     */
+    private void prepare(Transfer transfer) {
+        try {
+            // Step 1: pre-validate both accounts, learning the currency each is held in. An
+            // optimisation for the common mistyped-id case, NOT a guarantee -- an account can
+            // still disappear before the debit, which is why the legs handle every rejection on their own.
+            String sourceCurrency;
+            String destinationCurrency;
+            try {
+                sourceCurrency = accountClient.accountCurrency(transfer.getFromAccountId());
+                destinationCurrency = accountClient.accountCurrency(transfer.getToAccountId());
+            } catch (AccountRejectedException ex) {
+                transfer.markFailed(TransferFailureCode.fromAccountCode(ex.getCode()), ex.getDetail());
+                return;
+            } catch (AccountServiceUnavailableException ex) {
+                transfer.markFailed(TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, ex.getMessage());
+                return;
+            }
+
+            // Step 2: price the transfer. The same currency needs no rate. Anything else asks FX
+            // Service once, here, and never again: every later step and every replay uses the
+            // locked values.
+            if (sourceCurrency.equals(destinationCurrency)) {
+                transfer.lockConversion(sourceCurrency, destinationCurrency, BigDecimal.ONE, null);
+                return;
+            }
+            FxRate fx;
+            try {
+                fx = fxClient.rate(sourceCurrency, destinationCurrency);
+            } catch (FxServiceUnavailableException ex) {
+                transfer.markFailed(TransferFailureCode.FX_SERVICE_UNAVAILABLE, ex.getMessage());
+                return;
+            }
+            BigDecimal creditAmount = Transfer.creditAmountFor(transfer.getAmount(), fx.rate());
+            if (creditAmount.signum() == 0) {
+                transfer.markFailed(TransferFailureCode.AMOUNT_TOO_SMALL, "%s %s converts to %s %s at rate %s"
+                        .formatted(transfer.getAmount(), sourceCurrency, creditAmount, destinationCurrency, fx.rate()));
+                return;
+            }
+            transfer.lockConversion(sourceCurrency, destinationCurrency, fx.rate(), fx.asOf());
+        } catch (RuntimeException ex) {
+            // Anything the client exceptions do not cover -- a bug, a mapper failure. Nothing has
+            // moved and nothing is persisted yet, so this is a clean failure.
+            transfer.markFailed(TransferFailureCode.UNEXPECTED_ERROR, ex.toString());
+        }
+    }
+
+    /** Steps 3-6, on a persisted PENDING row with its conversion locked. */
+    private Transfer moveMoney(Transfer transfer) {
         // Tracks whether the debit leg committed, so the catch-all below knows whether an
         // unexpected failure left money stranded or left everything untouched.
         boolean debited = false;
 
         try {
-            // Step 1: pre-validate both accounts. An optimisation for the common
-            // mistyped-id case, NOT a guarantee -- an account can still disappear between
-            // here and the debit, which is why step 3 handles every rejection on its own.
-            try {
-                accountClient.accountExists(fromAccountId);
-                accountClient.accountExists(toAccountId);
-            } catch (AccountRejectedException ex) {
-                return fail(transfer, TransferFailureCode.fromAccountCode(ex.getCode()), ex.getDetail());
-            } catch (AccountServiceUnavailableException ex) {
-                return fail(transfer, TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, ex.getMessage());
-            }
-
-            // Step 2: screen the source account before any money moves. A block or an
+            // Step 3: screen the source account before any money moves. A block or an
             // unreachable Fraud Service both fail clean here -- nothing to compensate, same
             // shape as every other pre-debit rejection. See docs/phase-5-fraud-service.md.
             try {
-                fraudClient.check(fromAccountId);
+                fraudClient.check(transfer.getFromAccountId());
             } catch (FraudRejectedException ex) {
                 return fail(transfer, TransferFailureCode.SOURCE_ACCOUNT_BLOCKED, ex.getDetail());
             } catch (FraudServiceUnavailableException ex) {
                 return fail(transfer, TransferFailureCode.SOURCE_FRAUD_SERVICE_UNAVAILABLE, ex.getMessage());
             }
 
-            // Step 3: debit the source.
+            // Step 4: debit the source, in its own currency.
             try {
-                accountClient.debit(fromAccountId, amount, transfer.getId() + ":debit");
+                accountClient.debit(transfer.getFromAccountId(), transfer.getAmount(), transfer.getSourceCurrency(),
+                        transfer.getId() + ":debit");
             } catch (AccountRejectedException ex) {
                 // Account understood and refused. Nothing moved -- genuinely clean.
                 return fail(transfer, TransferFailureCode.fromAccountCode(ex.getCode()), ex.getDetail());
@@ -128,28 +191,29 @@ public class TransferService {
                 // settles the transfer from the answer, not from a guess.
                 log.error("Transfer {} debit outcome UNKNOWN for account {} amount {}: {}. "
                                 + "Left PENDING for the stale-PENDING sweep to reconcile.",
-                        transfer.getId(), fromAccountId, amount, ex.getMessage());
+                        transfer.getId(), transfer.getFromAccountId(), transfer.getAmount(), ex.getMessage());
                 throw new DebitOutcomeUnknownException(transfer.getId(), ex);
             }
             debited = true;
 
-            // Step 4: screen the destination account. Money has already moved, so a
+            // Step 5: screen the destination account. Money has already moved, so a
             // block or an unreachable Fraud Service both strand the transfer for
             // CompensationScheduler rather than failing clean.
             try {
-                fraudClient.check(toAccountId);
+                fraudClient.check(transfer.getToAccountId());
             } catch (FraudRejectedException ex) {
                 return strand(transfer, TransferFailureCode.DESTINATION_ACCOUNT_BLOCKED, ex.getDetail());
             } catch (FraudServiceUnavailableException ex) {
                 return strand(transfer, TransferFailureCode.DESTINATION_FRAUD_SERVICE_UNAVAILABLE, ex.getMessage());
             }
 
-            // Step 5: credit the destination. Past this point the source is already debited,
-            // so business rejection and infrastructure failure have identical consequences:
-            // funds are stranded and something has to put them back. CompensationScheduler
-            // resolves that.
+            // Step 6: credit the destination the locked amount, in its own currency. Past this
+            // point the source is already debited, so business rejection and infrastructure
+            // failure have identical consequences: funds are stranded and something has to put
+            // them back. CompensationScheduler resolves that.
             try {
-                accountClient.credit(toAccountId, amount, transfer.getId() + ":credit");
+                accountClient.credit(transfer.getToAccountId(), transfer.amountToCredit(),
+                        transfer.getDestinationCurrency(), transfer.getId() + ":credit");
             } catch (AccountRejectedException ex) {
                 return strand(transfer, TransferFailureCode.fromAccountCode(ex.getCode()), ex.getDetail());
             } catch (AccountServiceUnavailableException ex) {
@@ -160,11 +224,11 @@ public class TransferService {
             log.info("Transfer {} completed", transfer.getId());
             return transferSaveService.save(transfer);
         } catch (DebitOutcomeUnknownException ex) {
-            // Deliberately unsettled -- see step 3. Must not fall into the catch-all below,
+            // Deliberately unsettled -- see step 4. Must not fall into the catch-all below,
             // which would record the PENDING row as FAILED.
             throw ex;
         } catch (RuntimeException ex) {
-            // Anything the two client exceptions do not cover -- a DataAccessException or an
+            // Anything the client exceptions do not cover -- a DataAccessException or an
             // optimistic-lock failure from a save, a bug. Without this the row is orphaned in
             // PENDING: a 500 reaches the caller and nothing ever revisits it.
             if (transfer.getStatus() != TransferStatus.PENDING) {
@@ -231,8 +295,8 @@ public class TransferService {
 
     private Transfer strand(Transfer transfer, TransferFailureCode code, String reason) {
         transfer.markCompensationRequired(code, reason);
-        log.error("Transfer {} needs compensation: {} was debited {} but {} was not credited [{}]: {}",
-                transfer.getId(), transfer.getFromAccountId(), transfer.getAmount(),
+        log.error("Transfer {} needs compensation: {} was debited {} {} but {} was not credited [{}]: {}",
+                transfer.getId(), transfer.getFromAccountId(), transfer.getAmount(), transfer.getSourceCurrency(),
                 transfer.getToAccountId(), code, reason);
         return transferSaveService.save(transfer);
     }
