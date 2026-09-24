@@ -6,16 +6,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Phases 1–9 (including 7b and 8b) and Phase 11 (Notification persistence + Kafka consumer error handling) are implemented and merged to `master`. Phase 10 (end-to-end saga tests) has not started. `docs/roadmap.md` indexes every phase and its scope.
 
-Five Spring Boot / Java 21 services plus a static UI, all brought up by `docker compose up`:
+Six Spring Boot / Java 21 services plus a static UI, all brought up by `docker compose up`:
 
 - **Gateway Service** (`gateway-service/`, port 8080) — routing-only Spring Cloud Gateway Server MVC in front of Transfer (`/transfers/**`) and five client-safe Account paths (`POST /accounts`, `GET /accounts`, `/accounts/mine`, `/accounts/{id}`, `/accounts/{id}/summary`) — see `GatewayRoutesConfig`. Account's `debit`/`credit` and all of Fraud/Notification have no route.
 - **Account Service** (`account-service/`, port 8081) — accounts and balances, debit/credit with optimistic locking and an idempotency ledger. JPA on Postgres.
 - **Transfer Service** (`transfer-service/`, port 8082) — orchestrates the transfer saga over synchronous HTTP into Account and Fraud, with Resilience4j, a compensation scheduler and a transactional outbox to Kafka. JPA on Postgres.
 - **Notification Service** (`notification-service/`, port 8083) — Kafka consumer of the outbox topics; stores one row per transfer outcome (JPA on Postgres), idempotently. Transient DB failures are retried in place without limit; everything else is dead-lettered to `<topic>-dlt` (`KafkaErrorHandlingConfig`).
 - **Fraud Service** (`fraud-service/`, port 8084) — stateless account-blocklist screen, no database.
+- **FX Service** (`fx-service/`, port 8085) — exchange rates from the Frankfurter/ECB feed behind a Redis cache (fresh TTL, last-known fallback, cross-instance single-flight lock); no database. The only Redis client.
 - **Bank UI** (`web-ui/`, host port 8090) — plain HTML/CSS/JS served by `nginx:alpine`, no build step; calls the Gateway from the browser with OAuth2 Authorization Code + PKCE via Keycloak's `showcase-ui` client.
 
-Supporting containers: Postgres (database-per-service), Kafka (KRaft), Keycloak (`showcase` realm, host port 8180), OTel Collector → Tempo, Prometheus, Grafana (host port 3001). Every service validates the JWT itself, and returns RFC 7807 `application/problem+json` errors carrying a stable `code` property.
+Supporting containers: Postgres (database-per-service), Kafka (KRaft), Redis (FX Service's cache, no persistence), Keycloak (`showcase` realm, host port 8180), OTel Collector → Tempo, Prometheus, Grafana (host port 3001). Every service validates the JWT itself, and returns RFC 7807 `application/problem+json` errors carrying a stable `code` property.
 
 Versions live in the root `pom.xml`: Spring Boot 3.5.16 (bumped from 3.3.8 in Phase 8 Task 1), springdoc-openapi 2.8.17, Resilience4j 2.4.0, Testcontainers 1.21.4; Spring Cloud 2025.0.3 is pinned in `gateway-service/pom.xml`. Lombok and Testcontainers are used throughout.
 

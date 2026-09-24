@@ -167,6 +167,47 @@ services:
       retries: 10
       start_period: 40s
 
+  redis:
+    image: redis:7-alpine
+    container_name: showcase-redis
+    # A cache, not a store: no RDB snapshots, no AOF. Losing it only costs provider calls.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  fx-service:
+    build:
+      context: .
+      dockerfile: fx-service/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
+    container_name: showcase-fx-service
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      FX_PROVIDER_URL: ${FX_PROVIDER_URL:-https://api.frankfurter.dev/v1}
+      KEYCLOAK_JWK_SET_URI: http://keycloak:8080/realms/showcase/protocol/openid-connect/certs
+      KEYCLOAK_ISSUER_URI: http://localhost:8180/realms/showcase
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
+    ports:
+      - "8085:8085"
+    depends_on:
+      redis:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8085/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+
   gateway-service:
     build:
       context: .

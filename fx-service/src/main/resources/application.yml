@@ -1,0 +1,76 @@
+server:
+  port: 8085
+
+logging:
+  structured:
+    format:
+      console: logstash
+
+spring:
+  application:
+    name: fx-service
+  threads:
+    virtual:
+      enabled: true
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      # Redis is an optimisation for this service, never a dependency (docs/phase-12-fx-rates-redis-cache.md):
+      # a dead or hung Redis must fail fast so FxRateService can go straight to the provider,
+      # not park a request for Lettuce's 60s default command timeout.
+      timeout: 500ms
+      connect-timeout: 500ms
+
+info:
+  commit: ${GIT_SHA:unknown}
+
+management:
+  info:
+    env:
+      enabled: true
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  # Same reason as the Redis timeouts above: Boot's Redis health indicator would report this
+  # service DOWN (and fail its Compose healthcheck) while it is still answering every request
+  # from the provider.
+  health:
+    redis:
+      enabled: false
+  opentelemetry:
+    resource-attributes:
+      "service.version": "@project.version@"
+  tracing:
+    enabled: true
+    sampling:
+      probability: 1.0
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:http://localhost:4318/v1/traces}
+
+keycloak:
+  issuer-uri: ${KEYCLOAK_ISSUER_URI:http://localhost:8180/realms/showcase}
+  jwk-set-uri: ${KEYCLOAK_JWK_SET_URI:http://localhost:8180/realms/showcase/protocol/openid-connect/certs}
+
+fx:
+  # Must match account-service's SupportedCurrency enum (Phase 12 Task 2). A currency Account
+  # accepts but FX does not would fail every transfer out of it as FX_SERVICE_UNAVAILABLE.
+  supported-currencies: EUR,USD,GBP,PLN
+  fresh-ttl: 10m
+  last-known-ttl: 24h
+  lock-ttl: 5s
+  lock-wait: 1s
+  provider:
+    base-url: ${FX_PROVIDER_URL:https://api.frankfurter.dev/v1}
+    connect-timeout: 2s
+    read-timeout: 3s
