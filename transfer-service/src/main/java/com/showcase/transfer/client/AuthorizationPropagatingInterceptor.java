@@ -35,7 +35,7 @@ import java.io.IOException;
  * always carries the service token, even with a caller on the thread. Account's credit is the
  * one such call: it requires {@code account-crediter}, which only transfer-service's machine
  * identity holds, because credit has no ownership check and a customer able to call it could
- * create money (docs/open-items.md #2, now closed).
+ * create money (a former open item, now closed).
  *
  * <p>See docs/phase-7-auth-keycloak-jwt.md's Design Decisions for why both paths exist.
  */
