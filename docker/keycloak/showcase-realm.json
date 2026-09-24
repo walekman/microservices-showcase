@@ -27,6 +27,10 @@
         "description": "Can invoke the fraud-check endpoint"
       },
       {
+        "name": "fx-reader",
+        "description": "Can read exchange rates (GET /fx/rates) -- held by customers; transfer-service's machine identity does not need it, because only the live saga (relaying the user's token) calls FX"
+      },
+      {
         "name": "account-admin",
         "description": "Can list every account (GET /accounts) -- not part of the customer composite"
       },
@@ -39,7 +43,7 @@
         "description": "Composite role for a real end user: bundles every capability a human caller needs",
         "composite": true,
         "composites": {
-          "realm": ["transfer-executor", "account-reader", "account-editor", "fraud-checker"]
+          "realm": ["transfer-executor", "account-reader", "account-editor", "fraud-checker", "fx-reader"]
         }
       },
       {

@@ -8,17 +8,17 @@ COPY notification-service/pom.xml notification-service/pom.xml
 COPY fraud-service/pom.xml fraud-service/pom.xml
 COPY gateway-service/pom.xml gateway-service/pom.xml
 COPY fx-service/pom.xml fx-service/pom.xml
-RUN chmod +x mvnw && ./mvnw -pl notification-service -am dependency:go-offline -B
-COPY notification-service/src notification-service/src
-RUN ./mvnw -pl notification-service -am package -DskipTests -B
+RUN chmod +x mvnw && ./mvnw -pl fx-service -am dependency:go-offline -B
+COPY fx-service/src fx-service/src
+RUN ./mvnw -pl fx-service -am package -DskipTests -B
 
 FROM eclipse-temurin:21-jre
 RUN apt-get update && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY --from=build /app/notification-service/target/notification-service-*.jar app.jar
+COPY --from=build /app/fx-service/target/fx-service-*.jar app.jar
 ARG GIT_SHA=unknown
 ENV GIT_SHA=${GIT_SHA}
 LABEL org.opencontainers.image.revision=${GIT_SHA}
-EXPOSE 8083
+EXPOSE 8085
 ENTRYPOINT ["java", "-jar", "app.jar"]
