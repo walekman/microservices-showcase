@@ -19,6 +19,7 @@ import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
@@ -67,6 +68,8 @@ class CompensationSchedulerTest {
                 new CompensationProperties(Duration.ofSeconds(15), Duration.ofSeconds(120), 500), transferSaveService);
     }
 
+    // The fixtures without a locked conversion (strandedTransfer, stalePendingTransfer) double as
+    // the pre-Phase-12 row tests: those replay with no currency and credit the debited amount.
     private Transfer strandedTransfer() {
         return strandedTransfer(TRANSFER_ID, FROM, TO);
     }
@@ -102,8 +105,8 @@ class CompensationSchedulerTest {
         scheduler.drainCompensationRequired();
 
         assertThat(transfer.getStatus()).isEqualTo(TransferStatus.COMPLETED);
-        verify(accountClient).credit(TO, AMOUNT, TRANSFER_ID + ":credit");
-        verify(accountClient, never()).credit(eq(FROM), any(), any());
+        verify(accountClient).credit(TO, AMOUNT, null, TRANSFER_ID + ":credit");
+        verify(accountClient, never()).credit(eq(FROM), any(), any(), any());
         verify(transferRepository).save(transfer);
         // Proves reconcileCredit's success branch actually routes its terminal write through
         // the outbox choke point rather than transferRepository directly -- without this, a
@@ -119,13 +122,13 @@ class CompensationSchedulerTest {
         when(transferRepository.findByStatus(eq(TransferStatus.COMPENSATION_REQUIRED), any())).thenReturn(List.of(transfer));
         when(transferRepository.save(transfer)).thenReturn(transfer);
         doThrow(new AccountRejectedException("ACCOUNT_NOT_FOUND", "Account not found: " + TO))
-                .when(accountClient).credit(TO, AMOUNT, TRANSFER_ID + ":credit");
+                .when(accountClient).credit(TO, AMOUNT, null, TRANSFER_ID + ":credit");
         // The source credit-back succeeds (void mock, no stubbing needed).
 
         scheduler.drainCompensationRequired();
 
         assertThat(transfer.getStatus()).isEqualTo(TransferStatus.COMPENSATED);
-        verify(accountClient).credit(FROM, AMOUNT, TRANSFER_ID + ":compensate");
+        verify(accountClient).credit(FROM, AMOUNT, null, TRANSFER_ID + ":compensate");
         // Proves compensateSource's success branch routes through the outbox choke point.
         verify(transferSaveService).save(transfer);
     }
@@ -136,9 +139,9 @@ class CompensationSchedulerTest {
         when(transferRepository.findByStatus(eq(TransferStatus.COMPENSATION_REQUIRED), any())).thenReturn(List.of(transfer));
         when(transferRepository.save(transfer)).thenReturn(transfer);
         doThrow(new AccountRejectedException("ACCOUNT_NOT_FOUND", "Account not found: " + TO))
-                .when(accountClient).credit(TO, AMOUNT, TRANSFER_ID + ":credit");
+                .when(accountClient).credit(TO, AMOUNT, null, TRANSFER_ID + ":credit");
         doThrow(new AccountRejectedException("ACCOUNT_NOT_FOUND", "Account not found: " + FROM))
-                .when(accountClient).credit(FROM, AMOUNT, TRANSFER_ID + ":compensate");
+                .when(accountClient).credit(FROM, AMOUNT, null, TRANSFER_ID + ":compensate");
 
         scheduler.drainCompensationRequired();
 
@@ -154,7 +157,7 @@ class CompensationSchedulerTest {
         Transfer transfer = strandedTransfer();
         when(transferRepository.findByStatus(eq(TransferStatus.COMPENSATION_REQUIRED), any())).thenReturn(List.of(transfer));
         doThrow(new AccountServiceUnavailableException("read timed out"))
-                .when(accountClient).credit(TO, AMOUNT, TRANSFER_ID + ":credit");
+                .when(accountClient).credit(TO, AMOUNT, null, TRANSFER_ID + ":credit");
 
         scheduler.drainCompensationRequired();
 
@@ -167,9 +170,9 @@ class CompensationSchedulerTest {
         Transfer transfer = strandedTransfer();
         when(transferRepository.findByStatus(eq(TransferStatus.COMPENSATION_REQUIRED), any())).thenReturn(List.of(transfer));
         doThrow(new AccountRejectedException("ACCOUNT_NOT_FOUND", "Account not found: " + TO))
-                .when(accountClient).credit(TO, AMOUNT, TRANSFER_ID + ":credit");
+                .when(accountClient).credit(TO, AMOUNT, null, TRANSFER_ID + ":credit");
         doThrow(new AccountServiceUnavailableException("read timed out"))
-                .when(accountClient).credit(FROM, AMOUNT, TRANSFER_ID + ":compensate");
+                .when(accountClient).credit(FROM, AMOUNT, null, TRANSFER_ID + ":compensate");
 
         scheduler.drainCompensationRequired();
 
@@ -200,13 +203,13 @@ class CompensationSchedulerTest {
                 .thenReturn(List.of(transfer));
         when(transferRepository.save(transfer)).thenReturn(transfer);
         doThrow(new AccountRejectedException("ACCOUNT_NOT_FOUND", "Account not found: " + FROM))
-                .when(accountClient).debit(FROM, AMOUNT, TRANSFER_ID + ":debit");
+                .when(accountClient).debit(FROM, AMOUNT, null, TRANSFER_ID + ":debit");
 
         scheduler.sweepStalePending();
 
         assertThat(transfer.getStatus()).isEqualTo(TransferStatus.FAILED);
         assertThat(transfer.getFailureCode()).isEqualTo(TransferFailureCode.ACCOUNT_NOT_FOUND);
-        verify(accountClient, never()).credit(any(), any(), any());
+        verify(accountClient, never()).credit(any(), any(), any(), any());
         // Proves reconcileDebit's catch(AccountRejectedException) branch routes through the
         // outbox choke point.
         verify(transferSaveService).save(transfer);
@@ -223,7 +226,7 @@ class CompensationSchedulerTest {
         scheduler.sweepStalePending();
 
         assertThat(transfer.getStatus()).isEqualTo(TransferStatus.COMPENSATION_REQUIRED);
-        verify(accountClient, never()).credit(any(), any(), any());
+        verify(accountClient, never()).credit(any(), any(), any(), any());
     }
 
     @Test
@@ -232,7 +235,7 @@ class CompensationSchedulerTest {
         when(transferRepository.findByStatusAndCreatedAtBefore(eq(TransferStatus.PENDING), any(), any()))
                 .thenReturn(List.of(transfer));
         doThrow(new AccountServiceUnavailableException("read timed out"))
-                .when(accountClient).debit(FROM, AMOUNT, TRANSFER_ID + ":debit");
+                .when(accountClient).debit(FROM, AMOUNT, null, TRANSFER_ID + ":debit");
 
         scheduler.sweepStalePending();
 
@@ -269,8 +272,8 @@ class CompensationSchedulerTest {
         scheduler.drainCompensationRequired();
 
         assertThat(transfer.getStatus()).isEqualTo(TransferStatus.COMPENSATED);
-        verify(accountClient, never()).credit(eq(TO), any(), any());
-        verify(accountClient).credit(FROM, AMOUNT, TRANSFER_ID + ":compensate");
+        verify(accountClient, never()).credit(eq(TO), any(), any(), any());
+        verify(accountClient).credit(FROM, AMOUNT, null, TRANSFER_ID + ":compensate");
     }
 
     @Test
@@ -282,7 +285,7 @@ class CompensationSchedulerTest {
         scheduler.drainCompensationRequired();
 
         assertThat(transfer.getStatus()).isEqualTo(TransferStatus.COMPENSATION_REQUIRED);
-        verify(accountClient, never()).credit(any(), any(), any());
+        verify(accountClient, never()).credit(any(), any(), any(), any());
         verify(transferRepository, never()).save(any());
     }
 
@@ -299,7 +302,7 @@ class CompensationSchedulerTest {
         scheduler.sweepStalePending();
 
         assertThat(transfer.getStatus()).isEqualTo(TransferStatus.PENDING);
-        verify(accountClient, never()).debit(any(), any(), any());
+        verify(accountClient, never()).debit(any(), any(), any(), any());
         verify(transferRepository, never()).save(any());
     }
 
@@ -313,7 +316,55 @@ class CompensationSchedulerTest {
         scheduler.sweepStalePending();
 
         assertThat(transfer.getStatus()).isEqualTo(TransferStatus.PENDING);
-        verify(accountClient, never()).debit(any(), any(), any());
+        verify(accountClient, never()).debit(any(), any(), any(), any());
         verify(transferRepository, never()).save(any());
+    }
+
+    private Transfer convertedTransfer() {
+        Transfer transfer = new Transfer(FROM, TO, AMOUNT, UUID.randomUUID());
+        ReflectionTestUtils.setField(transfer, "id", TRANSFER_ID);
+        transfer.lockConversion("PLN", "EUR", new BigDecimal("0.22819"), LocalDate.of(2026, 9, 23));
+        return transfer;
+    }
+
+    @Test
+    void reconcilingAConvertedTransferCreditsTheLockedAmountInTheDestinationCurrency() {
+        Transfer transfer = convertedTransfer();
+        transfer.markCompensationRequired(TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, "credit leg timed out");
+        when(transferRepository.findByStatus(eq(TransferStatus.COMPENSATION_REQUIRED), any())).thenReturn(List.of(transfer));
+        when(transferRepository.save(transfer)).thenReturn(transfer);
+
+        scheduler.drainCompensationRequired();
+
+        assertThat(transfer.getStatus()).isEqualTo(TransferStatus.COMPLETED);
+        verify(accountClient).credit(TO, new BigDecimal("9.13"), "EUR", TRANSFER_ID + ":credit");
+    }
+
+    @Test
+    void compensatingAConvertedTransferReturnsTheDebitedAmountInTheSourceCurrency() {
+        Transfer transfer = convertedTransfer();
+        transfer.markCompensationRequired(TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE, "credit leg timed out");
+        when(transferRepository.findByStatus(eq(TransferStatus.COMPENSATION_REQUIRED), any())).thenReturn(List.of(transfer));
+        doThrow(new AccountRejectedException("ACCOUNT_NOT_FOUND", "Account not found: " + TO))
+                .when(accountClient).credit(TO, new BigDecimal("9.13"), "EUR", TRANSFER_ID + ":credit");
+        when(transferRepository.save(transfer)).thenReturn(transfer);
+
+        scheduler.drainCompensationRequired();
+
+        assertThat(transfer.getStatus()).isEqualTo(TransferStatus.COMPENSATED);
+        verify(accountClient).credit(FROM, AMOUNT, "PLN", TRANSFER_ID + ":compensate");
+    }
+
+    @Test
+    void replayingAStaleConvertedDebitSendsTheDebitedAmountInTheSourceCurrency() {
+        Transfer transfer = convertedTransfer();
+        when(transferRepository.findByStatusAndCreatedAtBefore(eq(TransferStatus.PENDING), any(), any()))
+                .thenReturn(List.of(transfer));
+        when(transferRepository.save(transfer)).thenReturn(transfer);
+
+        scheduler.sweepStalePending();
+
+        verify(accountClient).debit(FROM, AMOUNT, "PLN", TRANSFER_ID + ":debit");
+        assertThat(transfer.getStatus()).isEqualTo(TransferStatus.COMPENSATION_REQUIRED);
     }
 }

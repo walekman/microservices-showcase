@@ -6,6 +6,9 @@ import com.showcase.transfer.client.AccountServiceUnavailableException;
 import com.showcase.transfer.client.FraudClient;
 import com.showcase.transfer.client.FraudRejectedException;
 import com.showcase.transfer.client.FraudServiceUnavailableException;
+import com.showcase.transfer.client.FxClient;
+import com.showcase.transfer.client.FxRate;
+import com.showcase.transfer.client.FxServiceUnavailableException;
 import com.showcase.transfer.domain.DebitOutcomeUnknownException;
 import com.showcase.transfer.domain.IdempotencyKeyConflictException;
 import com.showcase.transfer.domain.SameAccountTransferException;
@@ -26,6 +29,7 @@ import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -35,7 +39,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -65,6 +72,9 @@ class TransferServiceTest {
     private FraudClient fraudClient;
 
     @Mock
+    private FxClient fxClient;
+
+    @Mock
     private TransferSaveService transferSaveService;
 
     private TransferService transferService;
@@ -81,14 +91,19 @@ class TransferServiceTest {
 
     @BeforeEach
     void setUp() {
-        transferService = new TransferService(transferRepository, accountClient, fraudClient, transferSaveService);
+        transferService = new TransferService(transferRepository, accountClient, fraudClient, fxClient, transferSaveService);
+        // Every account exists, in EUR, unless a test says otherwise (with doThrow/doReturn,
+        // which do not invoke this stub). lenient: the replay tests never reach pre-validation.
+        lenient().when(accountClient.accountCurrency(any())).thenReturn("EUR");
     }
 
     // Called per-test rather than from setUp: the self-transfer test never reaches the
     // repository, and Mockito strict stubbing rightly fails an unused stub. Keeping
     // strict stubbing is worth the extra line.
+    // lenient: a transfer that fails pre-validation is inserted once, through transferSaveService,
+    // and never touches transferRepository.save -- strict stubbing would flag that stub as unused.
     private void repositoryEchoesSaves() {
-        when(transferRepository.save(any(Transfer.class))).thenAnswer(invocation -> {
+        lenient().when(transferRepository.save(any(Transfer.class))).thenAnswer(invocation -> {
             Transfer saved = invocation.getArgument(0);
             if (saved.getId() == null) {
                 ReflectionTestUtils.setField(saved, "id", TRANSFER_ID);
@@ -96,7 +111,7 @@ class TransferServiceTest {
             statusesAtSaveTime.add(saved.getStatus());
             return saved;
         });
-        when(transferSaveService.save(any(Transfer.class))).thenAnswer(invocation -> {
+        lenient().when(transferSaveService.save(any(Transfer.class))).thenAnswer(invocation -> {
             Transfer saved = invocation.getArgument(0);
             if (saved.getId() == null) {
                 ReflectionTestUtils.setField(saved, "id", TRANSFER_ID);
@@ -107,9 +122,8 @@ class TransferServiceTest {
         });
     }
 
-    // accountExists is void -- a Mockito mock's void methods are no-ops (never throw) by
-    // default, so "both accounts exist" needs no stubbing at all, unlike the old
-    // AccountView-returning getAccount this replaced.
+    // setUp's lenient default already answers accountCurrency with "EUR" for every account, so
+    // "both accounts exist" needs no stubbing of its own.
     private void bothAccountsExist() {
         // no-op: kept as a named no-op so every test's intent stays readable at the call site.
     }
@@ -132,15 +146,15 @@ class TransferServiceTest {
         assertThat(result.getStatus()).isEqualTo(TransferStatus.COMPLETED);
         assertThat(result.getSettledAt()).isNotNull();
         assertThat(result.getFailureCode()).isNull();
-        verify(accountClient).debit(FROM, AMOUNT, TRANSFER_ID + ":debit");
-        verify(accountClient).credit(TO, AMOUNT, TRANSFER_ID + ":credit");
+        verify(accountClient).debit(FROM, AMOUNT, "EUR", TRANSFER_ID + ":debit");
+        verify(accountClient).credit(TO, AMOUNT, "EUR", TRANSFER_ID + ":credit");
 
         // PENDING must be durable BEFORE any money moves, so a crash mid-saga leaves
         // evidence. Without these two assertions, moving the first save to the end of
         // execute() would leave every other test in this class green.
         InOrder inOrder = inOrder(transferRepository, accountClient);
         inOrder.verify(transferRepository).save(any(Transfer.class));
-        inOrder.verify(accountClient).debit(eq(FROM), eq(AMOUNT), any());
+        inOrder.verify(accountClient).debit(eq(FROM), eq(AMOUNT), eq("EUR"), any());
         assertThat(statusesAtSaveTime).containsExactly(TransferStatus.PENDING, TransferStatus.COMPLETED);
         // Proves execute()'s happy-path completion routes its terminal write through the
         // outbox choke point, not straight to transferRepository -- without this, a
@@ -154,14 +168,14 @@ class TransferServiceTest {
     void failsWithoutDebitingWhenTheSourceAccountDoesNotExist() {
         repositoryEchoesSaves();
         org.mockito.Mockito.doThrow(new AccountRejectedException("ACCOUNT_NOT_FOUND", "Account not found: " + FROM))
-                .when(accountClient).accountExists(FROM);
+                .when(accountClient).accountCurrency(FROM);
 
         Transfer result = transferService.execute(FROM, TO, AMOUNT, INITIATOR_ID, KEY);
 
         assertThat(result.getStatus()).isEqualTo(TransferStatus.FAILED);
         assertThat(result.getFailureCode()).isEqualTo(TransferFailureCode.ACCOUNT_NOT_FOUND);
-        verify(accountClient, never()).debit(any(), any(), any());
-        verify(accountClient, never()).credit(any(), any(), any());
+        verify(accountClient, never()).debit(any(), any(), any(), any());
+        verify(accountClient, never()).credit(any(), any(), any(), any());
         // Proves fail()'s terminal write routes through the outbox choke point.
         verify(transferSaveService).save(any(Transfer.class));
     }
@@ -169,33 +183,28 @@ class TransferServiceTest {
     @Test
     void failsWithoutDebitingWhenTheDestinationAccountDoesNotExist() {
         repositoryEchoesSaves();
-        // Both calls need an explicit stub here (unlike bothAccountsExist()'s pure no-op):
-        // accountExists(FROM) succeeds and reaches the mock unstubbed, then accountExists(TO)
-        // throws -- Mockito's strict stubbing flags that partial mix (one argument stubbed, a
-        // different one not) on the same method as a likely mistake otherwise.
-        org.mockito.Mockito.doNothing().when(accountClient).accountExists(FROM);
         org.mockito.Mockito.doThrow(new AccountRejectedException("ACCOUNT_NOT_FOUND", "Account not found: " + TO))
-                .when(accountClient).accountExists(TO);
+                .when(accountClient).accountCurrency(TO);
 
         Transfer result = transferService.execute(FROM, TO, AMOUNT, INITIATOR_ID, KEY);
 
         assertThat(result.getStatus()).isEqualTo(TransferStatus.FAILED);
         assertThat(result.getFailureCode()).isEqualTo(TransferFailureCode.ACCOUNT_NOT_FOUND);
-        verify(accountClient, never()).debit(any(), any(), any());
-        verify(accountClient, never()).credit(any(), any(), any());
+        verify(accountClient, never()).debit(any(), any(), any(), any());
+        verify(accountClient, never()).credit(any(), any(), any(), any());
     }
 
     @Test
     void failsWhenAccountServiceIsUnreachableDuringPreValidation() {
         repositoryEchoesSaves();
         org.mockito.Mockito.doThrow(new AccountServiceUnavailableException("connection refused"))
-                .when(accountClient).accountExists(FROM);
+                .when(accountClient).accountCurrency(FROM);
 
         Transfer result = transferService.execute(FROM, TO, AMOUNT, INITIATOR_ID, KEY);
 
         assertThat(result.getStatus()).isEqualTo(TransferStatus.FAILED);
         assertThat(result.getFailureCode()).isEqualTo(TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE);
-        verify(accountClient, never()).debit(any(), any(), any());
+        verify(accountClient, never()).debit(any(), any(), any(), any());
     }
 
     @Test
@@ -203,14 +212,14 @@ class TransferServiceTest {
         repositoryEchoesSaves();
         bothAccountsExist();
         org.mockito.Mockito.doThrow(new AccountRejectedException("INSUFFICIENT_FUNDS", "not enough money"))
-                .when(accountClient).debit(eq(FROM), eq(AMOUNT), any());
+                .when(accountClient).debit(eq(FROM), eq(AMOUNT), eq("EUR"), any());
 
         Transfer result = transferService.execute(FROM, TO, AMOUNT, INITIATOR_ID, KEY);
 
         assertThat(result.getStatus()).isEqualTo(TransferStatus.FAILED);
         assertThat(result.getFailureCode()).isEqualTo(TransferFailureCode.INSUFFICIENT_FUNDS);
         assertThat(result.getFailureReason()).isEqualTo("not enough money");
-        verify(accountClient, never()).credit(any(), any(), any());
+        verify(accountClient, never()).credit(any(), any(), any(), any());
     }
 
     @Test
@@ -225,7 +234,7 @@ class TransferServiceTest {
         });
         bothAccountsExist();
         org.mockito.Mockito.doThrow(new AccountServiceUnavailableException("read timed out"))
-                .when(accountClient).debit(eq(FROM), eq(AMOUNT), any());
+                .when(accountClient).debit(eq(FROM), eq(AMOUNT), eq("EUR"), any());
 
         assertThatThrownBy(() -> transferService.execute(FROM, TO, AMOUNT, INITIATOR_ID, KEY))
                 .isInstanceOf(DebitOutcomeUnknownException.class)
@@ -236,7 +245,7 @@ class TransferServiceTest {
         // Only the initial PENDING insert was persisted -- no FAILED write, so no outbox event.
         assertThat(statusesAtSaveTime).containsExactly(TransferStatus.PENDING);
         verify(transferSaveService, never()).save(any(Transfer.class));
-        verify(accountClient, never()).credit(any(), any(), any());
+        verify(accountClient, never()).credit(any(), any(), any(), any());
     }
 
     @Test
@@ -244,13 +253,13 @@ class TransferServiceTest {
         repositoryEchoesSaves();
         bothAccountsExist();
         org.mockito.Mockito.doThrow(new AccountRejectedException("ACCOUNT_NOT_FOUND", "Account not found: " + TO))
-                .when(accountClient).credit(eq(TO), eq(AMOUNT), any());
+                .when(accountClient).credit(eq(TO), eq(AMOUNT), eq("EUR"), any());
 
         Transfer result = transferService.execute(FROM, TO, AMOUNT, INITIATOR_ID, KEY);
 
         assertThat(result.getStatus()).isEqualTo(TransferStatus.COMPENSATION_REQUIRED);
         assertThat(result.getFailureCode()).isEqualTo(TransferFailureCode.ACCOUNT_NOT_FOUND);
-        verify(accountClient).debit(eq(FROM), eq(AMOUNT), any());
+        verify(accountClient).debit(eq(FROM), eq(AMOUNT), eq("EUR"), any());
         // Proves strand()'s terminal write routes through the outbox choke point (even though
         // COMPENSATION_REQUIRED itself writes no outbox row, per OutboxEventType.forStatus).
         verify(transferSaveService).save(any(Transfer.class));
@@ -261,14 +270,14 @@ class TransferServiceTest {
         repositoryEchoesSaves();
         bothAccountsExist();
         org.mockito.Mockito.doThrow(new AccountServiceUnavailableException("read timed out"))
-                .when(accountClient).credit(eq(TO), eq(AMOUNT), any());
+                .when(accountClient).credit(eq(TO), eq(AMOUNT), eq("EUR"), any());
 
         Transfer result = transferService.execute(FROM, TO, AMOUNT, INITIATOR_ID, KEY);
 
         assertThat(result.getStatus()).isEqualTo(TransferStatus.COMPENSATION_REQUIRED);
         assertThat(result.getFailureCode()).isEqualTo(TransferFailureCode.ACCOUNT_SERVICE_UNAVAILABLE);
         assertThat(result.getFailureReason()).contains("read timed out");
-        verify(accountClient).debit(eq(FROM), eq(AMOUNT), any());
+        verify(accountClient).debit(eq(FROM), eq(AMOUNT), eq("EUR"), any());
     }
 
     @Test
@@ -276,7 +285,7 @@ class TransferServiceTest {
         assertThatThrownBy(() -> transferService.execute(FROM, FROM, AMOUNT, INITIATOR_ID, KEY))
                 .isInstanceOf(SameAccountTransferException.class);
 
-        verify(accountClient, never()).accountExists(any());
+        verify(accountClient, never()).accountCurrency(any());
         // Passes today only because the constructor throws while the save argument is being
         // evaluated. Worth pinning: a rejected transfer must leave no row behind.
         verify(transferRepository, never()).save(any());
@@ -286,15 +295,15 @@ class TransferServiceTest {
     void failsWhenAnUnexpectedErrorOccursBeforeTheDebit() {
         repositoryEchoesSaves();
         org.mockito.Mockito.doThrow(new IllegalStateException("response mapper exploded"))
-                .when(accountClient).accountExists(FROM);
+                .when(accountClient).accountCurrency(FROM);
 
         Transfer result = transferService.execute(FROM, TO, AMOUNT, INITIATOR_ID, KEY);
 
         assertThat(result.getStatus()).isEqualTo(TransferStatus.FAILED);
         assertThat(result.getFailureCode()).isEqualTo(TransferFailureCode.UNEXPECTED_ERROR);
         assertThat(result.getFailureReason()).contains("response mapper exploded");
-        verify(accountClient, never()).debit(any(), any(), any());
-        verify(accountClient, never()).credit(any(), any(), any());
+        verify(accountClient, never()).debit(any(), any(), any(), any());
+        verify(accountClient, never()).credit(any(), any(), any(), any());
     }
 
     @Test
@@ -302,14 +311,14 @@ class TransferServiceTest {
         repositoryEchoesSaves();
         bothAccountsExist();
         org.mockito.Mockito.doThrow(new IllegalStateException("response mapper exploded"))
-                .when(accountClient).credit(eq(TO), eq(AMOUNT), any());
+                .when(accountClient).credit(eq(TO), eq(AMOUNT), eq("EUR"), any());
 
         Transfer result = transferService.execute(FROM, TO, AMOUNT, INITIATOR_ID, KEY);
 
         assertThat(result.getStatus()).isEqualTo(TransferStatus.COMPENSATION_REQUIRED);
         assertThat(result.getFailureCode()).isEqualTo(TransferFailureCode.UNEXPECTED_ERROR);
         assertThat(result.getFailureReason()).contains("response mapper exploded");
-        verify(accountClient).debit(eq(FROM), eq(AMOUNT), any());
+        verify(accountClient).debit(eq(FROM), eq(AMOUNT), eq("EUR"), any());
     }
 
     @Test
@@ -338,8 +347,8 @@ class TransferServiceTest {
                 .isInstanceOf(TransferPersistenceException.class)
                 .hasCause(boom);
 
-        verify(accountClient).debit(eq(FROM), eq(AMOUNT), any());
-        verify(accountClient).credit(eq(TO), eq(AMOUNT), any());
+        verify(accountClient).debit(eq(FROM), eq(AMOUNT), eq("EUR"), any());
+        verify(accountClient).credit(eq(TO), eq(AMOUNT), eq("EUR"), any());
     }
 
     @Test
@@ -349,8 +358,8 @@ class TransferServiceTest {
 
         transferService.execute(FROM, TO, AMOUNT, INITIATOR_ID, KEY);
 
-        verify(accountClient).debit(FROM, AMOUNT, TRANSFER_ID + ":debit");
-        verify(accountClient).credit(TO, AMOUNT, TRANSFER_ID + ":credit");
+        verify(accountClient).debit(FROM, AMOUNT, "EUR", TRANSFER_ID + ":debit");
+        verify(accountClient).credit(TO, AMOUNT, "EUR", TRANSFER_ID + ":credit");
     }
 
     @Test
@@ -364,7 +373,7 @@ class TransferServiceTest {
 
         assertThat(result.getStatus()).isEqualTo(TransferStatus.FAILED);
         assertThat(result.getFailureCode()).isEqualTo(TransferFailureCode.SOURCE_ACCOUNT_BLOCKED);
-        verify(accountClient, never()).debit(any(), any(), any());
+        verify(accountClient, never()).debit(any(), any(), any(), any());
         verify(fraudClient, never()).check(TO);
     }
 
@@ -380,7 +389,7 @@ class TransferServiceTest {
         assertThat(result.getStatus()).isEqualTo(TransferStatus.FAILED);
         assertThat(result.getFailureCode()).isEqualTo(TransferFailureCode.SOURCE_FRAUD_SERVICE_UNAVAILABLE);
         assertThat(result.getFailureReason()).contains("read timed out");
-        verify(accountClient, never()).debit(any(), any(), any());
+        verify(accountClient, never()).debit(any(), any(), any(), any());
     }
 
     @Test
@@ -394,8 +403,8 @@ class TransferServiceTest {
 
         assertThat(result.getStatus()).isEqualTo(TransferStatus.COMPENSATION_REQUIRED);
         assertThat(result.getFailureCode()).isEqualTo(TransferFailureCode.DESTINATION_ACCOUNT_BLOCKED);
-        verify(accountClient).debit(eq(FROM), eq(AMOUNT), any());
-        verify(accountClient, never()).credit(any(), any(), any());
+        verify(accountClient).debit(eq(FROM), eq(AMOUNT), eq("EUR"), any());
+        verify(accountClient, never()).credit(any(), any(), any(), any());
     }
 
     @Test
@@ -410,7 +419,7 @@ class TransferServiceTest {
         assertThat(result.getStatus()).isEqualTo(TransferStatus.COMPENSATION_REQUIRED);
         assertThat(result.getFailureCode()).isEqualTo(TransferFailureCode.DESTINATION_FRAUD_SERVICE_UNAVAILABLE);
         assertThat(result.getFailureReason()).contains("read timed out");
-        verify(accountClient, never()).credit(any(), any(), any());
+        verify(accountClient, never()).credit(any(), any(), any(), any());
     }
 
     @Test
@@ -501,7 +510,7 @@ class TransferServiceTest {
 
         assertThat(result).isSameAs(earlier);
         verify(transferRepository, never()).save(any());
-        verifyNoInteractions(accountClient, fraudClient, transferSaveService);
+        verifyNoInteractions(accountClient, fraudClient, fxClient, transferSaveService);
     }
 
     @Test
@@ -513,7 +522,7 @@ class TransferServiceTest {
 
         assertThat(result).isSameAs(earlier);
         assertThat(result.getFailureCode()).isEqualTo(TransferFailureCode.INSUFFICIENT_FUNDS);
-        verifyNoInteractions(accountClient, fraudClient, transferSaveService);
+        verifyNoInteractions(accountClient, fraudClient, fxClient, transferSaveService);
     }
 
     @Test
@@ -524,7 +533,7 @@ class TransferServiceTest {
         assertThatThrownBy(() -> transferService.execute(FROM, TO, AMOUNT, INITIATOR_ID, KEY))
                 .isInstanceOfSatisfying(TransferInProgressException.class,
                         ex -> assertThat(ex.getTransferId()).isEqualTo(TRANSFER_ID));
-        verifyNoInteractions(accountClient, fraudClient, transferSaveService);
+        verifyNoInteractions(accountClient, fraudClient, fxClient, transferSaveService);
     }
 
     @Test
@@ -536,7 +545,7 @@ class TransferServiceTest {
                 .isInstanceOf(IdempotencyKeyConflictException.class);
         assertThatThrownBy(() -> transferService.execute(FROM, UUID.randomUUID(), AMOUNT, INITIATOR_ID, KEY))
                 .isInstanceOf(IdempotencyKeyConflictException.class);
-        verifyNoInteractions(accountClient, fraudClient, transferSaveService);
+        verifyNoInteractions(accountClient, fraudClient, fxClient, transferSaveService);
     }
 
     @Test
@@ -550,7 +559,9 @@ class TransferServiceTest {
 
         assertThatThrownBy(() -> transferService.execute(FROM, TO, AMOUNT, INITIATOR_ID, KEY))
                 .isInstanceOf(TransferInProgressException.class);
-        verifyNoInteractions(accountClient, fraudClient, transferSaveService);
+        // prepare() ran before the insert -- by design, it only reads -- but nothing moved.
+        verify(accountClient, never()).debit(any(), any(), any(), any());
+        verifyNoInteractions(fraudClient, transferSaveService);
     }
 
     @Test
@@ -560,6 +571,112 @@ class TransferServiceTest {
 
         assertThatThrownBy(() -> transferService.execute(FROM, TO, AMOUNT, INITIATOR_ID, KEY))
                 .isSameAs(violation);
-        verifyNoInteractions(accountClient, fraudClient, transferSaveService);
+        verify(accountClient, never()).debit(any(), any(), any(), any());
+        verifyNoInteractions(fraudClient, transferSaveService);
+    }
+
+    // --- Phase 12: pricing and the locked conversion ---
+
+    private static final LocalDate AS_OF = LocalDate.of(2026, 9, 23);
+    private static final FxRate PLN_TO_EUR = new FxRate("PLN", "EUR", new BigDecimal("0.22819"), AS_OF, false);
+
+    private void sourceInPlnDestinationInEur() {
+        doReturn("PLN").when(accountClient).accountCurrency(FROM);
+        doReturn("EUR").when(accountClient).accountCurrency(TO);
+    }
+
+    @Test
+    void aCrossCurrencyTransferDebitsTheAmountAndCreditsTheLockedConversion() {
+        repositoryEchoesSaves();
+        sourceInPlnDestinationInEur();
+        when(fxClient.rate("PLN", "EUR")).thenReturn(PLN_TO_EUR);
+
+        Transfer result = transferService.execute(FROM, TO, AMOUNT, INITIATOR_ID, KEY);
+
+        assertThat(result.getStatus()).isEqualTo(TransferStatus.COMPLETED);
+        assertThat(result.getCreditAmount()).isEqualByComparingTo("9.13"); // 40.00 * 0.22819 = 9.1276
+        assertThat(result.getRate()).isEqualByComparingTo("0.22819");
+        assertThat(result.getRateAsOf()).isEqualTo(AS_OF);
+        verify(accountClient).debit(FROM, AMOUNT, "PLN", TRANSFER_ID + ":debit");
+        verify(accountClient).credit(TO, new BigDecimal("9.13"), "EUR", TRANSFER_ID + ":credit");
+    }
+
+    // Review Focus #2: no PENDING row may ever exist without the amounts a sweep must replay.
+    @Test
+    void theConversionIsOnTheRowAtItsFirstInsertBeforeAnyMoneyMoves() {
+        List<BigDecimal> creditAmountAtInsert = new ArrayList<>();
+        when(transferRepository.save(any(Transfer.class))).thenAnswer(invocation -> {
+            Transfer saved = invocation.getArgument(0);
+            ReflectionTestUtils.setField(saved, "id", TRANSFER_ID);
+            creditAmountAtInsert.add(saved.getCreditAmount());
+            return saved;
+        });
+        when(transferSaveService.save(any(Transfer.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        sourceInPlnDestinationInEur();
+        when(fxClient.rate("PLN", "EUR")).thenReturn(PLN_TO_EUR);
+
+        transferService.execute(FROM, TO, AMOUNT, INITIATOR_ID, KEY);
+
+        InOrder inOrder = inOrder(fxClient, transferRepository, accountClient);
+        inOrder.verify(fxClient).rate("PLN", "EUR");
+        inOrder.verify(transferRepository).save(any(Transfer.class));
+        inOrder.verify(accountClient).debit(any(), any(), any(), any());
+        assertThat(creditAmountAtInsert).containsExactly(new BigDecimal("9.13"));
+    }
+
+    @Test
+    void aSameCurrencyTransferNeverCallsFx() {
+        repositoryEchoesSaves();
+
+        Transfer result = transferService.execute(FROM, TO, AMOUNT, INITIATOR_ID, KEY);
+
+        assertThat(result.getSourceCurrency()).isEqualTo("EUR");
+        assertThat(result.getRate()).isEqualByComparingTo("1");
+        assertThat(result.getCreditAmount()).isEqualByComparingTo(AMOUNT);
+        verifyNoInteractions(fxClient);
+    }
+
+    @Test
+    void anFxOutageFailsTheTransferInOneInsertWithNothingMoved() {
+        repositoryEchoesSaves();
+        sourceInPlnDestinationInEur();
+        when(fxClient.rate("PLN", "EUR")).thenThrow(new FxServiceUnavailableException("FX Service returned 503"));
+
+        Transfer result = transferService.execute(FROM, TO, AMOUNT, INITIATOR_ID, KEY);
+
+        assertThat(result.getStatus()).isEqualTo(TransferStatus.FAILED);
+        assertThat(result.getFailureCode()).isEqualTo(TransferFailureCode.FX_SERVICE_UNAVAILABLE);
+        assertThat(result.getCreditAmount()).isNull();
+        assertThat(statusesAtSaveTime).containsExactly(TransferStatus.FAILED);
+        verify(transferRepository, never()).save(any());
+        verifyNoInteractions(fraudClient);
+        verify(accountClient, never()).debit(any(), any(), any(), any());
+    }
+
+    @Test
+    void anAmountThatConvertsToNothingIsRejectedBeforeAnyMoneyMoves() {
+        repositoryEchoesSaves();
+        sourceInPlnDestinationInEur();
+        when(fxClient.rate("PLN", "EUR")).thenReturn(PLN_TO_EUR);
+
+        // 0.01 PLN * 0.22819 = 0.0022819 -> 0.00 EUR
+        Transfer result = transferService.execute(FROM, TO, new BigDecimal("0.01"), INITIATOR_ID, KEY);
+
+        assertThat(result.getStatus()).isEqualTo(TransferStatus.FAILED);
+        assertThat(result.getFailureCode()).isEqualTo(TransferFailureCode.AMOUNT_TOO_SMALL);
+        verify(accountClient, never()).debit(any(), any(), any(), any());
+    }
+
+    @Test
+    void aFailedPreValidationIsInsertedOnceThroughTheOutboxChokePoint() {
+        repositoryEchoesSaves();
+        doThrow(new AccountRejectedException("ACCOUNT_NOT_FOUND", "Account not found: " + TO))
+                .when(accountClient).accountCurrency(TO);
+
+        transferService.execute(FROM, TO, AMOUNT, INITIATOR_ID, KEY);
+
+        assertThat(statusesAtSaveTime).containsExactly(TransferStatus.FAILED);
+        verify(transferRepository, never()).save(any());
+        verify(transferSaveService).save(any(Transfer.class));
     }
 }

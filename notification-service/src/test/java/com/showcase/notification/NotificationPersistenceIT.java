@@ -73,6 +73,27 @@ class NotificationPersistenceIT {
         assertThat(stored.getSettledAt()).isEqualTo(Instant.parse("2026-09-24T10:15:30.123Z"));
         assertThat(stored.getKafkaTopic()).isEqualTo("transfer.failed");
         assertThat(stored.getReceivedAt()).isNotNull();
+        // A pre-Phase-12 payload (no conversion fields) still stores cleanly, with them left empty.
+        assertThat(stored.getSourceCurrency()).isNull();
+        assertThat(stored.getCreditAmount()).isNull();
+    }
+
+    @Test
+    void storesTheConversionTheTransferLocked() {
+        UUID transferId = UUID.randomUUID();
+        kafkaTemplate.send("transfer.completed", transferId.toString(), """
+                {"transferId":"%s","fromAccountId":"%s","toAccountId":"%s","amount":40.00,
+                 "sourceCurrency":"PLN","destinationCurrency":"EUR","rate":0.22819,"creditAmount":9.13,
+                 "status":"COMPLETED","settledAt":"2026-09-24T10:15:30.123Z"}
+                """.formatted(transferId, UUID.randomUUID(), UUID.randomUUID()));
+
+        Notification stored = await().atMost(Duration.ofSeconds(20))
+                .until(() -> repository.findByTransferId(transferId).orElse(null), n -> n != null);
+
+        assertThat(stored.getSourceCurrency()).isEqualTo("PLN");
+        assertThat(stored.getDestinationCurrency()).isEqualTo("EUR");
+        assertThat(stored.getRate()).isEqualByComparingTo("0.22819");
+        assertThat(stored.getCreditAmount()).isEqualByComparingTo("9.13");
     }
 
     @Test

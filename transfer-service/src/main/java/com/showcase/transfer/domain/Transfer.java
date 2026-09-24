@@ -14,7 +14,9 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.Arrays;
 import java.util.UUID;
 
@@ -52,6 +54,29 @@ public class Transfer {
     // scale 2, matching Account.balance -- see the comment there.
     @Column(nullable = false, precision = 19, scale = 2, updatable = false)
     private BigDecimal amount;
+
+    // The conversion, locked before the row is first inserted and never changed afterwards
+    // (updatable = false): every leg and every CompensationScheduler replay reads these, never a
+    // fresh rate -- a replay that re-priced would send a different amount under an idempotency key
+    // Account has already recorded. All null on a transfer that failed before it was priced, and on
+    // a row from before Phase 12 (same-currency by construction; see amountToCredit()). See
+    // docs/phase-12-fx-rates-redis-cache.md.
+    @Column(length = 3, updatable = false)
+    private String sourceCurrency;
+
+    @Column(length = 3, updatable = false)
+    private String destinationCurrency;
+
+    @Column(precision = 19, scale = 10, updatable = false)
+    private BigDecimal rate;
+
+    // The provider's publication date for rate; null for a same-currency transfer (rate 1).
+    @Column(updatable = false)
+    private LocalDate rateAsOf;
+
+    // scale 2, matching Account.balance.
+    @Column(precision = 19, scale = 2, updatable = false)
+    private BigDecimal creditAmount;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 32)
@@ -105,6 +130,44 @@ public class Transfer {
         return !this.fromAccountId.equals(fromAccountId)
                 || !this.toAccountId.equals(toAccountId)
                 || this.amount.compareTo(amount) != 0;
+    }
+
+    /** What the destination is credited for amount at rate: HALF_EVEN to scale 2, matching Account.balance. */
+    public static BigDecimal creditAmountFor(BigDecimal amount, BigDecimal rate) {
+        return amount.multiply(rate).setScale(2, RoundingMode.HALF_EVEN);
+    }
+
+    /**
+     * Fixes the conversion this transfer will use for every leg and every replay. Called exactly
+     * once, by TransferService, before the row's first insert -- so no PENDING row ever exists
+     * without it.
+     */
+    public void lockConversion(String sourceCurrency, String destinationCurrency, BigDecimal rate, LocalDate rateAsOf) {
+        requireStatus(TransferStatus.PENDING);
+        if (this.creditAmount != null) {
+            throw new IllegalStateException("Transfer %s already has a locked conversion".formatted(id));
+        }
+        if (sourceCurrency == null || destinationCurrency == null || rate == null || rate.signum() <= 0) {
+            throw new IllegalArgumentException("A conversion needs both currencies and a positive rate");
+        }
+        BigDecimal credit = creditAmountFor(amount, rate);
+        if (credit.signum() <= 0) {
+            throw new IllegalArgumentException("%s at rate %s credits %s".formatted(amount, rate, credit));
+        }
+        this.sourceCurrency = sourceCurrency;
+        this.destinationCurrency = destinationCurrency;
+        this.rate = rate;
+        this.rateAsOf = rateAsOf;
+        this.creditAmount = credit;
+    }
+
+    /**
+     * The amount the credit leg sends: the locked creditAmount, or -- for a row from before Phase 12,
+     * which was same-currency by construction -- the debited amount. The saga and the compensator
+     * use this; the API and the outbox report the raw (nullable) creditAmount.
+     */
+    public BigDecimal amountToCredit() {
+        return creditAmount != null ? creditAmount : amount;
     }
 
     /** Reachable from PENDING (the live saga) or COMPENSATION_REQUIRED (reconciliation found the credit had already landed). */

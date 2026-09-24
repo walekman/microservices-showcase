@@ -1,5 +1,7 @@
 package com.showcase.transfer.client;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import io.github.resilience4j.retry.annotation.Retry;
@@ -12,7 +14,6 @@ import org.springframework.web.client.RestClientException;
 
 import java.io.IOException;
 import java.math.BigDecimal;
-import java.util.Map;
 import java.util.UUID;
 import java.util.function.Supplier;
 
@@ -57,16 +58,23 @@ public class AccountClient {
      * hits the ownership-free {@code GET /accounts/exists/{id}} rather than the full
      * owner-gated {@code GET /accounts/{id}}: the latter would 404 for every transfer to a
      * different customer's account. See docs/phase-7b-account-ownership-authorization.md.
+     * Since Phase 12 it also returns the currency the account is held in, which the saga prices
+     * the transfer with (docs/phase-12-fx-rates-redis-cache.md).
      */
     @CircuitBreaker(name = "accountService")
-    @Retry(name = "accountService", fallbackMethod = "accountExistsFallback")
-    public void accountExists(UUID accountId) {
-        call(() -> restClient.get()
+    @Retry(name = "accountService", fallbackMethod = "accountCurrencyFallback")
+    public String accountCurrency(UUID accountId) {
+        AccountExistsBody body = call(() -> restClient.get()
                 .uri("/accounts/exists/{id}", accountId)
                 .retrieve()
                 .onStatus(HttpStatusCode::is4xxClientError, this::rejected)
                 .onStatus(status -> !status.is2xxSuccessful(), this::unavailable)
-                .toBodilessEntity());
+                .body(AccountExistsBody.class));
+        if (body == null || body.currency() == null) {
+            // Not a business answer: an Account from before Phase 12, or a proxy that swallowed the body.
+            throw new AccountServiceUnavailableException("Account Service reported no currency for " + accountId);
+        }
+        return body.currency();
     }
 
     /**
@@ -106,26 +114,26 @@ public class AccountClient {
 
     @CircuitBreaker(name = "accountService")
     @Retry(name = "accountService", fallbackMethod = "debitCreditFallback")
-    public void debit(UUID accountId, BigDecimal amount, String idempotencyKey) {
-        post(accountId, amount, "debit", idempotencyKey, false);
+    public void debit(UUID accountId, BigDecimal amount, String currency, String idempotencyKey) {
+        post(accountId, amount, currency, "debit", idempotencyKey, false);
     }
 
     @CircuitBreaker(name = "accountService")
     @Retry(name = "accountService", fallbackMethod = "debitCreditFallback")
-    public void credit(UUID accountId, BigDecimal amount, String idempotencyKey) {
+    public void credit(UUID accountId, BigDecimal amount, String currency, String idempotencyKey) {
         // Always as transfer-service itself: Account requires account-crediter for credit, which
         // no customer holds. See AuthorizationPropagatingInterceptor.USE_SERVICE_IDENTITY.
-        post(accountId, amount, "credit", idempotencyKey, true);
+        post(accountId, amount, currency, "credit", idempotencyKey, true);
     }
 
-    private void post(UUID accountId, BigDecimal amount, String operation, String idempotencyKey,
+    private void post(UUID accountId, BigDecimal amount, String currency, String operation, String idempotencyKey,
                       boolean serviceIdentity) {
         call(() -> restClient.post()
                 .uri("/accounts/{id}/{operation}", accountId, operation)
                 .attribute(AuthorizationPropagatingInterceptor.USE_SERVICE_IDENTITY, serviceIdentity)
                 .contentType(MediaType.APPLICATION_JSON)
                 .header("Idempotency-Key", idempotencyKey)
-                .body(Map.of("amount", amount))
+                .body(new AmountBody(amount, currency))
                 .retrieve()
                 .onStatus(HttpStatusCode::is4xxClientError, this::rejected)
                 // Treat anything that is not 2xx as unavailable: 5xx and 3xx (redirects) are
@@ -212,17 +220,17 @@ public class AccountClient {
     }
 
     /**
-     * Invoked by Resilience4j instead of accountExists's body -- not only once retries are
+     * Invoked by Resilience4j instead of accountCurrency's body -- not only once retries are
      * exhausted or the circuit is open, but for every exception the body can throw,
      * {@link AccountRejectedException} included (see the class javadoc). Rethrown
      * unchanged so a business rejection still reaches the caller as a rejection.
      */
-    private void accountExistsFallback(UUID accountId, Throwable t) {
+    private String accountCurrencyFallback(UUID accountId, Throwable t) {
         throw rethrow(t);
     }
 
     /**
-     * Same reasoning as accountExistsFallback above, for isOwnedByCaller. Only reached once
+     * Same reasoning as accountCurrencyFallback above, for isOwnedByCaller. Only reached once
      * retries/circuit-breaker give up -- the AccountRejectedException "not owned" case is
      * handled inside isOwnedByCaller's own body and never escapes to trigger this.
      */
@@ -230,8 +238,9 @@ public class AccountClient {
         throw rethrow(t);
     }
 
-    /** Shared fallback for debit and credit — both have the same (UUID, BigDecimal, String) shape. */
-    private void debitCreditFallback(UUID accountId, BigDecimal amount, String idempotencyKey, Throwable t) {
+    /** Shared fallback for debit and credit — both have the same (UUID, BigDecimal, String, String) shape. */
+    private void debitCreditFallback(UUID accountId, BigDecimal amount, String currency, String idempotencyKey,
+                                     Throwable t) {
         throw rethrow(t);
     }
 
@@ -243,5 +252,17 @@ public class AccountClient {
             return already;
         }
         return new AccountServiceUnavailableException("Account Service call failed: " + t.getMessage(), t);
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record AccountExistsBody(String currency) {
+    }
+
+    /**
+     * Account's AmountRequest. currency is null only when CompensationScheduler replays a leg of
+     * a transfer from before Phase 12 -- it is then omitted, and Account skips its currency check.
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    record AmountBody(BigDecimal amount, String currency) {
     }
 }

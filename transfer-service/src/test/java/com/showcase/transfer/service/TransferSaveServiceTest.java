@@ -20,6 +20,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -182,5 +183,23 @@ class TransferSaveServiceTest {
         verify(outboxEventRepository).save(captor.capture());
         assertThat(captor.getValue().getTraceId()).isNull();
         assertThat(captor.getValue().getSpanId()).isNull();
+    }
+
+    @Test
+    void theOutboxPayloadCarriesTheLockedConversion() throws Exception {
+        Transfer transfer = new Transfer(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("40.00"), UUID.randomUUID());
+        transfer.lockConversion("PLN", "EUR", new BigDecimal("0.22819"), LocalDate.of(2026, 9, 23));
+        transfer.markCompleted();
+        when(transferRepository.save(transfer)).thenReturn(transfer);
+
+        service.save(transfer);
+
+        ArgumentCaptor<OutboxEvent> event = ArgumentCaptor.forClass(OutboxEvent.class);
+        verify(outboxEventRepository).save(event.capture());
+        com.fasterxml.jackson.databind.JsonNode payload = new ObjectMapper().readTree(event.getValue().getPayload());
+        assertThat(payload.get("sourceCurrency").asText()).isEqualTo("PLN");
+        assertThat(payload.get("destinationCurrency").asText()).isEqualTo("EUR");
+        assertThat(payload.get("rate").decimalValue()).isEqualByComparingTo("0.22819");
+        assertThat(payload.get("creditAmount").decimalValue()).isEqualByComparingTo("9.13");
     }
 }

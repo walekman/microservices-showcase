@@ -78,9 +78,15 @@ class CompensationSchedulerIT {
             exchange.sendResponseHeaders(200, -1);
             exchange.close();
         });
+        // Both accounts exist in the same currency (Phase 12: exists reports the currency, and an
+        // empty body now reads as Account being unavailable), so the live saga gets to the debit.
         fakeAccountService.createContext("/accounts/exists/", exchange -> {
-            exchange.sendResponseHeaders(200, -1);
-            exchange.close();
+            byte[] body = "{\"currency\":\"EUR\"}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            try (OutputStream os = exchange.getResponseBody()) {
+                os.write(body);
+            }
         });
         fakeAccountService.createContext("/accounts/" + FROM + "/debit", exchange -> {
             debitRequests.incrementAndGet();
