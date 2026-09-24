@@ -7,7 +7,9 @@ import com.showcase.account.domain.AccountOperationConflictException;
 import com.showcase.account.domain.AccountOperationRepository;
 import com.showcase.account.domain.AccountOperationType;
 import com.showcase.account.domain.AccountRepository;
+import com.showcase.account.domain.CurrencyMismatchException;
 import com.showcase.account.domain.InsufficientFundsException;
+import com.showcase.account.domain.SupportedCurrency;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -49,19 +51,20 @@ class AccountServiceTest {
         when(accountRepository.existsByOwnerId(OWNER_ID)).thenReturn(false);
         when(accountRepository.saveAndFlush(any(Account.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
-        Account result = accountService.createAccount(OWNER_ID, "Ada Lovelace", new BigDecimal("100.00"));
+        Account result = accountService.createAccount(OWNER_ID, "Ada Lovelace", new BigDecimal("100.00"), SupportedCurrency.EUR);
 
         assertThat(result.getOwnerId()).isEqualTo(OWNER_ID);
         assertThat(result.getOwnerName()).isEqualTo("Ada Lovelace");
         assertThat(result.getBalance()).isEqualByComparingTo("100.00");
+        assertThat(result.getCurrency()).isEqualTo(SupportedCurrency.EUR);
         verify(accountRepository).existsByOwnerId(OWNER_ID);
         verify(accountRepository).saveAndFlush(any(Account.class));
     }
 
     @Test
     void getAllAccountsReturnsEveryAccount() {
-        Account first = new Account(OWNER_ID, "Ada Lovelace", new BigDecimal("100.00"));
-        Account second = new Account(UUID.randomUUID(), "Alan Turing", new BigDecimal("50.00"));
+        Account first = new Account(OWNER_ID, "Ada Lovelace", new BigDecimal("100.00"), SupportedCurrency.EUR);
+        Account second = new Account(UUID.randomUUID(), "Alan Turing", new BigDecimal("50.00"), SupportedCurrency.EUR);
         when(accountRepository.findAll()).thenReturn(List.of(first, second));
 
         List<Account> result = accountService.getAllAccounts();
@@ -81,7 +84,7 @@ class AccountServiceTest {
     @Test
     void getAccountReturnsItForTheOwningCaller() {
         UUID id = UUID.randomUUID();
-        Account account = new Account(OWNER_ID, "Ada Lovelace", new BigDecimal("100.00"));
+        Account account = new Account(OWNER_ID, "Ada Lovelace", new BigDecimal("100.00"), SupportedCurrency.EUR);
         when(accountRepository.findById(id)).thenReturn(Optional.of(account));
 
         Account result = accountService.getAccount(id, OWNER_ID);
@@ -92,7 +95,7 @@ class AccountServiceTest {
     @Test
     void getAccountThrowsForANonOwningCaller() {
         UUID id = UUID.randomUUID();
-        Account account = new Account(OWNER_ID, "Ada Lovelace", new BigDecimal("100.00"));
+        Account account = new Account(OWNER_ID, "Ada Lovelace", new BigDecimal("100.00"), SupportedCurrency.EUR);
         when(accountRepository.findById(id)).thenReturn(Optional.of(account));
 
         assertThatThrownBy(() -> accountService.getAccount(id, UUID.randomUUID()))
@@ -100,30 +103,30 @@ class AccountServiceTest {
     }
 
     @Test
-    void requireAccountExistsPassesRegardlessOfOwnership() {
+    void getCurrencyReturnsTheAccountsCurrencyRegardlessOfOwnership() {
         UUID id = UUID.randomUUID();
-        when(accountRepository.existsById(id)).thenReturn(true);
+        when(accountRepository.findById(id))
+                .thenReturn(Optional.of(new Account(UUID.randomUUID(), "Bob", new BigDecimal("5.00"), SupportedCurrency.GBP)));
 
-        accountService.requireAccountExists(id);
+        assertThat(accountService.getCurrency(id)).isEqualTo(SupportedCurrency.GBP);
     }
 
     @Test
-    void requireAccountExistsThrowsWhenMissing() {
+    void getCurrencyThrowsForAMissingAccount() {
         UUID id = UUID.randomUUID();
-        when(accountRepository.existsById(id)).thenReturn(false);
+        when(accountRepository.findById(id)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> accountService.requireAccountExists(id))
-                .isInstanceOf(AccountNotFoundException.class);
+        assertThatThrownBy(() -> accountService.getCurrency(id)).isInstanceOf(AccountNotFoundException.class);
     }
 
     @Test
     void debitReducesBalanceAndSaves() {
         UUID id = UUID.randomUUID();
-        Account account = new Account(OWNER_ID, "Ada Lovelace", new BigDecimal("100.00"));
+        Account account = new Account(OWNER_ID, "Ada Lovelace", new BigDecimal("100.00"), SupportedCurrency.EUR);
         when(accountRepository.findById(id)).thenReturn(Optional.of(account));
         when(accountRepository.save(account)).thenReturn(account);
 
-        Account result = accountService.debit(id, new BigDecimal("40.00"), "key-1", OWNER_ID, false);
+        Account result = accountService.debit(id, new BigDecimal("40.00"), null, "key-1", OWNER_ID, false);
 
         assertThat(result.getBalance()).isEqualByComparingTo("60.00");
         verify(accountOperationRepository).saveAndFlush(any(AccountOperation.class));
@@ -132,10 +135,10 @@ class AccountServiceTest {
     @Test
     void debitThrowsForANonOwningCallerAndDoesNotSave() {
         UUID id = UUID.randomUUID();
-        Account account = new Account(OWNER_ID, "Ada Lovelace", new BigDecimal("100.00"));
+        Account account = new Account(OWNER_ID, "Ada Lovelace", new BigDecimal("100.00"), SupportedCurrency.EUR);
         when(accountRepository.findById(id)).thenReturn(Optional.of(account));
 
-        assertThatThrownBy(() -> accountService.debit(id, new BigDecimal("40.00"), "key-1", UUID.randomUUID(), false))
+        assertThatThrownBy(() -> accountService.debit(id, new BigDecimal("40.00"), null, "key-1", UUID.randomUUID(), false))
                 .isInstanceOf(AccountNotFoundException.class);
         verify(accountRepository, never()).save(any());
         verify(accountOperationRepository, never()).saveAndFlush(any());
@@ -147,11 +150,11 @@ class AccountServiceTest {
         // own machine identity, never the original customer's token -- see
         // docs/phase-7b-account-ownership-authorization.md's Design Decisions.
         UUID id = UUID.randomUUID();
-        Account account = new Account(OWNER_ID, "Ada Lovelace", new BigDecimal("100.00"));
+        Account account = new Account(OWNER_ID, "Ada Lovelace", new BigDecimal("100.00"), SupportedCurrency.EUR);
         when(accountRepository.findById(id)).thenReturn(Optional.of(account));
         when(accountRepository.save(account)).thenReturn(account);
 
-        Account result = accountService.debit(id, new BigDecimal("40.00"), "key-1", UUID.randomUUID(), true);
+        Account result = accountService.debit(id, new BigDecimal("40.00"), null, "key-1", UUID.randomUUID(), true);
 
         assertThat(result.getBalance()).isEqualByComparingTo("60.00");
     }
@@ -159,10 +162,10 @@ class AccountServiceTest {
     @Test
     void debitThrowsWhenFundsAreInsufficientAndDoesNotSave() {
         UUID id = UUID.randomUUID();
-        Account account = new Account(OWNER_ID, "Ada Lovelace", new BigDecimal("10.00"));
+        Account account = new Account(OWNER_ID, "Ada Lovelace", new BigDecimal("10.00"), SupportedCurrency.EUR);
         when(accountRepository.findById(id)).thenReturn(Optional.of(account));
 
-        assertThatThrownBy(() -> accountService.debit(id, new BigDecimal("40.00"), "key-1", OWNER_ID, false))
+        assertThatThrownBy(() -> accountService.debit(id, new BigDecimal("40.00"), null, "key-1", OWNER_ID, false))
                 .isInstanceOf(InsufficientFundsException.class);
         verify(accountRepository, never()).save(any());
         verify(accountOperationRepository, never()).saveAndFlush(any());
@@ -171,11 +174,11 @@ class AccountServiceTest {
     @Test
     void creditIncreasesBalanceAndSaves() {
         UUID id = UUID.randomUUID();
-        Account account = new Account(OWNER_ID, "Ada Lovelace", new BigDecimal("100.00"));
+        Account account = new Account(OWNER_ID, "Ada Lovelace", new BigDecimal("100.00"), SupportedCurrency.EUR);
         when(accountRepository.findById(id)).thenReturn(Optional.of(account));
         when(accountRepository.save(account)).thenReturn(account);
 
-        Account result = accountService.credit(id, new BigDecimal("25.00"), "key-1");
+        Account result = accountService.credit(id, new BigDecimal("25.00"), null, "key-1");
 
         assertThat(result.getBalance()).isEqualByComparingTo("125.00");
         verify(accountOperationRepository).saveAndFlush(any(AccountOperation.class));
@@ -184,7 +187,7 @@ class AccountServiceTest {
     @Test
     void replayingAKnownIdempotencyKeyDoesNotReapplyTheDebit() {
         UUID id = UUID.randomUUID();
-        Account account = new Account(OWNER_ID, "Ada Lovelace", new BigDecimal("60.00"));
+        Account account = new Account(OWNER_ID, "Ada Lovelace", new BigDecimal("60.00"), SupportedCurrency.EUR);
         // Balance already reflects the FIRST application -- if this replay reapplied the
         // debit, it would go to 20.00 instead of staying 60.00.
         when(accountRepository.findById(id)).thenReturn(Optional.of(account));
@@ -192,7 +195,7 @@ class AccountServiceTest {
                 new AccountOperation("key-1", id, AccountOperationType.DEBIT,
                         new BigDecimal("40.00"), new BigDecimal("60.00"))));
 
-        Account result = accountService.debit(id, new BigDecimal("40.00"), "key-1", OWNER_ID, false);
+        Account result = accountService.debit(id, new BigDecimal("40.00"), null, "key-1", OWNER_ID, false);
 
         assertThat(result.getBalance()).isEqualByComparingTo("60.00");
         verify(accountRepository, never()).save(any());
@@ -218,21 +221,81 @@ class AccountServiceTest {
                         new BigDecimal("40.00"), new BigDecimal("60.00"))));
         when(accountRepository.findById(id)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> accountService.credit(id, new BigDecimal("40.00"), "key-1"))
+        assertThatThrownBy(() -> accountService.credit(id, new BigDecimal("40.00"), null, "key-1"))
                 .isInstanceOf(AccountNotFoundException.class);
     }
 
     @Test
     void replayingAKeyWithDifferentParametersConflicts() {
         UUID id = UUID.randomUUID();
-        Account account = new Account(OWNER_ID, "Ada Lovelace", new BigDecimal("60.00"));
+        Account account = new Account(OWNER_ID, "Ada Lovelace", new BigDecimal("60.00"), SupportedCurrency.EUR);
         when(accountRepository.findById(id)).thenReturn(Optional.of(account));
         when(accountOperationRepository.findById("key-1")).thenReturn(Optional.of(
                 new AccountOperation("key-1", id, AccountOperationType.DEBIT,
                         new BigDecimal("40.00"), new BigDecimal("60.00"))));
 
-        assertThatThrownBy(() -> accountService.debit(id, new BigDecimal("99.00"), "key-1", OWNER_ID, false))
+        assertThatThrownBy(() -> accountService.debit(id, new BigDecimal("99.00"), null, "key-1", OWNER_ID, false))
                 .isInstanceOf(AccountOperationConflictException.class);
         verify(accountOperationRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void debitInTheAccountsCurrencyApplies() {
+        UUID id = UUID.randomUUID();
+        Account account = new Account(OWNER_ID, "Ada", new BigDecimal("100.00"), SupportedCurrency.PLN);
+        when(accountRepository.findById(id)).thenReturn(Optional.of(account));
+        when(accountOperationRepository.findById("key-1")).thenReturn(Optional.empty());
+        when(accountRepository.save(account)).thenReturn(account);
+
+        accountService.debit(id, new BigDecimal("40.00"), "PLN", "key-1", OWNER_ID, false);
+
+        assertThat(account.getBalance()).isEqualByComparingTo("60.00");
+    }
+
+    @Test
+    void debitInAnotherCurrencyIsRejectedWithoutApplyingAnything() {
+        UUID id = UUID.randomUUID();
+        Account account = new Account(OWNER_ID, "Ada", new BigDecimal("100.00"), SupportedCurrency.PLN);
+        when(accountRepository.findById(id)).thenReturn(Optional.of(account));
+        when(accountOperationRepository.findById("key-1")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> accountService.debit(id, new BigDecimal("40.00"), "EUR", "key-1", OWNER_ID, false))
+                .isInstanceOf(CurrencyMismatchException.class);
+
+        assertThat(account.getBalance()).isEqualByComparingTo("100.00");
+        verify(accountRepository, never()).save(any());
+        verify(accountOperationRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void creditInAnotherCurrencyIsRejectedWithoutApplyingAnything() {
+        UUID id = UUID.randomUUID();
+        Account account = new Account(OWNER_ID, "Ada", new BigDecimal("100.00"), SupportedCurrency.PLN);
+        when(accountRepository.findById(id)).thenReturn(Optional.of(account));
+        when(accountOperationRepository.findById("key-1")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> accountService.credit(id, new BigDecimal("40.00"), "EUR", "key-1"))
+                .isInstanceOf(CurrencyMismatchException.class);
+
+        assertThat(account.getBalance()).isEqualByComparingTo("100.00");
+        verify(accountOperationRepository, never()).saveAndFlush(any());
+    }
+
+    // Review Focus #1. The ledger row is proof the operation already happened. Rejecting its
+    // replay over a currency label would make CompensationScheduler's reconcileDebit record FAILED
+    // for money that did move.
+    @Test
+    void aReplayOfAnAlreadyAppliedOperationIsNotRecheckedForCurrency() {
+        UUID id = UUID.randomUUID();
+        Account account = new Account(OWNER_ID, "Ada", new BigDecimal("125.00"), SupportedCurrency.PLN);
+        AccountOperation applied = new AccountOperation("key-1", id, AccountOperationType.CREDIT,
+                new BigDecimal("25.00"), new BigDecimal("125.00"));
+        when(accountOperationRepository.findById("key-1")).thenReturn(Optional.of(applied));
+        when(accountRepository.findById(id)).thenReturn(Optional.of(account));
+
+        Account result = accountService.credit(id, new BigDecimal("25.00"), "EUR", "key-1");
+
+        assertThat(result).isSameAs(account);
+        verify(accountRepository, never()).save(any());
     }
 }

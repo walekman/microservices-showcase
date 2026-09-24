@@ -1,5 +1,6 @@
 package com.showcase.account.api;
 
+import com.showcase.account.domain.SupportedCurrency;
 import com.showcase.account.support.TestSecurityConfig;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -25,6 +26,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
@@ -136,7 +138,7 @@ class AccountControllerIT {
     @Test
     void createsAndFetchesAnAccount() {
         ResponseEntity<AccountResponse> createResponse = restTemplate.postForEntity(
-                "/accounts", new CreateAccountRequest("Ada Lovelace", new BigDecimal("100.00")), AccountResponse.class);
+                "/accounts", new CreateAccountRequest("Ada Lovelace", new BigDecimal("100.00"), SupportedCurrency.PLN), AccountResponse.class);
 
         assertThat(createResponse.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         UUID id = createResponse.getBody().id();
@@ -216,7 +218,7 @@ class AccountControllerIT {
         debitHeaders.set("Idempotency-Key", "cross-customer-debit-key");
         ResponseEntity<ProblemDetail> debitResponse = restTemplate.exchange(
                 "/accounts/" + id + "/debit", HttpMethod.POST,
-                new HttpEntity<>(new AmountRequest(new BigDecimal("40.00")), debitHeaders), ProblemDetail.class);
+                new HttpEntity<>(new AmountRequest(new BigDecimal("40.00"), null), debitHeaders), ProblemDetail.class);
         assertThat(debitResponse.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
         assertThat(debitResponse.getBody().getProperties()).containsEntry("code", "ACCOUNT_NOT_FOUND");
 
@@ -278,7 +280,7 @@ class AccountControllerIT {
         headers.setBearerAuth(TestSecurityConfig.freshCustomerToken());
 
         ResponseEntity<String> response = restTemplate.exchange("/accounts/" + id + "/credit", HttpMethod.POST,
-                new HttpEntity<>(new AmountRequest(new BigDecimal("1000000.00")), headers), String.class);
+                new HttpEntity<>(new AmountRequest(new BigDecimal("1000000.00"), null), headers), String.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
         assertThat(restTemplate.getForEntity("/accounts/" + id, AccountResponse.class).getBody().balance())
@@ -290,7 +292,7 @@ class AccountControllerIT {
         UUID id = createAccount(new BigDecimal("100.00"));
 
         ResponseEntity<ProblemDetail> response = restTemplate.postForEntity(
-                "/accounts/" + id + "/debit", new AmountRequest(new BigDecimal("40.00")), ProblemDetail.class);
+                "/accounts/" + id + "/debit", new AmountRequest(new BigDecimal("40.00"), null), ProblemDetail.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
         assertThat(response.getBody().getProperties()).containsEntry("code", "VALIDATION_FAILED");
@@ -442,7 +444,7 @@ class AccountControllerIT {
         createAccount(new BigDecimal("100.00"));
 
         ResponseEntity<ProblemDetail> response = restTemplate.postForEntity(
-                "/accounts", new CreateAccountRequest("Ada Lovelace", new BigDecimal("50.00")), ProblemDetail.class);
+                "/accounts", new CreateAccountRequest("Ada Lovelace", new BigDecimal("50.00"), SupportedCurrency.PLN), ProblemDetail.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
         assertThat(response.getBody().getProperties()).containsEntry("code", "ACCOUNT_ALREADY_EXISTS");
@@ -451,7 +453,7 @@ class AccountControllerIT {
     @Test
     void rejectsNegativeInitialBalance() {
         ResponseEntity<ProblemDetail> response = restTemplate.postForEntity(
-                "/accounts", new CreateAccountRequest("Ada Lovelace", new BigDecimal("-5.00")), ProblemDetail.class);
+                "/accounts", new CreateAccountRequest("Ada Lovelace", new BigDecimal("-5.00"), SupportedCurrency.PLN), ProblemDetail.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
         assertThat(response.getBody().getProperties()).containsEntry("code", "VALIDATION_FAILED");
@@ -505,6 +507,62 @@ class AccountControllerIT {
         assertThat(response.getBody().getProperties()).containsEntry("code", "ACCOUNT_NOT_FOUND");
     }
 
+    @Test
+    void createWithoutACurrencyIs400() {
+        ResponseEntity<ProblemDetail> response = restTemplate.postForEntity("/accounts",
+                Map.of("ownerName", "Ada Lovelace", "initialBalance", new BigDecimal("10.00")), ProblemDetail.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(response.getBody().getProperties()).containsEntry("code", "VALIDATION_FAILED");
+    }
+
+    @Test
+    void createWithAnUnsupportedCurrencyIs400() {
+        ResponseEntity<ProblemDetail> response = restTemplate.postForEntity("/accounts",
+                Map.of("ownerName", "Ada Lovelace", "initialBalance", new BigDecimal("10.00"), "currency", "JPY"),
+                ProblemDetail.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(response.getBody().getProperties()).containsEntry("code", "MALFORMED_REQUEST");
+    }
+
+    @Test
+    void existsReportsTheAccountsCurrency() {
+        UUID id = createAccount(new BigDecimal("100.00"));
+
+        ResponseEntity<AccountExistsResponse> response =
+                restTemplate.getForEntity("/accounts/exists/" + id, AccountExistsResponse.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody().currency()).isEqualTo("PLN");
+    }
+
+    @Test
+    void summaryCarriesTheCurrency() {
+        UUID id = createAccount(new BigDecimal("100.00"));
+
+        ResponseEntity<AccountSummaryResponse> response =
+                restTemplate.getForEntity("/accounts/" + id + "/summary", AccountSummaryResponse.class);
+
+        assertThat(response.getBody().currency()).isEqualTo("PLN");
+    }
+
+    @Test
+    void aDebitLabelledWithAnotherCurrencyIs422AndLeavesTheBalanceAlone() {
+        UUID id = createAccount(new BigDecimal("100.00"));
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("Idempotency-Key", UUID.randomUUID().toString());
+
+        ResponseEntity<ProblemDetail> response = restTemplate.exchange("/accounts/" + id + "/debit", HttpMethod.POST,
+                new HttpEntity<>(new AmountRequest(new BigDecimal("40.00"), "EUR"), headers), ProblemDetail.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+        assertThat(response.getBody().getProperties()).containsEntry("code", "CURRENCY_MISMATCH");
+        AccountResponse after = restTemplate.getForObject("/accounts/" + id, AccountResponse.class);
+        assertThat(after.balance()).isEqualByComparingTo("100.00");
+        assertThat(after.currency()).isEqualTo("PLN");
+    }
+
     private UUID createAccount(BigDecimal initialBalance) {
         return createAccount(initialBalance, null);
     }
@@ -519,7 +577,7 @@ class AccountControllerIT {
         }
         ResponseEntity<AccountResponse> response = restTemplate.exchange(
                 "/accounts", HttpMethod.POST,
-                new HttpEntity<>(new CreateAccountRequest("Ada Lovelace", initialBalance), headers),
+                new HttpEntity<>(new CreateAccountRequest("Ada Lovelace", initialBalance, SupportedCurrency.PLN), headers),
                 AccountResponse.class);
         return response.getBody().id();
     }
@@ -527,7 +585,7 @@ class AccountControllerIT {
     private HttpEntity<AmountRequest> amountRequest(BigDecimal amount, String idempotencyKey) {
         HttpHeaders headers = new HttpHeaders();
         headers.set("Idempotency-Key", idempotencyKey);
-        return new HttpEntity<>(new AmountRequest(amount), headers);
+        return new HttpEntity<>(new AmountRequest(amount, null), headers);
     }
 
     private ResponseEntity<AccountResponse> debit(UUID id, BigDecimal amount, String idempotencyKey) {
@@ -541,6 +599,6 @@ class AccountControllerIT {
         headers.set("Idempotency-Key", idempotencyKey);
         headers.setBearerAuth(TestSecurityConfig.TRANSFER_SERVICE_TOKEN);
         return restTemplate.exchange("/accounts/" + id + "/credit", HttpMethod.POST,
-                new HttpEntity<>(new AmountRequest(amount), headers), AccountResponse.class);
+                new HttpEntity<>(new AmountRequest(amount, null), headers), AccountResponse.class);
     }
 }

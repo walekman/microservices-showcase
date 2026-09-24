@@ -34,9 +34,16 @@ function renderOnboarding() {
     main.innerHTML = `
         <div class="card">
             <h2>Welcome! Let's set up your account.</h2>
-            <p>You'll start with a balance of $1000.00.</p>
+            <p>You'll start with a balance of 1000.00 in the currency you choose.</p>
             <label for="owner-name">Your name</label>
             <input id="owner-name" type="text" />
+            <label for="currency">Currency</label>
+            <select id="currency">
+                <option value="EUR">EUR</option>
+                <option value="USD">USD</option>
+                <option value="GBP">GBP</option>
+                <option value="PLN">PLN</option>
+            </select>
             <button id="create-account-button" type="button">Create my account</button>
             <p id="onboarding-error" class="error" hidden></p>
         </div>`;
@@ -51,7 +58,7 @@ function renderOnboarding() {
             return;
         }
         try {
-            const account = await Api.post('/accounts', { ownerName, initialBalance: '1000.00' });
+            const account = await Api.post('/accounts', { ownerName, initialBalance: '1000.00', currency: document.getElementById('currency').value });
             renderDashboard(account);
         } catch (err) {
             errorEl.textContent = err.friendlyMessage ? err.friendlyMessage() : err.message;
@@ -65,7 +72,7 @@ async function renderDashboard(account, { flashMessage } = {}) {
     main.innerHTML = `
         <div class="card">
             <h2>${escapeHtml(account.ownerName)}</h2>
-            <p class="balance">$${Number(account.balance).toFixed(2)}</p>
+            <p class="balance">${Number(account.balance).toFixed(2)} ${escapeHtml(account.currency)}</p>
             <button id="send-money-button" type="button">Send money</button>
         </div>
         <p id="dashboard-flash" class="success" hidden></p>

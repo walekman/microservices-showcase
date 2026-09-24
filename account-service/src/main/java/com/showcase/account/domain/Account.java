@@ -2,6 +2,8 @@ package com.showcase.account.domain;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
@@ -32,12 +34,17 @@ public class Account {
     @Column(nullable = false)
     private String ownerName;
 
-    // scale 2, not more: AmountRequest already restricts every debit/credit to 2 decimal
-    // places (@Digits(fraction = 2)), and this project has no interest/FX/proration that
-    // would need sub-cent intermediate precision -- see docs/microservices-showcase-design.md's
-    // non-goals. A wider scale here would be unused headroom, not a real requirement.
+    // scale 2, not more: AmountRequest restricts every debit/credit to 2 decimal places
+    // (@Digits(fraction = 2)), and Transfer rounds every converted amount to 2 places before it
+    // gets here (docs/phase-12-fx-rates-redis-cache.md). A wider scale would be unused headroom.
     @Column(nullable = false, precision = 19, scale = 2)
     private BigDecimal balance;
+
+    // Fixed at creation. Nullable at the database level only because ddl-auto: update cannot add a
+    // NOT NULL column over existing rows; getCurrency() reads such a pre-Phase-12 row as EUR.
+    @Enumerated(EnumType.STRING)
+    @Column(length = 3, updatable = false)
+    private SupportedCurrency currency;
 
     @Version
     private long version;
@@ -45,11 +52,20 @@ public class Account {
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
 
-    public Account(UUID ownerId, String ownerName, BigDecimal balance) {
+    public Account(UUID ownerId, String ownerName, BigDecimal balance, SupportedCurrency currency) {
+        if (currency == null) {
+            throw new IllegalArgumentException("currency is required");
+        }
         this.ownerId = ownerId;
         this.ownerName = ownerName;
         this.balance = balance;
+        this.currency = currency;
         this.createdAt = Instant.now();
+    }
+
+    // Hand-written, so Lombok's @Getter skips this field. See the comment on the field.
+    public SupportedCurrency getCurrency() {
+        return currency != null ? currency : SupportedCurrency.EUR;
     }
 
     public void debit(BigDecimal amount) {
