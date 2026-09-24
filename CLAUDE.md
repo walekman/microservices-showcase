@@ -4,14 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-Phases 1–9 (including 7b and 8b) are implemented and merged to `master`. Phase 10 (end-to-end saga tests) has not started. `docs/roadmap.md` indexes every phase and its scope.
+Phases 1–9 (including 7b and 8b) and Phase 11 (Notification persistence + Kafka consumer error handling) are implemented and merged to `master`. Phase 10 (end-to-end saga tests) has not started. `docs/roadmap.md` indexes every phase and its scope.
 
 Five Spring Boot / Java 21 services plus a static UI, all brought up by `docker compose up`:
 
 - **Gateway Service** (`gateway-service/`, port 8080) — routing-only Spring Cloud Gateway Server MVC in front of Transfer (`/transfers/**`) and five client-safe Account paths (`POST /accounts`, `GET /accounts`, `/accounts/mine`, `/accounts/{id}`, `/accounts/{id}/summary`) — see `GatewayRoutesConfig`. Account's `debit`/`credit` and all of Fraud/Notification have no route.
 - **Account Service** (`account-service/`, port 8081) — accounts and balances, debit/credit with optimistic locking and an idempotency ledger. JPA on Postgres.
 - **Transfer Service** (`transfer-service/`, port 8082) — orchestrates the transfer saga over synchronous HTTP into Account and Fraud, with Resilience4j, a compensation scheduler and a transactional outbox to Kafka. JPA on Postgres.
-- **Notification Service** (`notification-service/`, port 8083) — stateless Kafka consumer of the outbox topics.
+- **Notification Service** (`notification-service/`, port 8083) — Kafka consumer of the outbox topics; stores one row per transfer outcome (JPA on Postgres), idempotently. Transient DB failures are retried in place without limit; everything else is dead-lettered to `<topic>-dlt` (`KafkaErrorHandlingConfig`).
 - **Fraud Service** (`fraud-service/`, port 8084) — stateless account-blocklist screen, no database.
 - **Bank UI** (`web-ui/`, host port 8090) — plain HTML/CSS/JS served by `nginx:alpine`, no build step; calls the Gateway from the browser with OAuth2 Authorization Code + PKCE via Keycloak's `showcase-ui` client.
 
