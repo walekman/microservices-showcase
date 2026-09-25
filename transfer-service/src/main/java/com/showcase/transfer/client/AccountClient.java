@@ -14,6 +14,8 @@ import org.springframework.web.client.RestClientException;
 
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.util.Arrays;
+import java.util.List;
 import java.util.UUID;
 import java.util.function.Supplier;
 
@@ -110,6 +112,37 @@ public class AccountClient {
             }
             return false;
         }
+    }
+
+    /**
+     * The IDs of every account the CURRENT caller owns, via Account's owner-scoped
+     * {@code GET /accounts/mine} with the relayed token. Backs the incoming half of
+     * TransferService.listMyTransfers: Transfer never stores who owns a destination account
+     * (docs/phase-7b-account-ownership-authorization.md), so it asks on each read instead.
+     *
+     * <p>{@code /accounts/mine} has no business rejection -- a caller with no account gets an
+     * empty list -- so any 4xx is an anomaly and surfaces as unavailable, never as "no
+     * accounts": the latter would silently drop the caller's incoming transfers.
+     */
+    @CircuitBreaker(name = "accountService")
+    @Retry(name = "accountService", fallbackMethod = "callerAccountIdsFallback")
+    public List<UUID> callerAccountIds() {
+        AccountIdBody[] accounts;
+        try {
+            accounts = call(() -> restClient.get()
+                    .uri("/accounts/mine")
+                    .retrieve()
+                    .onStatus(HttpStatusCode::is4xxClientError, this::rejected)
+                    .onStatus(status -> !status.is2xxSuccessful(), this::unavailable)
+                    .body(AccountIdBody[].class));
+        } catch (AccountRejectedException rejected) {
+            throw new AccountServiceUnavailableException(
+                    "Account Service rejected GET /accounts/mine: " + rejected.getCode(), rejected);
+        }
+        if (accounts == null) {
+            throw new AccountServiceUnavailableException("Account Service returned no body for GET /accounts/mine");
+        }
+        return Arrays.stream(accounts).map(AccountIdBody::id).toList();
     }
 
     @CircuitBreaker(name = "accountService")
@@ -238,6 +271,14 @@ public class AccountClient {
         throw rethrow(t);
     }
 
+    /**
+     * Same reasoning as accountCurrencyFallback, for callerAccountIds. A rejection never reaches
+     * it: callerAccountIds turns every 4xx into AccountServiceUnavailableException itself.
+     */
+    private List<UUID> callerAccountIdsFallback(Throwable t) {
+        throw rethrow(t);
+    }
+
     /** Shared fallback for debit and credit — both have the same (UUID, BigDecimal, String, String) shape. */
     private void debitCreditFallback(UUID accountId, BigDecimal amount, String currency, String idempotencyKey,
                                      Throwable t) {
@@ -256,6 +297,11 @@ public class AccountClient {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     record AccountExistsBody(String currency) {
+    }
+
+    /** One element of GET /accounts/mine; everything but the ID is ignored. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record AccountIdBody(UUID id) {
     }
 
     /**

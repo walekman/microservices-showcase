@@ -1,5 +1,6 @@
 package com.showcase.transfer.api;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.showcase.transfer.domain.Transfer;
 import com.showcase.transfer.domain.TransferFailureCode;
 import com.showcase.transfer.domain.TransferStatus;
@@ -7,6 +8,7 @@ import com.showcase.transfer.domain.TransferStatus;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.Objects;
 import java.util.UUID;
 
 public record TransferResponse(
@@ -23,9 +25,22 @@ public record TransferResponse(
         TransferFailureCode failureCode,
         String failureReason,
         Instant createdAt,
-        Instant settledAt) {
+        Instant settledAt,
+        // Relative to a caller, so only GET /transfers/mine sets it; omitted everywhere else.
+        @JsonInclude(JsonInclude.Include.NON_NULL) Direction direction) {
+
+    public enum Direction { OUTGOING, INCOMING }
+
+    /** For GET /transfers/mine: the caller started it (outgoing), or it paid into their account (incoming). */
+    public static TransferResponse forCaller(Transfer transfer, UUID callerId) {
+        return from(transfer, Objects.equals(transfer.getInitiatorId(), callerId) ? Direction.OUTGOING : Direction.INCOMING);
+    }
 
     public static TransferResponse from(Transfer transfer) {
+        return from(transfer, null);
+    }
+
+    private static TransferResponse from(Transfer transfer, Direction direction) {
         return new TransferResponse(
                 transfer.getId(),
                 transfer.getFromAccountId(),
@@ -41,6 +56,7 @@ public record TransferResponse(
                 transfer.getFailureCode(),
                 transfer.getFailureReason(),
                 transfer.getCreatedAt(),
-                transfer.getSettledAt());
+                transfer.getSettledAt(),
+                direction);
     }
 }

@@ -23,6 +23,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -277,10 +278,27 @@ public class TransferService {
         throw new TransferNotFoundException(id);
     }
 
-    public List<Transfer> listMyTransfers(UUID initiatorId, TransferStatus status) {
-        return status == null
-                ? transferRepository.findByInitiatorId(initiatorId)
-                : transferRepository.findByInitiatorIdAndStatus(initiatorId, status);
+    // Outgoing: every transfer the caller started, in any status. Incoming: COMPLETED transfers
+    // into any account the caller owns -- a recipient sees money that arrived, never someone
+    // else's failed or unsettled attempt (nor its failure reason). The caller's accounts come
+    // from a live call to Account, for the reason getTransfer's destination-owner check above
+    // is live; if Account is unavailable that propagates (503) rather than quietly answering
+    // with the outgoing half alone.
+    public List<Transfer> listMyTransfers(UUID callerId, TransferStatus status) {
+        List<Transfer> transfers = new ArrayList<>(status == null
+                ? transferRepository.findByInitiatorId(callerId)
+                : transferRepository.findByInitiatorIdAndStatus(callerId, status));
+        if (status != null && status != TransferStatus.COMPLETED) {
+            return transfers;
+        }
+        List<UUID> accountIds = accountClient.callerAccountIds();
+        if (accountIds.isEmpty()) {
+            return transfers;
+        }
+        transferRepository.findByToAccountIdInAndStatus(accountIds, TransferStatus.COMPLETED).stream()
+                .filter(incoming -> !Objects.equals(incoming.getInitiatorId(), callerId)) // already listed as outgoing
+                .forEach(transfers::add);
+        return transfers;
     }
 
     public List<Transfer> listTransfers(TransferStatus status) {

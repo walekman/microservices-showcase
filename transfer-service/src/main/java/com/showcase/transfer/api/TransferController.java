@@ -61,8 +61,9 @@ public class TransferController {
     @GetMapping("/mine")
     public List<TransferResponse> listMyTransfers(@AuthenticationPrincipal Jwt jwt,
                                                    @RequestParam(required = false) TransferStatus status) {
-        return transferService.listMyTransfers(UUID.fromString(jwt.getSubject()), status).stream()
-                .map(TransferResponse::from)
+        UUID callerId = UUID.fromString(jwt.getSubject());
+        return transferService.listMyTransfers(callerId, status).stream()
+                .map(transfer -> TransferResponse.forCaller(transfer, callerId))
                 .toList();
     }
 

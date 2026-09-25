@@ -52,7 +52,7 @@ Task 2 adds `unique = true` to `Account.ownerId`, applied via Hibernate's `ddl-a
 |---|---|---|---|---|
 | `GET /accounts/mine` | Account | any authenticated user (own accounts only, filtered by `ownerId` from JWT) | list of the caller's accounts (today: exactly zero or one) | Dashboard |
 | `GET /accounts/{id}/summary` | Account | any authenticated user, **no ownership check** | `{ ownerName }` only — no balance, no `ownerId` | Recipient display name in quick-transfers/history |
-| `GET /transfers/mine` | Transfer | any authenticated user (filtered by `initiatorId` from JWT; reuses the existing optional `status` filter) | list of the caller's transfers | Transfer history; quick-transfers derives from this client-side |
+| `GET /transfers/mine` | Transfer | any authenticated user (filtered by `initiatorId` from JWT; reuses the existing optional `status` filter) | list of the caller's transfers | Transfer history; quick-transfers derives from this client-side. **Since post-Phase 12:** also returns `COMPLETED` transfers into the caller's accounts, each item marked with `direction` — see the design doc's §4 "Reading transfers" |
 
 ## New Backend Enforcement
 
@@ -72,7 +72,7 @@ Task 2 adds `unique = true` to `Account.ownerId`, applied via Hibernate's `ddl-a
 - **Dashboard:** the caller's single account and its balance (from `GET /accounts/mine`), and a "Send money" action.
 - **New Transfer:** source is fixed (the caller's one account); destination is a free-text account ID or a one-click pick from the Quick Transfers panel; amount; submit via `POST /transfers`. Success shows the result; failure surfaces the RFC 7807 `code`/`detail` (see Error Handling).
 - **Transfer History:** table from `GET /transfers/mine`, optionally filtered by status; each row's counterparty resolved to a name via `GET /accounts/{id}/summary`.
-- **Quick Transfers panel:** client-side computation over `GET /transfers/mine` — distinct `toAccountId` values, most-recent first, each labeled via `summary`; clicking one prefills the New Transfer form.
+- **Quick Transfers panel:** client-side computation over `GET /transfers/mine` — distinct `toAccountId` values, most-recent first, each labeled via `summary`; clicking one prefills the New Transfer form. (Since post-Phase 12 the counterparty of either direction — `fromAccountId` for an incoming transfer — so a user can pay back someone who paid them.)
 - **Logout:** clear the stored token, redirect to Keycloak's end-session endpoint.
 
 ## Auth & Token Lifecycle

@@ -468,6 +468,75 @@ class TransferServiceTest {
     }
 
     @Test
+    void listMyTransfersReturnsOutgoingAndCompletedIncomingTransfers() {
+        UUID myAccount = UUID.randomUUID();
+        Transfer outgoing = new Transfer(myAccount, TO, AMOUNT, INITIATOR_ID);
+        Transfer incoming = new Transfer(FROM, myAccount, AMOUNT, UUID.randomUUID());
+        incoming.markCompleted();
+        when(transferRepository.findByInitiatorId(INITIATOR_ID)).thenReturn(List.of(outgoing));
+        when(accountClient.callerAccountIds()).thenReturn(List.of(myAccount));
+        when(transferRepository.findByToAccountIdInAndStatus(List.of(myAccount), TransferStatus.COMPLETED))
+                .thenReturn(List.of(incoming));
+
+        assertThat(transferService.listMyTransfers(INITIATOR_ID, null)).containsExactly(outgoing, incoming);
+    }
+
+    @Test
+    void listMyTransfersDoesNotListTheCallersOwnTransferTwice() {
+        // Unreachable today (SAME_ACCOUNT_TRANSFER, one account per owner), but a transfer the
+        // caller started into an account they own would otherwise match both queries.
+        UUID myAccount = UUID.randomUUID();
+        UUID mySecondAccount = UUID.randomUUID();
+        Transfer toMyself = new Transfer(myAccount, mySecondAccount, AMOUNT, INITIATOR_ID);
+        toMyself.markCompleted();
+        when(transferRepository.findByInitiatorId(INITIATOR_ID)).thenReturn(List.of(toMyself));
+        when(accountClient.callerAccountIds()).thenReturn(List.of(myAccount, mySecondAccount));
+        when(transferRepository.findByToAccountIdInAndStatus(List.of(myAccount, mySecondAccount), TransferStatus.COMPLETED))
+                .thenReturn(List.of(toMyself));
+
+        assertThat(transferService.listMyTransfers(INITIATOR_ID, null)).containsExactly(toMyself);
+    }
+
+    @Test
+    void listMyTransfersFiltersIncomingByStatusToo() {
+        UUID myAccount = UUID.randomUUID();
+        when(transferRepository.findByInitiatorIdAndStatus(INITIATOR_ID, TransferStatus.COMPLETED)).thenReturn(List.of());
+        when(accountClient.callerAccountIds()).thenReturn(List.of(myAccount));
+
+        transferService.listMyTransfers(INITIATOR_ID, TransferStatus.COMPLETED);
+
+        verify(transferRepository).findByToAccountIdInAndStatus(List.of(myAccount), TransferStatus.COMPLETED);
+    }
+
+    @Test
+    void listMyTransfersSkipsIncomingForAnyStatusButCompleted() {
+        // Incoming transfers are only ever shown once the money has landed, so a FAILED filter
+        // has no incoming half at all -- and no reason to call Account.
+        transferService.listMyTransfers(INITIATOR_ID, TransferStatus.FAILED);
+
+        verify(transferRepository).findByInitiatorIdAndStatus(INITIATOR_ID, TransferStatus.FAILED);
+        verify(accountClient, never()).callerAccountIds();
+    }
+
+    @Test
+    void listMyTransfersSkipsTheIncomingQueryForACallerWithNoAccount() {
+        when(accountClient.callerAccountIds()).thenReturn(List.of());
+
+        transferService.listMyTransfers(INITIATOR_ID, null);
+
+        verify(transferRepository, never()).findByToAccountIdInAndStatus(any(), any());
+    }
+
+    @Test
+    void listMyTransfersPropagatesAccountBeingUnavailable() {
+        // Answering with the outgoing half alone would silently hide money the caller received.
+        when(accountClient.callerAccountIds()).thenThrow(new AccountServiceUnavailableException("down"));
+
+        assertThatThrownBy(() -> transferService.listMyTransfers(INITIATOR_ID, null))
+                .isInstanceOf(AccountServiceUnavailableException.class);
+    }
+
+    @Test
     void listTransfersFiltersByStatusOnlyWhenOneIsGiven() {
         transferService.listTransfers(null);
         verify(transferRepository).findAll();

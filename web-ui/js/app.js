@@ -3,11 +3,29 @@ function escapeHtml(value) {
         ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-// The amount sent, plus -- for a converted transfer -- what the recipient received. A transfer
-// from before currencies existed has no currency fields at all, and shows the bare amount.
+// GET /transfers/mine lists both directions, each marked relative to the caller.
+function isIncoming(t) {
+    return t.direction === 'INCOMING';
+}
+
+// The account on the other side of a transfer from where the caller stands.
+function counterpartyId(t) {
+    return isIncoming(t) ? t.fromAccountId : t.toAccountId;
+}
+
+// Outgoing: the amount sent, plus -- for a converted transfer -- what the recipient received.
+// Incoming: what landed in the caller's account, plus what the sender paid when converted. A
+// transfer from before currencies existed has no currency fields at all, and shows the bare amount.
 function formatTransferAmount(t) {
     const sent = `${Number(t.amount).toFixed(2)} ${escapeHtml(t.sourceCurrency || '')}`.trim();
-    if (t.creditAmount == null || t.destinationCurrency === t.sourceCurrency) {
+    const converted = t.creditAmount != null && t.destinationCurrency !== t.sourceCurrency;
+    if (isIncoming(t)) {
+        const received = converted
+            ? `${Number(t.creditAmount).toFixed(2)} ${escapeHtml(t.destinationCurrency)}`
+            : sent;
+        return `<span class="amount-in">+${received}</span>${converted ? `<span class="amount-sub">from ${sent}</span>` : ''}`;
+    }
+    if (!converted) {
         return sent;
     }
     return `${sent}<span class="amount-sub">→ ${Number(t.creditAmount).toFixed(2)} ${escapeHtml(t.destinationCurrency)}</span>`;
@@ -301,12 +319,15 @@ function reportsASettledTransfer(err) {
 async function renderQuickTransfers(transfers) {
     const section = document.getElementById('quick-transfers-section');
     const recentFirst = [...transfers].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    // Anyone the caller has paid or been paid by, most recent first -- paying someone back is
+    // as common as paying them again.
     const seen = new Set();
     const distinctRecipients = [];
     for (const transfer of recentFirst) {
-        if (!seen.has(transfer.toAccountId)) {
-            seen.add(transfer.toAccountId);
-            distinctRecipients.push(transfer.toAccountId);
+        const id = counterpartyId(transfer);
+        if (!seen.has(id)) {
+            seen.add(id);
+            distinctRecipients.push(id);
         }
     }
 
@@ -356,11 +377,11 @@ async function renderQuickTransfers(transfers) {
 
 async function renderHistory(transfers) {
     const section = document.getElementById('history-section');
-    const distinctRecipients = [...new Set(transfers.map((t) => t.toAccountId))];
+    const counterparties = [...new Set(transfers.map(counterpartyId))];
     const summaries = await Promise.all(
-        distinctRecipients.map((id) => Api.get(`/accounts/${id}/summary`).catch(() => ({ ownerName: id }))));
+        counterparties.map((id) => Api.get(`/accounts/${id}/summary`).catch(() => ({ ownerName: id }))));
     const nameByAccountId = Object.fromEntries(
-        distinctRecipients.map((id, index) => [id, summaries[index].ownerName]));
+        counterparties.map((id, index) => [id, summaries[index].ownerName]));
 
     if (transfers.length === 0) {
         section.innerHTML = `
@@ -368,7 +389,7 @@ async function renderHistory(transfers) {
                 <div class="card-header"><h3>Transfer history</h3></div>
                 <div class="empty-state">
                     <strong>No transfers yet</strong>
-                    Money you send will show up here.
+                    Money you send or receive will show up here.
                 </div>
             </div>`;
         return;
@@ -378,10 +399,13 @@ async function renderHistory(transfers) {
     const rows = [...transfers]
         .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
         .map((t) => {
-            const name = nameByAccountId[t.toAccountId];
+            const name = nameByAccountId[counterpartyId(t)];
+            const direction = isIncoming(t)
+                ? '<span class="direction in" title="Received">↓</span>'
+                : '<span class="direction out" title="Sent">↑</span>';
             return `<tr>
                 <td class="date muted">${new Date(t.createdAt).toLocaleString(undefined, dateFormat)}</td>
-                <td><span class="recipient"><span class="avatar" aria-hidden="true">${escapeHtml(initials(name))}</span>${escapeHtml(name)}</span></td>
+                <td><span class="recipient"><span class="avatar" aria-hidden="true">${escapeHtml(initials(name))}</span>${escapeHtml(name)}${direction}</span></td>
                 <td class="num">${formatTransferAmount(t)}</td>
                 <td>${statusBadge(t.status)}</td>
             </tr>`;
@@ -391,7 +415,7 @@ async function renderHistory(transfers) {
         <div class="card">
             <div class="card-header"><h3>Transfer history</h3></div>
             <table class="history-table">
-                <thead><tr><th>Date</th><th>To</th><th class="num">Amount</th><th>Status</th></tr></thead>
+                <thead><tr><th>Date</th><th>Counterparty</th><th class="num">Amount</th><th>Status</th></tr></thead>
                 <tbody>${rows}</tbody>
             </table>
         </div>`;

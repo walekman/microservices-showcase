@@ -612,6 +612,19 @@ input.mono {
     font-weight: 500;
 }
 
+.direction {
+    font-size: 0.8rem;
+    font-weight: 700;
+}
+
+.direction.in { color: var(--success-fg); }
+.direction.out { color: var(--text-muted); }
+
+.amount-in {
+    color: var(--success-fg);
+    font-weight: 600;
+}
+
 .badge {
     display: inline-block;
     font-size: 0.75rem;
