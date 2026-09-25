@@ -83,6 +83,10 @@ async function renderDashboard(account, { flashMessage } = {}) {
         <div class="card">
             <h2>${escapeHtml(account.ownerName)}</h2>
             <p class="balance">${Number(account.balance).toFixed(2)} ${escapeHtml(account.currency)}</p>
+            <p class="hint account-id">
+                Account ID: <code id="account-id">${escapeHtml(account.id)}</code>
+                <button id="copy-account-id-button" type="button" class="link-button">Copy</button>
+            </p>
             <button id="send-money-button" type="button">Send money</button>
         </div>
         <p id="dashboard-flash" class="success" hidden></p>
@@ -95,6 +99,18 @@ async function renderDashboard(account, { flashMessage } = {}) {
         flashEl.textContent = flashMessage;
         flashEl.hidden = false;
     }
+
+    // The ID is what someone else types into "To account" to pay this account.
+    const copyButton = document.getElementById('copy-account-id-button');
+    copyButton.addEventListener('click', async () => {
+        try {
+            await navigator.clipboard.writeText(account.id);
+            copyButton.textContent = 'Copied';
+        } catch {
+            copyButton.textContent = 'Copy failed';
+        }
+        setTimeout(() => { copyButton.textContent = 'Copy'; }, 1500);
+    });
 
     const transfers = await Api.get('/transfers/mine');
     document.getElementById('send-money-button')
