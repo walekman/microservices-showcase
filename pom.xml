@@ -31,4 +31,16 @@
     <springdoc-openapi.version>2.8.17</springdoc-openapi.version>
     <resilience4j.version>2.4.0</resilience4j.version>
   </properties>
+
+  <!-- Local-only end-to-end suite (docs/phase-10-end-to-end-saga-tests.md). Never in the
+       default <modules>: CI must not build it, and none of the service Dockerfiles copy its
+       pom.xml, so listing it there would break every image build. -->
+  <profiles>
+    <profile>
+      <id>e2e</id>
+      <modules>
+        <module>e2e-tests</module>
+      </modules>
+    </profile>
+  </profiles>
 </project>
