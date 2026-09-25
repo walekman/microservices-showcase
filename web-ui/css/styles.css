@@ -60,3 +60,15 @@ button {
     color: #555;
     font-size: 0.9rem;
 }
+
+.account-id code {
+    user-select: all;
+    word-break: break-all;
+}
+
+.link-button {
+    background: none;
+    color: var(--bank-accent);
+    padding: 0 0.25rem;
+    text-decoration: underline;
+}
