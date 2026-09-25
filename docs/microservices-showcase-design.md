@@ -103,8 +103,8 @@ Every terminal state emits a `TransferCompleted` or `TransferFailed` event throu
 
 - **Unit tests** (JUnit 5 + Mockito): business logic in isolation — saga step sequencing in Transfer Service (mocked Account/Fraud clients), fraud rule evaluation, resilience config behavior.
 - **Integration tests per service** (Testcontainers, real Postgres/Kafka — not H2/mocks): validates JPA optimistic locking, the outbox table + polling publisher, and Kafka producer/consumer wiring against the real infra they actually run against.
-- **End-to-end saga tests** (Phase 10, not yet built): a dedicated test module boots the real services via Testcontainers/Docker Compose and drives full flows through the Gateway — happy path, fraud-rejection-with-compensation, and forced-Account-unavailable (proving circuit breaker/retry behavior end-to-end).
-- **Fault injection:** Spring's `MockRestServiceServer` stands in for Account/Fraud in Transfer Service's client tests, simulating timeouts/5xxs to assert that retry and the circuit breaker behave and that the transfer fails cleanly. Fault injection against the real services is planned for the end-to-end tests (Phase 10).
+- **End-to-end saga tests** (Phase 10): the `e2e-tests` module, built only under `-Pe2e` and run locally (not in CI or `./mvnw test`), starts its own copy of the whole stack (`docker-compose.yml` plus `docker-compose.e2e.yml`, under a random project name with no fixed container names or host ports) and drives six scenarios through the Gateway as fresh Keycloak users, asserting on both balances: happy path with an idempotent repeat, cross-currency at the locked rate, blocked source (clean failure), blocked destination (debited, then compensated), Account unreachable (retry, circuit breaker opens, then recovers), and a lost debit response (left `PENDING`, settled exactly once by the stale-`PENDING` sweep).
+- **Fault injection:** in Transfer Service's client tests, Spring's `MockRestServiceServer` stands in for Account/Fraud/FX, simulating timeouts/5xxs to assert that retry and the circuit breaker behave. Against the real services, the end-to-end stack routes every Transfer → Account call through a WireMock proxy that forwards by default and can reset every connection or hold back debit responses past Transfer's read timeout; a second WireMock stands in for the FX rate provider.
 
 ## 7. Deployment / Local Dev
 
@@ -119,4 +119,4 @@ There is no seed script. Keycloak's realm import provides the demo users; bank a
 
 ## 8. Open Items
 
-None at the design level. Build order, per-phase scope and the one remaining phase (end-to-end saga tests) are tracked in `docs/roadmap.md`; deferred findings live in each phase doc's own deferral/known-gaps section. The actual build order differed from this document's original guess — see the roadmap.
+None at the design level. Build order and per-phase scope are tracked in `docs/roadmap.md`; deferred findings live in each phase doc's own deferral/known-gaps section. The actual build order differed from this document's original guess — see the roadmap.

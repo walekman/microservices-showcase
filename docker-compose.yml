@@ -1,7 +1,8 @@
 # Memory: no service here is load-tested, so every JVM gets a small fixed heap and the Go
 # services a soft limit. Unbounded, the stack took ~4.4 GB (each JVM sized its heap from the
-# whole Docker VM); capped, a second copy (the E2E suite's, see docker-compose.e2e.yml) fits
-# beside it. Nothing is disabled.
+# whole Docker VM); capped, ~3 GB. Nothing is disabled. Two copies at once (this and the E2E
+# suite's, see docker-compose.e2e.yml) still need ~10 GB or more for Docker; on a smaller VM,
+# stop this stack before running the E2E suite.
 x-jvm-memory: &jvm-memory
   # Small fixed heap; the serial collector and the C1-only JIT cut per-JVM overhead and start faster.
   JAVA_TOOL_OPTIONS: -Xmx192m -XX:+UseSerialGC -XX:TieredStopAtLevel=1 -XX:ReservedCodeCacheSize=48m

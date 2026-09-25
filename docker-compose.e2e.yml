@@ -3,8 +3,9 @@
 # docs/phase-10-end-to-end-saga-tests.md.
 #
 # !reset/!override need Compose >= 2.24.4. Every fixed container_name is reset so this stack
-# can run beside a dev stack; host ports are either reset or, for the services the tests reach,
-# replaced by a random host port (container port only).
+# never clashes with a dev stack's names; host ports are either reset or, for the services the
+# tests reach, replaced by a random host port (container port only). Running both at once also
+# needs the memory for two stacks (~10 GB or more for Docker).
 #
 # Memory caps live in docker-compose.yml and apply to both stacks.
 
