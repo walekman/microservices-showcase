@@ -23,12 +23,11 @@ function formatTransferAmount(t) {
         const received = converted
             ? `${Number(t.creditAmount).toFixed(2)} ${escapeHtml(t.destinationCurrency)}`
             : sent;
-        return `<span class="amount-in">+${received}</span>${converted ? `<span class="amount-sub">from ${sent}</span>` : ''}`;
+        return `<span class="amount-main in"><span class="amount-arrow" aria-hidden="true">${ARROW_IN}</span>+${received}</span>`
+            + (converted ? `<span class="amount-sub">from ${sent}</span>` : '');
     }
-    if (!converted) {
-        return sent;
-    }
-    return `${sent}<span class="amount-sub">→ ${Number(t.creditAmount).toFixed(2)} ${escapeHtml(t.destinationCurrency)}</span>`;
+    return `<span class="amount-main out"><span class="amount-arrow" aria-hidden="true">${ARROW_OUT}</span>−${sent}</span>`
+        + (converted ? `<span class="amount-sub">→ ${Number(t.creditAmount).toFixed(2)} ${escapeHtml(t.destinationCurrency)}</span>` : '');
 }
 
 // Down-left into the account for money received, up-right out of it for money sent.
@@ -409,7 +408,7 @@ async function renderHistory(transfers) {
                 <td class="date muted">${new Date(t.createdAt).toLocaleString(undefined, dateFormat)}</td>
                 <td>
                     <span class="recipient">
-                        <span class="direction-icon ${incoming ? 'in' : 'out'}" aria-hidden="true">${incoming ? ARROW_IN : ARROW_OUT}</span>
+                        <span class="avatar" aria-hidden="true">${escapeHtml(initials(name))}</span>
                         <span>
                             ${escapeHtml(name)}
                             <span class="direction-label">${incoming ? 'Received' : 'Sent'}</span>

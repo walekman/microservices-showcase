@@ -612,27 +612,35 @@ input.mono {
     font-weight: 500;
 }
 
-.direction-icon {
-    flex: none;
-    width: 32px;
-    height: 32px;
+.amount-main {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-weight: 600;
+}
+
+.amount-main.in { color: var(--success-fg); }
+
+.amount-arrow {
+    width: 18px;
+    height: 18px;
     border-radius: 50%;
-    display: grid;
+    display: inline-grid;
     place-items: center;
 }
 
-.direction-icon svg {
-    width: 14px;
-    height: 14px;
+.amount-main.in .amount-arrow { background: var(--success-bg); }
+.amount-main.out .amount-arrow { background: var(--neutral-bg); color: var(--neutral-fg); }
+
+.amount-arrow svg {
+    width: 10px;
+    height: 10px;
     fill: none;
     stroke: currentColor;
-    stroke-width: 1.8;
+    stroke-width: 2;
     stroke-linecap: round;
     stroke-linejoin: round;
 }
-
-.direction-icon.in { background: var(--success-bg); color: var(--success-fg); }
-.direction-icon.out { background: var(--neutral-bg); color: var(--neutral-fg); }
 
 .direction-label {
     display: block;
@@ -641,10 +649,7 @@ input.mono {
     color: var(--text-muted);
 }
 
-.amount-in {
-    color: var(--success-fg);
-    font-weight: 600;
-}
+
 
 .badge {
     display: inline-block;
