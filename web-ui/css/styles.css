@@ -612,13 +612,34 @@ input.mono {
     font-weight: 500;
 }
 
-.direction {
-    font-size: 0.8rem;
-    font-weight: 700;
+.direction-icon {
+    flex: none;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
 }
 
-.direction.in { color: var(--success-fg); }
-.direction.out { color: var(--text-muted); }
+.direction-icon svg {
+    width: 14px;
+    height: 14px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.direction-icon.in { background: var(--success-bg); color: var(--success-fg); }
+.direction-icon.out { background: var(--neutral-bg); color: var(--neutral-fg); }
+
+.direction-label {
+    display: block;
+    font-size: 0.75rem;
+    font-weight: 400;
+    color: var(--text-muted);
+}
 
 .amount-in {
     color: var(--success-fg);

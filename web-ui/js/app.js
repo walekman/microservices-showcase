@@ -31,6 +31,10 @@ function formatTransferAmount(t) {
     return `${sent}<span class="amount-sub">→ ${Number(t.creditAmount).toFixed(2)} ${escapeHtml(t.destinationCurrency)}</span>`;
 }
 
+// Down-left into the account for money received, up-right out of it for money sent.
+const ARROW_IN = '<svg viewBox="0 0 12 12"><path d="M9.5 2.5 2.5 9.5M2.5 4v5.5H8" /></svg>';
+const ARROW_OUT = '<svg viewBox="0 0 12 12"><path d="M2.5 9.5 9.5 2.5M4 2.5h5.5V8" /></svg>';
+
 function initials(name) {
     return String(name).trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase();
 }
@@ -400,12 +404,18 @@ async function renderHistory(transfers) {
         .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
         .map((t) => {
             const name = nameByAccountId[counterpartyId(t)];
-            const direction = isIncoming(t)
-                ? '<span class="direction in" title="Received">↓</span>'
-                : '<span class="direction out" title="Sent">↑</span>';
+            const incoming = isIncoming(t);
             return `<tr>
                 <td class="date muted">${new Date(t.createdAt).toLocaleString(undefined, dateFormat)}</td>
-                <td><span class="recipient"><span class="avatar" aria-hidden="true">${escapeHtml(initials(name))}</span>${escapeHtml(name)}${direction}</span></td>
+                <td>
+                    <span class="recipient">
+                        <span class="direction-icon ${incoming ? 'in' : 'out'}" aria-hidden="true">${incoming ? ARROW_IN : ARROW_OUT}</span>
+                        <span>
+                            ${escapeHtml(name)}
+                            <span class="direction-label">${incoming ? 'Received' : 'Sent'}</span>
+                        </span>
+                    </span>
+                </td>
                 <td class="num">${formatTransferAmount(t)}</td>
                 <td>${statusBadge(t.status)}</td>
             </tr>`;
