@@ -29,7 +29,7 @@ public final class E2EStack {
     private static final Path REPO_ROOT =
             Path.of(System.getProperty("e2e.repoRoot", "..")).toAbsolutePath().normalize();
     private static final Duration UP_TIMEOUT = Duration.ofMinutes(15);
-    private static final Duration WARM_UP_TIMEOUT = Duration.ofMinutes(3);
+    private static final Duration WARM_UP_TIMEOUT = Duration.ofMinutes(5);
     // The services docker-compose.yml builds from source. Built one at a time: six parallel
     // Maven dependency downloads and compiles exhausted Docker Desktop's build daemon (a DNS
     // failure mid-download on one run, the BuildKit connection dropping on the next).
@@ -109,18 +109,23 @@ public final class E2EStack {
      * Keycloak, connection pools) made the first saga on a cold stack take ~20 s, where one slow
      * call past Transfer's 5 s read timeout, three times over, fails a test on noise rather than
      * on the saga. One same-currency and one cross-currency transfer, retried until both complete,
-     * warm every hop the scenarios use before the first test runs.
+     * warm every hop the scenarios use before the first test runs. The setup is retried too: a
+     * cold Keycloak's first token request has taken over a minute on a loaded Docker VM.
      */
     private void warmUp() {
+        await().atMost(WARM_UP_TIMEOUT).pollInterval(Duration.ofSeconds(5)).ignoreExceptions()
+                .until(this::warmUpTransfersComplete);
+    }
+
+    private boolean warmUpTransfersComplete() {
         TestUsers users = new TestUsers(keycloak);
         Bank bank = new Bank(gateway);
         TestUser payer = users.create();
         OpenedAccount euros = bank.openAccount(payer, "EUR", "1000.00");
         OpenedAccount otherEuros = bank.openAccount(users.create(), "EUR", "0.00");
         OpenedAccount zlotys = bank.openAccount(users.create(), "PLN", "0.00");
-        await().atMost(WARM_UP_TIMEOUT).pollInterval(Duration.ofSeconds(5)).ignoreExceptions()
-                .until(() -> bank.transfer(payer, euros, otherEuros, "1.00").status() == 201
-                        && bank.transfer(payer, euros, zlotys, "1.00").status() == 201);
+        return bank.transfer(payer, euros, otherEuros, "1.00").status() == 201
+                && bank.transfer(payer, euros, zlotys, "1.00").status() == 201;
     }
 
     private void down() {

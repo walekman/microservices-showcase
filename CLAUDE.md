@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-Phases 1–9 (including 7b and 8b), Phase 11 (Notification persistence + Kafka consumer error handling) and Phase 12 (multi-currency transfers + Redis-cached FX Service) are implemented and merged to `master`. Phase 10 (end-to-end saga tests) has not started. `docs/roadmap.md` indexes every phase and its scope.
+Phases 1–12 (including 7b and 8b) are implemented; Phase 10 (end-to-end saga tests, plus Fraud's persisted blocklist) lands on `master` with the `feature/phase-10` PR. `docs/roadmap.md` indexes every phase and its scope.
 
 Six Spring Boot / Java 21 services plus a static UI, all brought up by `docker compose up`:
 
@@ -43,6 +43,7 @@ A live-saga debit whose outcome is unknown is therefore left `PENDING` (the API 
 - Pass the git commit into the images with `GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build` (PowerShell: `$env:GIT_SHA = git rev-parse --short HEAD; docker compose up -d --build`); without it `/actuator/info` and the Service Versions dashboard show `commit: unknown`. Also: `build-info` runs at `generate-resources`, so an offline (`-o`) Maven build on a cold cache fails to resolve the Boot plugin — run one online build first.
 - A fresh `git worktree` checkout does not carry the `.env` file (it's gitignored, untracked); copy `.env` from an existing checkout before running `docker compose up`, or `docker compose up` will fail at Postgres with unset `POSTGRES_PASSWORD` and related variables.
 - There is no Flyway/Liquibase: schemas evolve through Hibernate's `ddl-auto: update`, and Compose's Postgres keeps data in the named `postgres-data` volume. A schema change that existing rows violate (a new `unique` or `NOT NULL`) is only logged as a warning, and the service boots without the constraint. After pulling a schema-changing phase, run `docker compose down -v` before `up` (see `docs/phase-9-bank-ui.md`, "Running Task 2 against an existing local stack").
+- End-to-end suite: `./mvnw -Pe2e -pl e2e-tests verify` (local only, not in CI or `./mvnw test`). It builds and starts its own copy of the stack (`docker-compose.yml` + `docker-compose.e2e.yml`, project `showcase-e2e-*`, random host ports, no fixed container names) and removes it at exit; `-De2e.keepStack=true` keeps it to read service logs. A killed run can leave one behind: `docker compose ls`, then `docker compose -p <name> down -v`. It does not clash with a dev stack's names or ports, but two stacks need ~10 GB or more for Docker: on this machine's ~7.4 GB VM the pair swapped and Keycloak stalled, so `docker compose stop` the dev stack before an E2E run (volumes are kept) and `docker compose start` it after. The JVM/Go memory caps in `docker-compose.yml` apply to both stacks.
 - CI (`.github/workflows/ci.yml`) runs `./mvnw -B test` on JDK 21 for every PR and every push to `master` — the same full suite, Testcontainers included. `AccountControllerIT`'s two concurrency tests hold the account row locked in Postgres until every request is parked mid-transaction, rather than timing requests with a barrier. Don't revert them to a barrier: see `docs/investigation-account-controller-it-concurrency-flake.md` for why that flaked on CI.
 
 ## Git workflow

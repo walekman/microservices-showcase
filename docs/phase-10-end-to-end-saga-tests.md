@@ -1431,8 +1431,9 @@ Check: `./mvnw -q validate` (no profile) must not list `e2e-tests`, and
 # docs/phase-10-end-to-end-saga-tests.md.
 #
 # !reset/!override need Compose >= 2.24.4. Every fixed container_name is reset so this stack
-# can run beside a dev stack; host ports are either reset or, for the services the tests reach,
-# replaced by a random host port (container port only).
+# never clashes with a dev stack's names; host ports are either reset or, for the services the
+# tests reach, replaced by a random host port (container port only). Running both at once also
+# needs the memory for two stacks (~10 GB or more for Docker).
 #
 # Memory caps live in docker-compose.yml and apply to both stacks.
 
@@ -1560,7 +1561,7 @@ public final class E2EStack {
     private static final Path REPO_ROOT =
             Path.of(System.getProperty("e2e.repoRoot", "..")).toAbsolutePath().normalize();
     private static final Duration UP_TIMEOUT = Duration.ofMinutes(15);
-    private static final Duration WARM_UP_TIMEOUT = Duration.ofMinutes(3);
+    private static final Duration WARM_UP_TIMEOUT = Duration.ofMinutes(5);
     // The services docker-compose.yml builds from source. Built one at a time: six parallel
     // Maven dependency downloads and compiles exhausted Docker Desktop's build daemon (a DNS
     // failure mid-download on one run, the BuildKit connection dropping on the next).
@@ -1640,18 +1641,23 @@ public final class E2EStack {
      * Keycloak, connection pools) made the first saga on a cold stack take ~20 s, where one slow
      * call past Transfer's 5 s read timeout, three times over, fails a test on noise rather than
      * on the saga. One same-currency and one cross-currency transfer, retried until both complete,
-     * warm every hop the scenarios use before the first test runs.
+     * warm every hop the scenarios use before the first test runs. The setup is retried too: a
+     * cold Keycloak's first token request has taken over a minute on a loaded Docker VM.
      */
     private void warmUp() {
+        await().atMost(WARM_UP_TIMEOUT).pollInterval(Duration.ofSeconds(5)).ignoreExceptions()
+                .until(this::warmUpTransfersComplete);
+    }
+
+    private boolean warmUpTransfersComplete() {
         TestUsers users = new TestUsers(keycloak);
         Bank bank = new Bank(gateway);
         TestUser payer = users.create();
         OpenedAccount euros = bank.openAccount(payer, "EUR", "1000.00");
         OpenedAccount otherEuros = bank.openAccount(users.create(), "EUR", "0.00");
         OpenedAccount zlotys = bank.openAccount(users.create(), "PLN", "0.00");
-        await().atMost(WARM_UP_TIMEOUT).pollInterval(Duration.ofSeconds(5)).ignoreExceptions()
-                .until(() -> bank.transfer(payer, euros, otherEuros, "1.00").status() == 201
-                        && bank.transfer(payer, euros, zlotys, "1.00").status() == 201);
+        return bank.transfer(payer, euros, otherEuros, "1.00").status() == 201
+                && bank.transfer(payer, euros, zlotys, "1.00").status() == 201;
     }
 
     private void down() {
@@ -2647,3 +2653,20 @@ re-synced from the merged source where they changed.
 - Recreating the dev stack's Keycloak (to apply the caps) re-imports `ada`, `bob` and `admin`
   with new subject IDs, because `showcase-realm.json` gives them none. Their existing dev
   accounts are orphaned rather than deleted. Any Keycloak recreation does this.
+
+### Task 4
+- **Two stacks at once do not reliably fit in a ~7.4 GB Docker VM, even capped.** Tasks 2 and 3
+  passed beside a running dev stack, but on the next run the VM was down to 211 MB free with
+  1.35 GB in swap, and the E2E Keycloak's first token request stalled past the 60 s HTTP
+  timeout (its event loop blocked for 3–9 s at a time). Decision (user): keep the caps, and stop
+  the dev stack before an E2E run on a machine this size. README, CLAUDE.md and both compose
+  files say so; the E2E stack still never clashes with a dev stack's names or ports.
+- **The warm-up retries its own setup** (user creation, first tokens) inside its retry loop, with
+  a 5-minute budget, so a slow first request is absorbed rather than failing the run.
+- Observed: the `accountService` breaker opened after 3 failing transfers (plus the warm-up's
+  and the lost-debit test's calls in its window); the fourth was rejected at once. The
+  lost-debit transfer went `PENDING` → `COMPENSATION_REQUIRED` about 60 s after the saga's
+  `503` (the 70 s threshold plus a 5 s tick), then `COMPLETED` 5 s later, with the source
+  debited exactly once. The Gateway did not time out before the saga's ~15 s `503`, so no
+  Gateway timeout override was needed.
+- The breaker metric's real format matched the parser: `state="closed"` and a `1.0` value.
