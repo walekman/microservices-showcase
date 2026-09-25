@@ -7,11 +7,14 @@
     <link rel="stylesheet" href="css/styles.css" />
 </head>
 <body>
-    <div id="loading">Loading...</div>
+    <div id="loading"><div class="spinner" aria-hidden="true"></div><span id="loading-text">Loading your account…</span></div>
     <div id="app" hidden>
         <header>
-            <h1>Bank UI</h1>
-            <button id="logout-button" type="button">Log out</button>
+            <div class="header-inner">
+                <div class="brand"><span class="brand-mark" aria-hidden="true">B</span>Bank UI</div>
+                <span id="header-user" class="header-user"></span>
+                <button id="logout-button" type="button" class="btn-ghost">Log out</button>
+            </div>
         </header>
         <main id="main-content"></main>
     </div>
