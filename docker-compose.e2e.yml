@@ -5,6 +5,9 @@
 # !reset/!override need Compose >= 2.24.4. Every fixed container_name is reset so this stack
 # can run beside a dev stack; host ports are either reset or, for the services the tests reach,
 # replaced by a random host port (container port only).
+#
+# Memory caps live in docker-compose.yml and apply to both stacks.
+
 services:
   postgres:
     container_name: !reset null
@@ -19,9 +22,12 @@ services:
       # Every Transfer -> Account call goes through the fault-injection proxy. The Gateway still
       # reaches Account directly, so the tests' own balance reads never meet an injected fault.
       ACCOUNT_SERVICE_URL: http://account-proxy:8080
-      # Short enough for a lost-debit test to settle within a minute or so, not 2+.
+      # Shorter than the default 120 s, so the lost-debit scenario settles within a couple of
+      # minutes, but still above the slowest possible live saga: four calls, each up to 3 x 5 s
+      # read timeouts plus backoff, ~62 s. Below that, the stale-PENDING sweep races a live saga
+      # that is merely slow (seen at 20 s on a cold stack), a race the real config never allows.
       TRANSFER_COMPENSATION_SWEEP_INTERVAL: 5s
-      TRANSFER_COMPENSATION_PENDING_STALE_AFTER: 20s
+      TRANSFER_COMPENSATION_PENDING_STALE_AFTER: 70s
     depends_on:
       account-proxy:
         condition: service_started

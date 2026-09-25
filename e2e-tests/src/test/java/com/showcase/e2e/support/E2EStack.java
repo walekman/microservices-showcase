@@ -12,6 +12,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
+import static org.awaitility.Awaitility.await;
+
 /**
  * One copy of the whole Compose stack per JVM, started on first use and removed (with its
  * volumes) at JVM exit. Drives the docker compose CLI directly: Testcontainers' ComposeContainer
@@ -27,6 +29,7 @@ public final class E2EStack {
     private static final Path REPO_ROOT =
             Path.of(System.getProperty("e2e.repoRoot", "..")).toAbsolutePath().normalize();
     private static final Duration UP_TIMEOUT = Duration.ofMinutes(15);
+    private static final Duration WARM_UP_TIMEOUT = Duration.ofMinutes(3);
     // The services docker-compose.yml builds from source. Built one at a time: six parallel
     // Maven dependency downloads and compiles exhausted Docker Desktop's build daemon (a DNS
     // failure mid-download on one run, the BuildKit connection dropping on the next).
@@ -96,7 +99,28 @@ public final class E2EStack {
         fraud = hostUrl("fraud-service", 8084);
         transfer = hostUrl("transfer-service", 8082);
         accountProxy = hostUrl("account-proxy", 8080);
+        System.out.println("[e2e] stack " + project + " is healthy; warming up through the gateway at " + gateway);
+        warmUp();
         System.out.println("[e2e] stack " + project + " is up; gateway at " + gateway);
+    }
+
+    /**
+     * Healthy is not the same as fast. Every service's first requests (JIT, the JWKS fetch from
+     * Keycloak, connection pools) made the first saga on a cold stack take ~20 s, where one slow
+     * call past Transfer's 5 s read timeout, three times over, fails a test on noise rather than
+     * on the saga. One same-currency and one cross-currency transfer, retried until both complete,
+     * warm every hop the scenarios use before the first test runs.
+     */
+    private void warmUp() {
+        TestUsers users = new TestUsers(keycloak);
+        Bank bank = new Bank(gateway);
+        TestUser payer = users.create();
+        OpenedAccount euros = bank.openAccount(payer, "EUR", "1000.00");
+        OpenedAccount otherEuros = bank.openAccount(users.create(), "EUR", "0.00");
+        OpenedAccount zlotys = bank.openAccount(users.create(), "PLN", "0.00");
+        await().atMost(WARM_UP_TIMEOUT).pollInterval(Duration.ofSeconds(5)).ignoreExceptions()
+                .until(() -> bank.transfer(payer, euros, otherEuros, "1.00").status() == 201
+                        && bank.transfer(payer, euros, zlotys, "1.00").status() == 201);
     }
 
     private void down() {
