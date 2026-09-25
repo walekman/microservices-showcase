@@ -17,7 +17,7 @@ Non-goals: this is not a production banking system. No real payment rails, no do
 | **Auth** | Issues/validates JWT via OAuth2/OIDC | Keycloak (containerized, pre-configured realm) |
 | **Account** | Owns accounts & balances; debit/credit with optimistic locking; each account held in one currency, fixed at creation | PostgreSQL (own database) |
 | **Transfer** | Orchestrates the transfer saga; owns transfer/ledger history + transactional outbox | PostgreSQL (own database) |
-| **Fraud** | Screens each account in a transfer against a configured blocklist (no amount/velocity rules) | stateless (no database) |
+| **Fraud** | Screens each account in a transfer against a blocklist it stores (no amount/velocity rules); `fraud-admin` maintains it through `PUT`/`DELETE /fraud/blocklist/{accountId}`, which has no Gateway route | PostgreSQL (own database) |
 | **FX** | Exchange rates for cross-currency transfers, from the Frankfurter/ECB feed behind a Redis cache (fresh TTL, last-known fallback, cross-instance single-flight lock) | stateless (Redis is a cache, not a store) |
 | **Notification** | Consumes transfer-outcome events; stores one notification per transfer (a redelivery is skipped) and logs a "notification sent"; dead-letters events it cannot read or accept | PostgreSQL (own database) |
 | **Bank UI** | Static browser single-page app for customer self-service (signup/onboarding, balance, transfers, history, quick-transfer); calls the Gateway directly from the browser | stateless (no build tooling — plain HTML/CSS/JS served by nginx) |
@@ -28,7 +28,7 @@ Each stateful service owns its data exclusively — no service queries another's
 
 - **Language/runtime:** Java 21, Spring Boot 3.x
 - **Web:** Spring MVC (blocking, not WebFlux) with **virtual threads enabled** (`spring.threads.virtual.enabled=true`) — gets Java 21's concurrency model with plain sequential blocking code, no reactive programming model. Rationale: Transfer Service's saga makes a sequential chain of blocking downstream calls per request; virtual threads let that scale to many concurrent in-flight transfers without exhausting a platform-thread pool, and without rewriting the orchestration as reactive/async code. Out of scope: explicit thread-pinning verification/diagnostics tooling — the flag is enabled and left at that.
-- **Persistence:** Spring Data JPA + PostgreSQL, one logical database per stateful service (Account, Transfer, Notification), provisioned as separate databases inside a single Postgres container via init script.
+- **Persistence:** Spring Data JPA + PostgreSQL, one logical database per stateful service (Account, Transfer, Notification, Fraud), provisioned as separate databases inside a single Postgres container via init script.
 - **Messaging:** Apache Kafka, **KRaft mode** (no Zookeeper).
 - **Cache:** Redis (single node, no persistence), used only by FX Service in front of its external rate provider. An optimisation, never a dependency: with Redis down, FX Service calls the provider directly. See `docs/phase-12-fx-rates-redis-cache.md`.
 - **Auth:** Keycloak (OAuth2/OIDC), JWT validated at the Gateway and by each resource service via Spring Security Resource Server.
@@ -110,7 +110,7 @@ Every terminal state emits a `TransferCompleted` or `TransferFailed` event throu
 
 Single `docker compose up`:
 - 5 Spring Boot services (Gateway, Account, Transfer, Fraud, Notification), plus the Bank UI (`web-ui`, `nginx:alpine` serving static assets, no build step, host port 8090) — see `docs/phase-9-bank-ui.md`
-- One Postgres container, separate database per stateful service (Account, Transfer) via init script
+- One Postgres container, separate database per stateful service (Account, Transfer, Notification, Fraud) via init script
 - Kafka in KRaft mode (no Zookeeper)
 - Keycloak with a pre-loaded realm/client (import file, not manual setup), including the Bank UI's custom login/registration theme
 - OTel Collector, Prometheus, Grafana (provisioned dashboards), Grafana Tempo

@@ -8,6 +8,7 @@ services:
       ACCOUNT_DB_PASSWORD: ${ACCOUNT_DB_PASSWORD}
       TRANSFER_DB_PASSWORD: ${TRANSFER_DB_PASSWORD}
       NOTIFICATION_DB_PASSWORD: ${NOTIFICATION_DB_PASSWORD}
+      FRAUD_DB_PASSWORD: ${FRAUD_DB_PASSWORD}
     ports:
       - "5432:5432"
     volumes:
@@ -154,13 +155,19 @@ services:
         GIT_SHA: ${GIT_SHA:-unknown}
     container_name: showcase-fraud-service
     environment:
-      FRAUD_BLOCKLIST_ACCOUNT_IDS: ${FRAUD_BLOCKLIST_ACCOUNT_IDS:-}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: fraud
+      DB_USER: fraud_service
+      DB_PASSWORD: ${FRAUD_DB_PASSWORD}
       KEYCLOAK_JWK_SET_URI: http://keycloak:8080/realms/showcase/protocol/openid-connect/certs
       KEYCLOAK_ISSUER_URI: http://localhost:8180/realms/showcase
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
     ports:
       - "8084:8084"
     depends_on:
+      postgres:
+        condition: service_healthy
       keycloak:
         condition: service_healthy
     healthcheck:

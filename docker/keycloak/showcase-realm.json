@@ -27,6 +27,10 @@
         "description": "Can invoke the fraud-check endpoint"
       },
       {
+        "name": "fraud-admin",
+        "description": "Can add and remove accounts on Fraud Service's blocklist (PUT/DELETE /fraud/blocklist/{accountId}) -- held only by the admin demo user, never by the customer composite; no Gateway route"
+      },
+      {
         "name": "fx-reader",
         "description": "Can read exchange rates (GET /fx/rates) -- held by customers; transfer-service's machine identity does not need it, because only the live saga (relaying the user's token) calls FX"
       },
@@ -133,7 +137,7 @@
       "credentials": [
         { "type": "password", "value": "password", "temporary": false }
       ],
-      "realmRoles": ["account-admin", "transfer-admin"]
+      "realmRoles": ["account-admin", "transfer-admin", "fraud-admin"]
     }
   ]
 }
