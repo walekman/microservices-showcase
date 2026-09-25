@@ -89,6 +89,8 @@ The governing rule: a call that fails with `ACCOUNT_SERVICE_UNAVAILABLE` (a time
 
 Every terminal state emits a `TransferCompleted` or `TransferFailed` event through the outbox.
 
+**Reading transfers.** `GET /transfers/mine` lists both directions for the caller, each item carrying `direction` (`OUTGOING`/`INCOMING`): every transfer they started, in any status, plus the `COMPLETED` transfers into any account they own. A recipient never sees a sender's failed or unsettled attempt, nor its failure reason. Transfer does not store who owns a destination account (see `docs/phase-7b-account-ownership-authorization.md`), so it learns the caller's accounts from Account's `GET /accounts/mine` on each read, with the caller's relayed token; if Account is unavailable the list answers `503` rather than silently dropping the incoming half.
+
 ## 5. Observability
 
 - **Tracing:** a single transfer request produces one continuous trace spanning Gateway → Transfer → Fraud/Account (in saga order) → (async hop via Kafka headers) → Notification. Micrometer auto-propagates W3C trace context across both REST calls and Kafka messages, so the trace crosses the sync/async boundary — the concrete proof of the "both sync and async" design goal.

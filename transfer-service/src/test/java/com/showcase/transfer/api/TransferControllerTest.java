@@ -394,4 +394,37 @@ class TransferControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].status").value("COMPLETED"));
     }
+
+    @Test
+    void marksEachOfMyTransfersWithItsDirectionForTheCaller() throws Exception {
+        Transfer sent = pendingTransfer();
+        Transfer received = new Transfer(TO, FROM, AMOUNT, UUID.randomUUID());
+        received.markCompleted();
+        when(transferService.listMyTransfers(SUBJECT, null)).thenReturn(List.of(sent, received));
+
+        mockMvc.perform(get("/transfers/mine").with(transferExecutor()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].direction").value("OUTGOING"))
+                .andExpect(jsonPath("$[1].direction").value("INCOMING"));
+    }
+
+    @Test
+    void omitsDirectionOutsideTheCallerScopedList() throws Exception {
+        // Direction only means something relative to "me"; the admin list has no "me".
+        when(transferService.listTransfers(null)).thenReturn(List.of(pendingTransfer()));
+
+        mockMvc.perform(get("/transfers").with(transferExecutor()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].direction").doesNotExist());
+    }
+
+    @Test
+    void returns503WhenAccountIsUnavailableListingMyTransfers() throws Exception {
+        when(transferService.listMyTransfers(SUBJECT, null))
+                .thenThrow(new com.showcase.transfer.client.AccountServiceUnavailableException("read timed out"));
+
+        mockMvc.perform(get("/transfers/mine").with(transferExecutor()))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code").value("ACCOUNT_SERVICE_UNAVAILABLE"));
+    }
 }

@@ -137,6 +137,47 @@ class AccountClientTest {
         server.verify();
     }
 
+    // callerAccountIds -- backs GET /transfers/mine's incoming half. Hits the owner-scoped
+    // GET /accounts/mine with the relayed caller token.
+
+    @Test
+    void callerAccountIdsReadsTheIdsFromAccountsMine() {
+        server.expect(requestTo(BASE_URL + "/accounts/mine"))
+                .andExpect(method(org.springframework.http.HttpMethod.GET))
+                .andRespond(withSuccess("""
+                        [{"id":"%s","ownerName":"Ada","balance":10.00,"currency":"EUR"}]
+                        """.formatted(ACCOUNT_ID), MediaType.APPLICATION_JSON));
+
+        assertThat(accountClient.callerAccountIds()).containsExactly(ACCOUNT_ID);
+        server.verify();
+    }
+
+    @Test
+    void callerAccountIdsIsEmptyForACallerWithNoAccount() {
+        server.expect(requestTo(BASE_URL + "/accounts/mine")).andRespond(withSuccess("[]", MediaType.APPLICATION_JSON));
+
+        assertThat(accountClient.callerAccountIds()).isEmpty();
+    }
+
+    @Test
+    void callerAccountIdsIsUnavailableOnServerError() {
+        server.expect(requestTo(BASE_URL + "/accounts/mine")).andRespond(withStatus(HttpStatus.INTERNAL_SERVER_ERROR));
+
+        assertThatThrownBy(() -> accountClient.callerAccountIds())
+                .isInstanceOf(AccountServiceUnavailableException.class);
+    }
+
+    @Test
+    void callerAccountIdsTreatsARejectionAsUnavailable() {
+        // GET /accounts/mine has no business rejection: any 4xx is an anomaly, and must not
+        // read as "this caller has no accounts" -- that would silently hide their incoming money.
+        server.expect(requestTo(BASE_URL + "/accounts/mine"))
+                .andRespond(problem(HttpStatus.NOT_FOUND, "ACCOUNT_NOT_FOUND", "nope"));
+
+        assertThatThrownBy(() -> accountClient.callerAccountIds())
+                .isInstanceOf(AccountServiceUnavailableException.class);
+    }
+
     @Test
     void debitPostsTheAmountAndIdempotencyKeyAndSucceeds() {
         server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID + "/debit"))
