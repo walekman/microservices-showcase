@@ -3,14 +3,34 @@ function escapeHtml(value) {
         ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-// "100.00 PLN → 22.82 EUR" for a converted transfer; "40.00 EUR" otherwise. A transfer from before
-// currencies existed has no currency fields at all, and shows the bare amount.
+// The amount sent, plus -- for a converted transfer -- what the recipient received. A transfer
+// from before currencies existed has no currency fields at all, and shows the bare amount.
 function formatTransferAmount(t) {
     const sent = `${Number(t.amount).toFixed(2)} ${escapeHtml(t.sourceCurrency || '')}`.trim();
     if (t.creditAmount == null || t.destinationCurrency === t.sourceCurrency) {
         return sent;
     }
-    return `${sent} → ${Number(t.creditAmount).toFixed(2)} ${escapeHtml(t.destinationCurrency)}`;
+    return `${sent}<span class="amount-sub">→ ${Number(t.creditAmount).toFixed(2)} ${escapeHtml(t.destinationCurrency)}</span>`;
+}
+
+function initials(name) {
+    return String(name).trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase();
+}
+
+// Label and badge colour per TransferStatus. COMPENSATION_REQUIRED is still settling, so it reads
+// as in progress rather than failed; COMPENSATED means the money came back.
+const STATUS_BADGES = {
+    COMPLETED: ['Completed', 'success'],
+    PENDING: ['Pending', 'warning'],
+    COMPENSATION_REQUIRED: ['Reversing', 'warning'],
+    COMPENSATED: ['Reversed', 'neutral'],
+    FAILED: ['Failed', 'danger'],
+    COMPENSATION_FAILED: ['Needs review', 'danger'],
+};
+
+function statusBadge(status) {
+    const [label, tone] = STATUS_BADGES[status] || [status, 'neutral'];
+    return `<span class="badge ${tone}">${escapeHtml(label)}</span>`;
 }
 
 async function bootstrap() {
@@ -28,10 +48,10 @@ async function bootstrap() {
         return;
     }
     document.getElementById('logout-button').addEventListener('click', () => Auth.logout());
-    document.getElementById('app').hidden = false;
-    document.getElementById('loading').hidden = true;
 
     const accounts = await Api.get('/accounts/mine');
+    document.getElementById('app').hidden = false;
+    document.getElementById('loading').hidden = true;
     if (accounts.length === 0) {
         renderOnboarding();
     } else {
@@ -42,23 +62,28 @@ async function bootstrap() {
 function renderOnboarding() {
     const main = document.getElementById('main-content');
     main.innerHTML = `
-        <div class="card">
+        <div class="card onboarding">
             <h2>Welcome! Let's set up your account.</h2>
-            <p>You'll start with a balance of 1000.00 in the currency you choose.</p>
-            <label for="owner-name">Your name</label>
-            <input id="owner-name" type="text" />
-            <label for="currency">Currency</label>
-            <select id="currency">
-                <option value="EUR">EUR</option>
-                <option value="USD">USD</option>
-                <option value="GBP">GBP</option>
-                <option value="PLN">PLN</option>
-            </select>
-            <button id="create-account-button" type="button">Create my account</button>
-            <p id="onboarding-error" class="error" hidden></p>
+            <p class="lead">You'll start with a balance of 1000.00 in the currency you choose.</p>
+            <div class="field">
+                <label for="owner-name">Your name</label>
+                <input id="owner-name" type="text" autocomplete="name" placeholder="e.g. Ada Lovelace" />
+            </div>
+            <div class="field">
+                <span class="field-label" id="currency-label">Currency</span>
+                <div class="segmented" role="radiogroup" aria-labelledby="currency-label">
+                    ${['EUR', 'USD', 'GBP', 'PLN'].map((code, index) => `
+                        <input type="radio" name="currency" id="currency-${code}" value="${code}" ${index === 0 ? 'checked' : ''} />
+                        <label for="currency-${code}">${code}</label>`).join('')}
+                </div>
+            </div>
+            <button id="create-account-button" type="button" class="btn-primary">Create my account</button>
+            <p id="onboarding-error" class="callout error" hidden></p>
         </div>`;
+    document.getElementById('owner-name').focus();
 
-    document.getElementById('create-account-button').addEventListener('click', async () => {
+    const createButton = document.getElementById('create-account-button');
+    createButton.addEventListener('click', async () => {
         const ownerName = document.getElementById('owner-name').value.trim();
         const errorEl = document.getElementById('onboarding-error');
         errorEl.hidden = true;
@@ -67,29 +92,39 @@ function renderOnboarding() {
             errorEl.hidden = false;
             return;
         }
+        const currency = document.querySelector('input[name="currency"]:checked').value;
+        createButton.disabled = true;
         try {
-            const account = await Api.post('/accounts', { ownerName, initialBalance: '1000.00', currency: document.getElementById('currency').value });
+            const account = await Api.post('/accounts', { ownerName, initialBalance: '1000.00', currency });
             renderDashboard(account);
         } catch (err) {
             errorEl.textContent = err.friendlyMessage ? err.friendlyMessage() : err.message;
             errorEl.hidden = false;
+            createButton.disabled = false;
         }
     });
 }
 
 async function renderDashboard(account, { flashMessage } = {}) {
+    document.getElementById('header-user').textContent = account.ownerName;
     const main = document.getElementById('main-content');
     main.innerHTML = `
-        <div class="card">
-            <h2>${escapeHtml(account.ownerName)}</h2>
-            <p class="balance">${Number(account.balance).toFixed(2)} ${escapeHtml(account.currency)}</p>
-            <p class="hint account-id">
-                Account ID: <code id="account-id">${escapeHtml(account.id)}</code>
-                <button id="copy-account-id-button" type="button" class="link-button">Copy</button>
-            </p>
-            <button id="send-money-button" type="button">Send money</button>
+        <div class="card account-card">
+            <div class="label">Account holder</div>
+            <div class="account-owner">${escapeHtml(account.ownerName)}</div>
+            <div class="balance">
+                <span class="balance-amount">${Number(account.balance).toFixed(2)}</span>
+                <span class="currency-badge">${escapeHtml(account.currency)}</span>
+            </div>
+            <div class="account-actions">
+                <span class="id-pill" title="Share this so others can send you money">
+                    <code id="account-id">${escapeHtml(account.id)}</code>
+                    <button id="copy-account-id-button" type="button">Copy</button>
+                </span>
+                <button id="send-money-button" type="button" class="btn-primary">Send money</button>
+            </div>
+            <p id="dashboard-flash" class="callout success" hidden></p>
         </div>
-        <p id="dashboard-flash" class="success" hidden></p>
         <div id="transfer-section"></div>
         <div id="quick-transfers-section"></div>
         <div id="history-section"></div>`;
@@ -123,16 +158,36 @@ function renderTransferForm(account, transfers, prefillAccountId) {
     const section = document.getElementById('transfer-section');
     section.innerHTML = `
         <div class="card">
-            <h3>Send money</h3>
-            <label for="to-account">To account ID</label>
-            <input id="to-account" type="text" value="${prefillAccountId || ''}" />
-            <label for="amount">Amount</label>
-            <input id="amount" type="number" step="0.01" min="0.01" />
-            <p id="transfer-quote" class="hint" hidden></p>
-            <button id="submit-transfer-button" type="button">Send</button>
-            <p id="transfer-error" class="error" hidden></p>
-            <p id="transfer-success" hidden></p>
+            <div class="card-header">
+                <h3>Send money</h3>
+                <button id="close-transfer-button" type="button" class="btn-icon" aria-label="Close">×</button>
+            </div>
+            <div class="field">
+                <label for="to-account">To account ID</label>
+                <input id="to-account" type="text" class="mono" placeholder="Paste the recipient's account ID"
+                       value="${escapeHtml(prefillAccountId || '')}" />
+            </div>
+            <div class="field">
+                <label for="amount">Amount</label>
+                <div class="input-affix">
+                    <input id="amount" type="number" step="0.01" min="0.01" placeholder="0.00" />
+                    <span class="suffix">${escapeHtml(account.currency)}</span>
+                </div>
+                <p id="amount-hint" class="field-hint">Available: ${Number(account.balance).toFixed(2)} ${escapeHtml(account.currency)}</p>
+            </div>
+            <div id="transfer-quote" class="callout info" hidden></div>
+            <p id="transfer-error" class="callout error" hidden></p>
+            <div class="form-actions">
+                <button id="submit-transfer-button" type="button" class="btn-primary">Send</button>
+                <button id="cancel-transfer-button" type="button" class="btn-secondary">Cancel</button>
+            </div>
         </div>`;
+
+    const close = () => { section.innerHTML = ''; };
+    document.getElementById('close-transfer-button').addEventListener('click', close);
+    document.getElementById('cancel-transfer-button').addEventListener('click', close);
+    section.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    document.getElementById(prefillAccountId ? 'amount' : 'to-account').focus();
 
     // One Idempotency-Key per intended transfer. Resending the same transfer (a double-click,
     // a retry after a lost response) reuses it, so Transfer Service replays the first attempt
@@ -140,10 +195,21 @@ function renderTransferForm(account, transfers, prefillAccountId) {
     let idempotencyKey = crypto.randomUUID();
     const startNewTransfer = () => { idempotencyKey = crypto.randomUUID(); };
 
+    // A soft warning only: the server decides whether the funds are there.
+    const amountHint = document.getElementById('amount-hint');
+    const refreshAmountHint = () => {
+        const overBalance = Number(document.getElementById('amount').value) > Number(account.balance);
+        amountHint.classList.toggle('warn', overBalance);
+        amountHint.textContent = `${overBalance ? 'More than your balance — ' : ''}Available: `
+            + `${Number(account.balance).toFixed(2)} ${account.currency}`;
+    };
+
     // An approximate quote while the user types. Advisory only: Transfer Service prices the
     // transfer itself when it is sent, and the result shows the amount it actually locked.
+    // The recipient's summary is kept so the success message can name them.
     const quoteEl = document.getElementById('transfer-quote');
     let latestQuote = 0;
+    let knownRecipient = null;
     const refreshQuote = async () => {
         const requestId = ++latestQuote;
         quoteEl.hidden = true;
@@ -154,6 +220,7 @@ function renderTransferForm(account, transfers, prefillAccountId) {
         }
         try {
             const recipient = await Api.get(`/accounts/${encodeURIComponent(toAccountId)}/summary`);
+            knownRecipient = { id: toAccountId, ...recipient };
             if (requestId !== latestQuote || recipient.currency === account.currency) {
                 return;
             }
@@ -161,36 +228,38 @@ function renderTransferForm(account, transfers, prefillAccountId) {
             if (requestId !== latestQuote) {
                 return; // a newer edit superseded this quote
             }
-            quoteEl.textContent = `${recipient.ownerName} receives ≈ ${(amount * fx.rate).toFixed(2)} ${recipient.currency}`
-                + ` (1 ${account.currency} = ${fx.rate} ${recipient.currency}, as of ${fx.asOf}`
-                + `${fx.stale ? ' — last known rate' : ''}). The exact amount is fixed when you send.`;
+            quoteEl.innerHTML = `
+                <div>
+                    <div class="quote-main">${escapeHtml(recipient.ownerName)} receives ≈ ${(amount * fx.rate).toFixed(2)} ${escapeHtml(recipient.currency)}</div>
+                    <div class="quote-meta">1 ${escapeHtml(account.currency)} = ${escapeHtml(fx.rate)} ${escapeHtml(recipient.currency)}
+                        · as of ${escapeHtml(fx.asOf)}${fx.stale ? ' · last known rate' : ''}
+                        · the exact amount is fixed when you send</div>
+                </div>`;
             quoteEl.hidden = false;
         } catch (err) {
             // No quote is not a form error: sending still works, and the server prices it.
         }
     };
     document.getElementById('to-account').addEventListener('input', () => { startNewTransfer(); refreshQuote(); });
-    document.getElementById('amount').addEventListener('input', () => { startNewTransfer(); refreshQuote(); });
+    document.getElementById('amount').addEventListener('input', () => {
+        startNewTransfer();
+        refreshAmountHint();
+        refreshQuote();
+    });
 
     const submitButton = document.getElementById('submit-transfer-button');
     submitButton.addEventListener('click', async () => {
         const toAccountId = document.getElementById('to-account').value.trim();
         const amount = document.getElementById('amount').value;
         const errorEl = document.getElementById('transfer-error');
-        const successEl = document.getElementById('transfer-success');
         errorEl.hidden = true;
-        successEl.hidden = true;
         submitButton.disabled = true;
+        submitButton.innerHTML = '<span class="spinner spinner-sm" aria-hidden="true"></span>Sending…';
         try {
             const transfer = await Api.post('/transfers', { fromAccountId: account.id, toAccountId, amount },
                 { 'Idempotency-Key': idempotencyKey });
             const refreshedAccounts = await Api.get('/accounts/mine');
-            const converted = transfer.destinationCurrency && transfer.destinationCurrency !== transfer.sourceCurrency;
-            await renderDashboard(refreshedAccounts[0], {
-                flashMessage: converted
-                    ? `Transfer completed: the recipient received ${Number(transfer.creditAmount).toFixed(2)} ${transfer.destinationCurrency}.`
-                    : 'Transfer completed.',
-            });
+            await renderDashboard(refreshedAccounts[0], { flashMessage: describeCompletedTransfer(transfer, toAccountId) });
         } catch (err) {
             if (reportsASettledTransfer(err)) {
                 // That key is spent: its transfer ended unsuccessfully, and replaying it would
@@ -201,10 +270,21 @@ function renderTransferForm(account, transfers, prefillAccountId) {
             // outcome -- leaves the first attempt's fate unknown, so the key is kept.
             errorEl.textContent = err.friendlyMessage ? err.friendlyMessage() : err.message;
             errorEl.hidden = false;
-        } finally {
             submitButton.disabled = false;
+            submitButton.textContent = 'Send';
         }
     });
+
+    // "Sent 5.00 PLN to Ada Lovelace, who received 1.14 EUR." Falls back to "the recipient" when
+    // the quote's lookup never ran or was for a different ID.
+    function describeCompletedTransfer(transfer, toAccountId) {
+        const name = knownRecipient && knownRecipient.id === toAccountId ? knownRecipient.ownerName : 'the recipient';
+        const sent = `${Number(transfer.amount).toFixed(2)} ${transfer.sourceCurrency || account.currency}`;
+        const converted = transfer.destinationCurrency && transfer.destinationCurrency !== transfer.sourceCurrency;
+        return converted
+            ? `Sent ${sent} to ${name}, who received ${Number(transfer.creditAmount).toFixed(2)} ${transfer.destinationCurrency}.`
+            : `Sent ${sent} to ${name}.`;
+    }
 }
 
 // Transfer Service stamps transferStatus on the problem only when it knows the transfer's
@@ -254,15 +334,17 @@ async function renderQuickTransfers(transfers) {
 
     section.innerHTML = `
         <div class="card">
-            <h3>Quick transfers</h3>
-            <ul id="quick-transfers-list"></ul>
+            <div class="card-header"><h3>Send again</h3></div>
+            <ul id="quick-transfers-list" class="chips"></ul>
         </div>`;
     const list = document.getElementById('quick-transfers-list');
     existingRecipients.forEach(({ id, summary }) => {
         const li = document.createElement('li');
         const button = document.createElement('button');
         button.type = 'button';
-        button.textContent = summary.ownerName;
+        button.className = 'chip';
+        button.innerHTML = `<span class="avatar" aria-hidden="true">${escapeHtml(initials(summary.ownerName))}</span>`
+            + `${escapeHtml(summary.ownerName)}<span class="muted">${escapeHtml(summary.currency || '')}</span>`;
         button.addEventListener('click', async () => {
             const accounts = await Api.get('/accounts/mine');
             renderTransferForm(accounts[0], transfers, id);
@@ -280,22 +362,44 @@ async function renderHistory(transfers) {
     const nameByAccountId = Object.fromEntries(
         distinctRecipients.map((id, index) => [id, summaries[index].ownerName]));
 
+    if (transfers.length === 0) {
+        section.innerHTML = `
+            <div class="card">
+                <div class="card-header"><h3>Transfer history</h3></div>
+                <div class="empty-state">
+                    <strong>No transfers yet</strong>
+                    Money you send will show up here.
+                </div>
+            </div>`;
+        return;
+    }
+
+    const dateFormat = { dateStyle: 'medium', timeStyle: 'short' };
     const rows = [...transfers]
         .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-        .map((t) => `<tr><td>${new Date(t.createdAt).toLocaleString()}</td><td>${escapeHtml(nameByAccountId[t.toAccountId])}</td>
-            <td>${formatTransferAmount(t)}</td><td>${t.status}</td></tr>`)
+        .map((t) => {
+            const name = nameByAccountId[t.toAccountId];
+            return `<tr>
+                <td class="date muted">${new Date(t.createdAt).toLocaleString(undefined, dateFormat)}</td>
+                <td><span class="recipient"><span class="avatar" aria-hidden="true">${escapeHtml(initials(name))}</span>${escapeHtml(name)}</span></td>
+                <td class="num">${formatTransferAmount(t)}</td>
+                <td>${statusBadge(t.status)}</td>
+            </tr>`;
+        })
         .join('');
     section.innerHTML = `
         <div class="card">
-            <h3>Transfer history</h3>
-            <table>
-                <thead><tr><th>Date</th><th>To</th><th>Amount</th><th>Status</th></tr></thead>
-                <tbody>${rows || '<tr><td colspan="4">No transfers yet.</td></tr>'}</tbody>
+            <div class="card-header"><h3>Transfer history</h3></div>
+            <table class="history-table">
+                <thead><tr><th>Date</th><th>To</th><th class="num">Amount</th><th>Status</th></tr></thead>
+                <tbody>${rows}</tbody>
             </table>
         </div>`;
 }
 
 bootstrap().catch((err) => {
     console.error('Bootstrap failed', err);
-    document.getElementById('loading').textContent = 'Something went wrong. Please refresh.';
+    const loading = document.getElementById('loading');
+    loading.hidden = false;
+    loading.textContent = 'Something went wrong. Please refresh.';
 });
