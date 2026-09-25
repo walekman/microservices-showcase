@@ -52,7 +52,8 @@ A live-saga debit whose outcome is unknown is therefore left `PENDING` (the API 
 - Merge to `master` only via a pull request — no direct pushes or merges to `master`.
 - **Subagent review is not automatic.** The user reviews PRs manually; only dispatch a subagent review when the user asks for one.
 - Never merge a PR autonomously. Open it, then stop — the user reviews and merges it themselves. The user says "merge it" to authorise one; treat that as genuine authorisation, but check `gh pr view <n> --json mergeable,statusCheckRollup` before merging.
-- **One PR per task, and stop after each.** When executing a multi-task phase, each task gets its own branch off the *current* `master` and its own PR — then stop until the user merges. The next branch then starts from merged code, so each PR's diff shows only that task's work.
+- **Phase integration branch (from Phase 10 on).** A phase lives on `feature/phase-<N>`, created with the phase's spec commit, with a draft PR into `master` opened straight away and left unmerged until the phase is done. At the end of the phase the user reviews that PR and merges the whole phase into `master` at once.
+- **One PR per task, and stop after each.** When executing a multi-task phase, each task gets its own branch off the *current* phase branch (`feature/phase-<N>`) and its own PR back into that phase branch — then stop. Task PRs follow the same rule as any other: open it and stop; the user decides whether and when it merges. The next task branch then starts from the updated phase branch, so each task PR's diff shows only that task's work.
 
 ## Executing implementation phases
 
