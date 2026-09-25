@@ -1,4 +1,5 @@
 :root {
+    color-scheme: light;
     --bank-primary: #1b4332;
     --bank-accent: #2d6a4f;
     --bank-accent-hover: #245a42;
@@ -29,32 +30,32 @@
     --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-    :root {
-        --bank-accent: #3f8f69;
-        --bank-accent-hover: #4aa078;
-        --bank-accent-soft: #1d3328;
+/* Dark palette: js/theme.js sets data-theme from the toggle, or from prefers-color-scheme on auto. */
+:root[data-theme="dark"] {
+    color-scheme: dark;
+    --bank-accent: #3f8f69;
+    --bank-accent-hover: #4aa078;
+    --bank-accent-soft: #1d3328;
 
-        --bg: #0f1412;
-        --surface: #171e1b;
-        --surface-muted: #1c2420;
-        --border: #2a3530;
-        --text: #e6ece9;
-        --text-muted: #9aa8a1;
+    --bg: #0f1412;
+    --surface: #171e1b;
+    --surface-muted: #1c2420;
+    --border: #2a3530;
+    --text: #e6ece9;
+    --text-muted: #9aa8a1;
 
-        --success-bg: #173324;
-        --success-fg: #7fd6a0;
-        --warning-bg: #3a2e12;
-        --warning-fg: #f2c46b;
-        --danger-bg: #3b1a19;
-        --danger-fg: #f2a19b;
-        --info-bg: #172a3d;
-        --info-fg: #93c0ee;
-        --neutral-bg: #242d29;
-        --neutral-fg: #b7c2bd;
+    --success-bg: #173324;
+    --success-fg: #7fd6a0;
+    --warning-bg: #3a2e12;
+    --warning-fg: #f2c46b;
+    --danger-bg: #3b1a19;
+    --danger-fg: #f2a19b;
+    --info-bg: #172a3d;
+    --info-fg: #93c0ee;
+    --neutral-bg: #242d29;
+    --neutral-fg: #b7c2bd;
 
-        --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 16px rgba(0, 0, 0, 0.3);
-    }
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 16px rgba(0, 0, 0, 0.3);
 }
 
 * {
