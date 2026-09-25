@@ -126,8 +126,11 @@ created yet, so the blocklist becomes data that can be changed at runtime.
 - A singleton, started once per JVM on first use. It runs the local `docker compose` CLI
   over `docker-compose.yml` and `docker-compose.e2e.yml`, under a random project name
   (`showcase-e2e-<8 hex>`):
-  - `up --detach --build --wait`: images are built from the working tree, and the call
-    returns once every service with a healthcheck is healthy
+  - `build <service>` for each of the six services, one at a time, then `up --detach --wait`,
+    which returns once every service with a healthcheck is healthy. Six parallel builds
+    exhausted Docker Desktop's build daemon (see Implementation Notes).
+  - a warm-up: one same-currency and one cross-currency transfer, retried until both complete,
+    before the first test. A cold stack's first saga took ~20 s.
   - `port <service> <port>`: resolves each mapped host port
   - `down --volumes --remove-orphans` from a JVM shutdown hook, so every run starts from empty
     databases
@@ -159,7 +162,8 @@ created yet, so the blocklist becomes data that can be changed at runtime.
 - **`transfer-service`** overrides:
   - `ACCOUNT_SERVICE_URL=http://account-proxy:8080`
   - `TRANSFER_COMPENSATION_SWEEP_INTERVAL=5s`
-  - `TRANSFER_COMPENSATION_PENDING_STALE_AFTER=20s`
+  - `TRANSFER_COMPENSATION_PENDING_STALE_AFTER=70s` (above the ~62 s worst-case live saga, so
+    the sweep never races a merely slow saga)
 - **`fx-service`**: `FX_PROVIDER_URL=http://fx-provider:8080`. The stack never calls the real
   provider.
 - Only Transfer goes through `account-proxy`. The Gateway still reaches Account directly, so
@@ -219,7 +223,7 @@ stated. Every scenario asserts final balances through the Gateway.
 | 2 | `sourceBlocked` | `block(source)` | `422` problem, `code: SOURCE_ACCOUNT_BLOCKED`; the transfer reads `FAILED`. Both balances unchanged |
 | 3 | `destinationBlockedIsCompensated` | `block(destination)` | `500` problem, `code: COMPENSATION_REQUIRED`; `GET /transfers/{id}` shows `failureCode: DESTINATION_ACCOUNT_BLOCKED`. Awaitility (≤ 60 s) waits for `COMPENSATED`. Source back to 1000.00; destination unchanged |
 | 4 | `accountUnreachableTripsBreaker` | `unreachable()` | Each transfer fails cleanly: `503` problem, `code: ACCOUNT_SERVICE_UNAVAILABLE`, transfer `FAILED`, no balance moved. Transfers are sent until the `accountService` breaker reads `open` (bounded at 20 attempts, never an exact count). After `reset()`, within ~30 s a transfer completes and the breaker reads `closed` |
-| 5 | `lostDebitResponseSettledBySweep` | `delayDebitResponses(7s)` | The response is `503` with `transferStatus: PENDING`, and the source is **already** debited exactly once (read through the Gateway, which bypasses the proxy). After `reset()`, within ~90 s the stale-`PENDING` sweep settles the transfer as `COMPLETED`. Final balances: source −X once, destination +X once |
+| 5 | `lostDebitResponseSettledBySweep` | `delayDebitResponses(7s)` | The response is `503` with `transferStatus: PENDING`, and the source is **already** debited exactly once (read through the Gateway, which bypasses the proxy). After `reset()`, within ~150 s the stale-`PENDING` sweep settles the transfer as `COMPLETED`. Final balances: source −X once, destination +X once |
 | 6 | `crossCurrency` | The static `fx-provider` stub (EUR→PLN 4.2537); EUR source, PLN destination | `COMPLETED`. The response's `rate` equals the stub's and `creditAmount = amount × rate` (`HALF_EVEN`, 2 dp). The destination is credited `creditAmount` |
 
 ### Scenario notes
@@ -1429,6 +1433,9 @@ Check: `./mvnw -q validate` (no profile) must not list `e2e-tests`, and
 # !reset/!override need Compose >= 2.24.4. Every fixed container_name is reset so this stack
 # can run beside a dev stack; host ports are either reset or, for the services the tests reach,
 # replaced by a random host port (container port only).
+#
+# Memory caps live in docker-compose.yml and apply to both stacks.
+
 services:
   postgres:
     container_name: !reset null
@@ -1443,9 +1450,12 @@ services:
       # Every Transfer -> Account call goes through the fault-injection proxy. The Gateway still
       # reaches Account directly, so the tests' own balance reads never meet an injected fault.
       ACCOUNT_SERVICE_URL: http://account-proxy:8080
-      # Short enough for a lost-debit test to settle within a minute or so, not 2+.
+      # Shorter than the default 120 s, so the lost-debit scenario settles within a couple of
+      # minutes, but still above the slowest possible live saga: four calls, each up to 3 x 5 s
+      # read timeouts plus backoff, ~62 s. Below that, the stale-PENDING sweep races a live saga
+      # that is merely slow (seen at 20 s on a cold stack), a race the real config never allows.
       TRANSFER_COMPENSATION_SWEEP_INTERVAL: 5s
-      TRANSFER_COMPENSATION_PENDING_STALE_AFTER: 20s
+      TRANSFER_COMPENSATION_PENDING_STALE_AFTER: 70s
     depends_on:
       account-proxy:
         condition: service_started
@@ -1533,6 +1543,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
+import static org.awaitility.Awaitility.await;
+
 /**
  * One copy of the whole Compose stack per JVM, started on first use and removed (with its
  * volumes) at JVM exit. Drives the docker compose CLI directly: Testcontainers' ComposeContainer
@@ -1548,6 +1560,13 @@ public final class E2EStack {
     private static final Path REPO_ROOT =
             Path.of(System.getProperty("e2e.repoRoot", "..")).toAbsolutePath().normalize();
     private static final Duration UP_TIMEOUT = Duration.ofMinutes(15);
+    private static final Duration WARM_UP_TIMEOUT = Duration.ofMinutes(3);
+    // The services docker-compose.yml builds from source. Built one at a time: six parallel
+    // Maven dependency downloads and compiles exhausted Docker Desktop's build daemon (a DNS
+    // failure mid-download on one run, the BuildKit connection dropping on the next).
+    private static final List<String> BUILT_SERVICES = List.of(
+            "account-service", "transfer-service", "notification-service",
+            "fraud-service", "gateway-service", "fx-service");
 
     private static E2EStack instance;
     private static RuntimeException startFailure;
@@ -1602,13 +1621,37 @@ public final class E2EStack {
 
     private void up() {
         System.out.println("[e2e] starting stack " + project + " from " + REPO_ROOT);
-        compose(true, "up", "--detach", "--build", "--wait", "--wait-timeout", String.valueOf(UP_TIMEOUT.toSeconds()));
+        for (String service : BUILT_SERVICES) {
+            compose(true, "build", service);
+        }
+        compose(true, "up", "--detach", "--wait", "--wait-timeout", String.valueOf(UP_TIMEOUT.toSeconds()));
         gateway = hostUrl("gateway-service", 8080);
         keycloak = hostUrl("keycloak", 8080);
         fraud = hostUrl("fraud-service", 8084);
         transfer = hostUrl("transfer-service", 8082);
         accountProxy = hostUrl("account-proxy", 8080);
+        System.out.println("[e2e] stack " + project + " is healthy; warming up through the gateway at " + gateway);
+        warmUp();
         System.out.println("[e2e] stack " + project + " is up; gateway at " + gateway);
+    }
+
+    /**
+     * Healthy is not the same as fast. Every service's first requests (JIT, the JWKS fetch from
+     * Keycloak, connection pools) made the first saga on a cold stack take ~20 s, where one slow
+     * call past Transfer's 5 s read timeout, three times over, fails a test on noise rather than
+     * on the saga. One same-currency and one cross-currency transfer, retried until both complete,
+     * warm every hop the scenarios use before the first test runs.
+     */
+    private void warmUp() {
+        TestUsers users = new TestUsers(keycloak);
+        Bank bank = new Bank(gateway);
+        TestUser payer = users.create();
+        OpenedAccount euros = bank.openAccount(payer, "EUR", "1000.00");
+        OpenedAccount otherEuros = bank.openAccount(users.create(), "EUR", "0.00");
+        OpenedAccount zlotys = bank.openAccount(users.create(), "PLN", "0.00");
+        await().atMost(WARM_UP_TIMEOUT).pollInterval(Duration.ofSeconds(5)).ignoreExceptions()
+                .until(() -> bank.transfer(payer, euros, otherEuros, "1.00").status() == 201
+                        && bank.transfer(payer, euros, zlotys, "1.00").status() == 201);
     }
 
     private void down() {
@@ -2458,9 +2501,9 @@ class AccountFaultE2E extends E2ETestBase {
         await().atMost(Duration.ofSeconds(15)).pollInterval(Duration.ofSeconds(1))
                 .untilAsserted(() -> assertThat(bank.balance(from)).isEqualByComparingTo("960.00"));
 
-        // Stale after 20 s, then two sweep ticks: PENDING -> COMPENSATION_REQUIRED (debit
+        // Stale after 70 s, then two sweep ticks: PENDING -> COMPENSATION_REQUIRED (debit
         // confirmed by replay) -> COMPLETED (credit). Never FAILED.
-        await().atMost(Duration.ofSeconds(90)).pollInterval(Duration.ofSeconds(2))
+        await().atMost(Duration.ofSeconds(150)).pollInterval(Duration.ofSeconds(2))
                 .until(() -> bank.getTransfer(ada, transferId).text("status"), "COMPLETED"::equals);
 
         assertThat(bank.balance(from)).isEqualByComparingTo("960.00");
@@ -2561,3 +2604,46 @@ gh pr create --base feature/phase-10 --title "Phase 10 Task 4: E2E fault injecti
 Stop. Do not merge. Once the user merges Task 4 into `feature/phase-10`, the phase PR
 (#119, `feature/phase-10` → `master`) is ready for the user's end-of-phase review. The
 whole-branch review before that uses a capable model (CLAUDE.md, Subagent model policy).
+
+## Implementation Notes (as built)
+
+Deviations from the plan above, recorded as they were found. Code blocks in the plan have been
+re-synced from the merged source where they changed.
+
+### Task 1
+- The live check ran against an existing dev stack without `docker compose down -v`: the
+  `fraud` database was created by hand with `init-db.sh`'s SQL, and `fraud-admin` was added to
+  the running Keycloak through its admin API.
+- `FraudCheckControllerTest.returns500WhenTheBlocklistCannotBeRead` passed on its first run: the
+  existing catch-all handler already maps any exception to `500 INTERNAL_ERROR`. It stays as a
+  guard against the failure ever being swallowed.
+
+### Task 2
+- **Images build one at a time.** A single `up --build` of six images in parallel failed twice
+  on a 7.8 GB Docker Desktop: once with DNS failing mid-download inside the build, once with the
+  BuildKit connection dropping (`rpc error … EOF`). `E2EStack` now runs `build <service>` for
+  each service, then `up --wait`. A cold run (after a root `pom.xml` change invalidates every
+  image's dependency layer) takes ~16 min; a warm one ~4 min.
+- **Memory caps in `docker-compose.yml`, for both stacks** (at the user's direction; nothing is
+  disabled). Unbounded, every JVM sized its heap from the whole Docker VM, and the dev stack took
+  ~4.4 GB, so a second copy could not start beside it. The six services get
+  `-Xmx192m -XX:+UseSerialGC -XX:TieredStopAtLevel=1 -XX:ReservedCodeCacheSize=48m`, Kafka a
+  256 MB heap, Keycloak 512 MB, Tempo and Grafana `GOMEMLIMIT=128MiB`. Measured: dev ~3.1 GB,
+  E2E ~3.2 GB; the suite passes beside a running dev stack.
+- **Keycloak's healthcheck `start_period` is 120 s** (was 40 s). `start-dev` re-runs Quarkus
+  augmentation on every fresh container; under load it took ~130 s plus ~100 s to start and
+  import the realm, past the old ~190 s budget.
+- **`pending-stale-after` in the E2E override is 70 s, not 20 s.** At 20 s, the stale-`PENDING`
+  sweep picked up a live saga that was merely slow (a cold stack's first saga took 20 s) and
+  logged `unexpected failure during stale-PENDING recovery`; had it won the race, the live
+  request would have answered `500` for a transfer that later completed. The rule it broke:
+  the threshold must exceed the slowest possible live saga, four calls of up to 3 × 5 s read
+  timeouts plus backoff, ~62 s. The real config's 120 s holds it. Scenario 5's wait is now
+  150 s.
+- **`E2EStack` warms the stack up** after `up --wait`: one EUR→EUR and one EUR→PLN transfer,
+  retried until both complete. Before this, the first test took 90 s, and one run failed with
+  `SOURCE_FRAUD_SERVICE_UNAVAILABLE` on first-call latency. With it, the tests take ~6 s and
+  ~0.5 s.
+- Recreating the dev stack's Keycloak (to apply the caps) re-imports `ada`, `bob` and `admin`
+  with new subject IDs, because `showcase-realm.json` gives them none. Their existing dev
+  accounts are orphaned rather than deleted. Any Keycloak recreation does this.
