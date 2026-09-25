@@ -606,9 +606,6 @@ input.mono {
 }
 
 .recipient {
-    display: flex;
-    align-items: center;
-    gap: 0.55rem;
     font-weight: 500;
 }
 

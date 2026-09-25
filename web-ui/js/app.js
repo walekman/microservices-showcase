@@ -49,9 +49,12 @@ const STATUS_BADGES = {
     COMPENSATION_FAILED: ['Needs review', 'danger'],
 };
 
-function statusBadge(status) {
+// A completed transfer takes its row's arrow colour -- green received, grey sent -- so only the
+// statuses that need attention (pending, failed, reversed) stand out in their own colours.
+function statusBadge(status, incoming) {
     const [label, tone] = STATUS_BADGES[status] || [status, 'neutral'];
-    return `<span class="badge ${tone}">${escapeHtml(label)}</span>`;
+    const rowTone = status === 'COMPLETED' ? (incoming ? 'success' : 'neutral') : tone;
+    return `<span class="badge ${rowTone}">${escapeHtml(label)}</span>`;
 }
 
 async function bootstrap() {
@@ -408,15 +411,12 @@ async function renderHistory(transfers) {
                 <td class="date muted">${new Date(t.createdAt).toLocaleString(undefined, dateFormat)}</td>
                 <td>
                     <span class="recipient">
-                        <span class="avatar" aria-hidden="true">${escapeHtml(initials(name))}</span>
-                        <span>
-                            ${escapeHtml(name)}
-                            <span class="direction-label">${incoming ? 'Received' : 'Sent'}</span>
-                        </span>
+                        ${escapeHtml(name)}
+                        <span class="direction-label">${incoming ? 'Received' : 'Sent'}</span>
                     </span>
                 </td>
                 <td class="num">${formatTransferAmount(t)}</td>
-                <td>${statusBadge(t.status)}</td>
+                <td>${statusBadge(t.status, incoming)}</td>
             </tr>`;
         })
         .join('');
