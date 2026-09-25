@@ -1,0 +1,80 @@
+# End-to-end overlay: used only by e2e-tests' E2EStack, always together with docker-compose.yml
+# and under its own project name. Never run it with a plain `docker compose up`. See
+# docs/phase-10-end-to-end-saga-tests.md.
+#
+# !reset/!override need Compose >= 2.24.4. Every fixed container_name is reset so this stack
+# can run beside a dev stack; host ports are either reset or, for the services the tests reach,
+# replaced by a random host port (container port only).
+services:
+  postgres:
+    container_name: !reset null
+    ports: !reset []
+  account-service:
+    container_name: !reset null
+    ports: !reset []
+  transfer-service:
+    container_name: !reset null
+    ports: !override ["8082"]
+    environment:
+      # Every Transfer -> Account call goes through the fault-injection proxy. The Gateway still
+      # reaches Account directly, so the tests' own balance reads never meet an injected fault.
+      ACCOUNT_SERVICE_URL: http://account-proxy:8080
+      # Short enough for a lost-debit test to settle within a minute or so, not 2+.
+      TRANSFER_COMPENSATION_SWEEP_INTERVAL: 5s
+      TRANSFER_COMPENSATION_PENDING_STALE_AFTER: 20s
+    depends_on:
+      account-proxy:
+        condition: service_started
+  kafka:
+    container_name: !reset null
+    ports: !reset []
+  notification-service:
+    container_name: !reset null
+    ports: !reset []
+  fraud-service:
+    container_name: !reset null
+    ports: !override ["8084"]
+  redis:
+    container_name: !reset null
+    ports: !reset []
+  fx-service:
+    container_name: !reset null
+    ports: !reset []
+    environment:
+      FX_PROVIDER_URL: http://fx-provider:8080
+    depends_on:
+      fx-provider:
+        condition: service_started
+  gateway-service:
+    container_name: !reset null
+    ports: !override ["8080"]
+  web-ui:
+    container_name: !reset null
+    ports: !reset []
+  keycloak:
+    container_name: !reset null
+    ports: !override ["8080"]
+  tempo:
+    container_name: !reset null
+    ports: !reset []
+  otel-collector:
+    container_name: !reset null
+    ports: !reset []
+  prometheus:
+    container_name: !reset null
+    ports: !reset []
+  grafana:
+    container_name: !reset null
+    ports: !reset []
+
+  account-proxy:
+    image: wiremock/wiremock:3.13.1
+    command: ["--disable-banner"]
+    volumes:
+      - ./docker/e2e/account-proxy/mappings:/home/wiremock/mappings:ro
+    ports: ["8080"]
+  fx-provider:
+    image: wiremock/wiremock:3.13.1
+    command: ["--disable-banner"]
+    volumes:
+      - ./docker/e2e/fx-provider/mappings:/home/wiremock/mappings:ro
