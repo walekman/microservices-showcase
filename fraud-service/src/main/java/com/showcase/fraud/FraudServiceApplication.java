@@ -15,7 +15,7 @@ import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
         info = @Info(
                 title = "Fraud Service API",
                 version = "v1",
-                description = "Stateless account-blocklist screen for the transfer saga."
+                description = "Account-blocklist screen for the transfer saga, and the operator API that maintains the blocklist."
         ),
         security = @SecurityRequirement(name = "bearerAuth")
 )
