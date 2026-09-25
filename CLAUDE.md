@@ -12,7 +12,7 @@ Six Spring Boot / Java 21 services plus a static UI, all brought up by `docker c
 - **Account Service** (`account-service/`, port 8081) — accounts and balances, debit/credit with optimistic locking and an idempotency ledger. JPA on Postgres.
 - **Transfer Service** (`transfer-service/`, port 8082) — orchestrates the transfer saga over synchronous HTTP into Account, Fraud and FX (a cross-currency transfer locks its rate on the row before any money moves), with Resilience4j, a compensation scheduler and a transactional outbox to Kafka. JPA on Postgres.
 - **Notification Service** (`notification-service/`, port 8083) — Kafka consumer of the outbox topics; stores one row per transfer outcome (JPA on Postgres), idempotently. Transient DB failures are retried in place without limit; everything else is dead-lettered to `<topic>-dlt` (`KafkaErrorHandlingConfig`).
-- **Fraud Service** (`fraud-service/`, port 8084) — stateless account-blocklist screen, no database.
+- **Fraud Service** (`fraud-service/`, port 8084) — account-blocklist screen; the blocklist lives in its own `fraud` database (JPA on Postgres) and is maintained through a `fraud-admin`-only `PUT`/`DELETE /fraud/blocklist/{id}` with no Gateway route.
 - **FX Service** (`fx-service/`, port 8085) — exchange rates from the Frankfurter/ECB feed behind a Redis cache (fresh TTL, last-known fallback, cross-instance single-flight lock); no database. The only Redis client.
 - **Bank UI** (`web-ui/`, host port 8090) — plain HTML/CSS/JS served by `nginx:alpine`, no build step; calls the Gateway from the browser with OAuth2 Authorization Code + PKCE via Keycloak's `showcase-ui` client.
 

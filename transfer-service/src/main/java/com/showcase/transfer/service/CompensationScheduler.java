@@ -170,7 +170,7 @@ public class CompensationScheduler implements SchedulingConfigurer {
             // blocked account. Marking FAILED instead would guess "never landed", and nothing
             // revisits FAILED. So the row stays PENDING and this repeats every sweep until the
             // block is lifted. Reaching this needs the source blocklisted after the live saga's
-            // own screen passed, i.e. a Fraud reconfiguration and restart.
+            // own screen passed, i.e. a PUT /fraud/blocklist/{id} in between.
             log.error("Transfer {} still stale PENDING: source account is now blocklisted [{}], so its debit "
                             + "cannot be safely replayed and its outcome is unknown. Will retry next sweep; "
                             + "resolves once the block is lifted.",

@@ -11,7 +11,8 @@ First time only:
     cp .env.example .env
 
 An `.env` copied before Phase 11 lacks `NOTIFICATION_DB_PASSWORD`; add that line from
-`.env.example`.
+`.env.example`. An `.env` copied before Phase 10 lacks `FRAUD_DB_PASSWORD`; add that line too,
+and run `docker compose down -v` so the init script creates the `fraud` database.
 
 If you ran an earlier version of this stack, destroy the Postgres volume first — the
 per-service databases are created by an init script that only runs on an empty data directory
@@ -207,12 +208,11 @@ Background scheduler resolution:
     curl http://localhost:8082/transfers -H "Authorization: Bearer $ADMIN_TOKEN"
     curl "http://localhost:8082/transfers?status=COMPENSATION_REQUIRED" -H "Authorization: Bearer $ADMIN_TOKEN"
 
-    # Trigger a blocked-source rejection (clean failure, no money moves): set
-    # FRAUD_BLOCKLIST_ACCOUNT_IDS in .env to include an account id, restart fraud-service,
-    # then transfer FROM that account.
-    #
-    # Trigger a blocked-destination compensation (money moves, then reverses automatically):
-    # transfer TO a blocklisted account instead.
+    # Blocklist an account (Fraud Service directly -- there is no Gateway route; needs the
+    # admin token, which holds fraud-admin), then transfer FROM it for a clean rejection
+    # (no money moves), or TO it for a compensation (money moves, then reverses
+    # automatically). DELETE the same URL to lift the block.
+    curl -X PUT http://localhost:8084/fraud/blocklist/<id> -H "Authorization: Bearer $ADMIN_TOKEN"
     curl "http://localhost:8082/transfers?status=FAILED" -H "Authorization: Bearer $ADMIN_TOKEN"
 
 Errors are RFC 7807 problem documents with a stable `code`:
