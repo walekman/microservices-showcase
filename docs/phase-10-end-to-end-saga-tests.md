@@ -29,8 +29,11 @@ implementation is added to it once this design is approved.
 ## Global Constraints
 
 - Java 21; Spring Boot 3.5.16. Use `C:\dev\openjdk-21.0.2` as `JAVA_HOME`. (CLAUDE.md)
-- One branch and one PR per task, each off the current `master`, stopping after each
-  (CLAUDE.md, Git workflow).
+- **Phase branch.** All Phase 10 work lands on `feature/phase-10`, which has a long-lived PR
+  into `master` (opened with this spec, not merged until the phase is done). Each task gets
+  its own branch off the current `feature/phase-10` and its own PR back into
+  `feature/phase-10`, stopping after each. At the end of the phase the whole
+  `feature/phase-10` → `master` PR is reviewed and merged in one go.
 - **Local only.** The E2E suite is not part of `./mvnw test` and not part of CI.
   `./mvnw test` and `.github/workflows/ci.yml` must behave exactly as before this phase. The
   E2E suite runs with `./mvnw -Pe2e -pl e2e-tests verify`.
@@ -281,6 +284,9 @@ stated. Every scenario asserts final balances through the Gateway.
 - **Running the E2E stack in parallel** (more than one E2E run at a time).
 
 ## Delivery
+
+Every task branch starts from, and its PR targets, `feature/phase-10` (see Global
+Constraints).
 
 | Task | Branch | Scope |
 |---|---|---|
