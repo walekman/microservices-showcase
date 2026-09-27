@@ -23,12 +23,14 @@ services:
       # Every Transfer -> Account call goes through the fault-injection proxy. The Gateway still
       # reaches Account directly, so the tests' own balance reads never meet an injected fault.
       ACCOUNT_SERVICE_URL: http://account-proxy:8080
-      # Shorter than the default 120 s, so the lost-debit scenario settles within a couple of
-      # minutes, but still above the slowest possible live saga: four calls, each up to 3 x 5 s
-      # read timeouts plus backoff, ~62 s. Below that, the stale-PENDING sweep races a live saga
-      # that is merely slow (seen at 20 s on a cold stack), a race the real config never allows.
+      # The same 120 s as the real config, not shorter: it must exceed the slowest possible live
+      # saga, and a saga's age counts from Transfer.createdAt, set before prepare() runs, not at
+      # the insert. That is seven calls (two currency lookups and the FX rate in prepare(), then
+      # fraud, debit, fraud, credit), each up to 3 x 5 s read timeouts plus backoff, ~108 s.
+      # Below that, the stale-PENDING sweep races a live saga that is merely slow (seen at 20 s
+      # on a cold stack), and the saga's own final save loses the race and answers 500.
       TRANSFER_COMPENSATION_SWEEP_INTERVAL: 5s
-      TRANSFER_COMPENSATION_PENDING_STALE_AFTER: 70s
+      TRANSFER_COMPENSATION_PENDING_STALE_AFTER: 120s
     depends_on:
       account-proxy:
         condition: service_started

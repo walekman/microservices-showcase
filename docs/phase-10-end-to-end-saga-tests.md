@@ -162,8 +162,8 @@ created yet, so the blocklist becomes data that can be changed at runtime.
 - **`transfer-service`** overrides:
   - `ACCOUNT_SERVICE_URL=http://account-proxy:8080`
   - `TRANSFER_COMPENSATION_SWEEP_INTERVAL=5s`
-  - `TRANSFER_COMPENSATION_PENDING_STALE_AFTER=70s` (above the ~62 s worst-case live saga, so
-    the sweep never races a merely slow saga)
+  - `TRANSFER_COMPENSATION_PENDING_STALE_AFTER=120s` (the real config's value, above the
+    ~108 s worst-case live saga, so the sweep never races a merely slow saga)
 - **`fx-service`**: `FX_PROVIDER_URL=http://fx-provider:8080`. The stack never calls the real
   provider.
 - Only Transfer goes through `account-proxy`. The Gateway still reaches Account directly, so
@@ -223,7 +223,7 @@ stated. Every scenario asserts final balances through the Gateway.
 | 2 | `sourceBlocked` | `block(source)` | `422` problem, `code: SOURCE_ACCOUNT_BLOCKED`; the transfer reads `FAILED`. Both balances unchanged |
 | 3 | `destinationBlockedIsCompensated` | `block(destination)` | `500` problem, `code: COMPENSATION_REQUIRED`; `GET /transfers/{id}` shows `failureCode: DESTINATION_ACCOUNT_BLOCKED`. Awaitility (≤ 60 s) waits for `COMPENSATED`. Source back to 1000.00; destination unchanged |
 | 4 | `accountUnreachableTripsBreaker` | `unreachable()` | Each transfer fails cleanly: `503` problem, `code: ACCOUNT_SERVICE_UNAVAILABLE`, transfer `FAILED`, no balance moved. Transfers are sent until the `accountService` breaker reads `open` (bounded at 20 attempts, never an exact count). After `reset()`, within ~30 s a transfer completes and the breaker reads `closed` |
-| 5 | `lostDebitResponseSettledBySweep` | `delayDebitResponses(7s)` | The response is `503` with `transferStatus: PENDING`, and the source is **already** debited exactly once (read through the Gateway, which bypasses the proxy). After `reset()`, within ~150 s the stale-`PENDING` sweep settles the transfer as `COMPLETED`. Final balances: source −X once, destination +X once |
+| 5 | `lostDebitResponseSettledBySweep` | `delayDebitResponses(7s)` | The response is `503` with `transferStatus: PENDING`, and the source is **already** debited exactly once (read through the Gateway, which bypasses the proxy). After `reset()`, within ~200 s the stale-`PENDING` sweep settles the transfer as `COMPLETED`. Final balances: source −X once, destination +X once |
 | 6 | `crossCurrency` | The static `fx-provider` stub (EUR→PLN 4.2537); EUR source, PLN destination | `COMPLETED`. The response's `rate` equals the stub's and `creditAmount = amount × rate` (`HALF_EVEN`, 2 dp). The destination is credited `creditAmount` |
 
 ### Scenario notes
@@ -1451,12 +1451,14 @@ services:
       # Every Transfer -> Account call goes through the fault-injection proxy. The Gateway still
       # reaches Account directly, so the tests' own balance reads never meet an injected fault.
       ACCOUNT_SERVICE_URL: http://account-proxy:8080
-      # Shorter than the default 120 s, so the lost-debit scenario settles within a couple of
-      # minutes, but still above the slowest possible live saga: four calls, each up to 3 x 5 s
-      # read timeouts plus backoff, ~62 s. Below that, the stale-PENDING sweep races a live saga
-      # that is merely slow (seen at 20 s on a cold stack), a race the real config never allows.
+      # The same 120 s as the real config, not shorter: it must exceed the slowest possible live
+      # saga, and a saga's age counts from Transfer.createdAt, set before prepare() runs, not at
+      # the insert. That is seven calls (two currency lookups and the FX rate in prepare(), then
+      # fraud, debit, fraud, credit), each up to 3 x 5 s read timeouts plus backoff, ~108 s.
+      # Below that, the stale-PENDING sweep races a live saga that is merely slow (seen at 20 s
+      # on a cold stack), and the saga's own final save loses the race and answers 500.
       TRANSFER_COMPENSATION_SWEEP_INTERVAL: 5s
-      TRANSFER_COMPENSATION_PENDING_STALE_AFTER: 70s
+      TRANSFER_COMPENSATION_PENDING_STALE_AFTER: 120s
     depends_on:
       account-proxy:
         condition: service_started
@@ -2507,9 +2509,9 @@ class AccountFaultE2E extends E2ETestBase {
         await().atMost(Duration.ofSeconds(15)).pollInterval(Duration.ofSeconds(1))
                 .untilAsserted(() -> assertThat(bank.balance(from)).isEqualByComparingTo("960.00"));
 
-        // Stale after 70 s, then two sweep ticks: PENDING -> COMPENSATION_REQUIRED (debit
+        // Stale after 120 s, then two sweep ticks: PENDING -> COMPENSATION_REQUIRED (debit
         // confirmed by replay) -> COMPLETED (credit). Never FAILED.
-        await().atMost(Duration.ofSeconds(150)).pollInterval(Duration.ofSeconds(2))
+        await().atMost(Duration.ofSeconds(200)).pollInterval(Duration.ofSeconds(2))
                 .until(() -> bank.getTransfer(ada, transferId).text("status"), "COMPLETED"::equals);
 
         assertThat(bank.balance(from)).isEqualByComparingTo("960.00");
@@ -2645,7 +2647,7 @@ re-synced from the merged source where they changed.
   request would have answered `500` for a transfer that later completed. The rule it broke:
   the threshold must exceed the slowest possible live saga, four calls of up to 3 × 5 s read
   timeouts plus backoff, ~62 s. The real config's 120 s holds it. Scenario 5's wait is now
-  150 s.
+  150 s. (Superseded in the phase review below: the threshold is now 120 s.)
 - **`E2EStack` warms the stack up** after `up --wait`: one EUR→EUR and one EUR→PLN transfer,
   retried until both complete. Before this, the first test took 90 s, and one run failed with
   `SOURCE_FRAUD_SERVICE_UNAVAILABLE` on first-call latency. With it, the tests take ~6 s and
@@ -2670,3 +2672,11 @@ re-synced from the merged source where they changed.
   debited exactly once. The Gateway did not time out before the saga's ~15 s `503`, so no
   Gateway timeout override was needed.
 - The breaker metric's real format matched the parser: `state="closed"` and a `1.0` value.
+
+### Phase review
+- **The E2E `pending-stale-after` is 120 s, not 70 s.** The 70 s figure counted only the four
+  saga calls after the insert (~62 s), but the sweep ages a row from `Transfer.createdAt`, which
+  the constructor sets before `prepare()` makes its own three retried calls (two currency
+  lookups and the FX rate). The slowest live saga is seven calls, ~108 s, so a slow but
+  healthy saga could be swept mid-flight and answer `500`. The override now matches the real
+  config, and scenario 5's wait is 200 s.
