@@ -1,3 +1,12 @@
+# Memory: no service here is load-tested, so every JVM gets a small fixed heap and the Go
+# services a soft limit. Unbounded, the stack took ~4.4 GB (each JVM sized its heap from the
+# whole Docker VM); capped, ~3 GB. Nothing is disabled. Two copies at once (this and the E2E
+# suite's, see docker-compose.e2e.yml) still need ~10 GB or more for Docker; on a smaller VM,
+# stop this stack before running the E2E suite.
+x-jvm-memory: &jvm-memory
+  # Small fixed heap; the serial collector and the C1-only JIT cut per-JVM overhead and start faster.
+  JAVA_TOOL_OPTIONS: -Xmx192m -XX:+UseSerialGC -XX:TieredStopAtLevel=1 -XX:ReservedCodeCacheSize=48m
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -8,6 +17,7 @@ services:
       ACCOUNT_DB_PASSWORD: ${ACCOUNT_DB_PASSWORD}
       TRANSFER_DB_PASSWORD: ${TRANSFER_DB_PASSWORD}
       NOTIFICATION_DB_PASSWORD: ${NOTIFICATION_DB_PASSWORD}
+      FRAUD_DB_PASSWORD: ${FRAUD_DB_PASSWORD}
     ports:
       - "5432:5432"
     volumes:
@@ -27,6 +37,7 @@ services:
         GIT_SHA: ${GIT_SHA:-unknown}
     container_name: showcase-account-service
     environment:
+      <<: *jvm-memory
       DB_HOST: postgres
       DB_PORT: 5432
       DB_NAME: account
@@ -57,6 +68,7 @@ services:
         GIT_SHA: ${GIT_SHA:-unknown}
     container_name: showcase-transfer-service
     environment:
+      <<: *jvm-memory
       DB_HOST: postgres
       DB_PORT: 5432
       DB_NAME: transfer
@@ -107,6 +119,7 @@ services:
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      KAFKA_HEAP_OPTS: -Xms128m -Xmx256m
     ports:
       - "9092:9092"
       - "29092:29092"
@@ -125,6 +138,7 @@ services:
         GIT_SHA: ${GIT_SHA:-unknown}
     container_name: showcase-notification-service
     environment:
+      <<: *jvm-memory
       DB_HOST: postgres
       DB_PORT: 5432
       DB_NAME: notification
@@ -154,13 +168,20 @@ services:
         GIT_SHA: ${GIT_SHA:-unknown}
     container_name: showcase-fraud-service
     environment:
-      FRAUD_BLOCKLIST_ACCOUNT_IDS: ${FRAUD_BLOCKLIST_ACCOUNT_IDS:-}
+      <<: *jvm-memory
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: fraud
+      DB_USER: fraud_service
+      DB_PASSWORD: ${FRAUD_DB_PASSWORD}
       KEYCLOAK_JWK_SET_URI: http://keycloak:8080/realms/showcase/protocol/openid-connect/certs
       KEYCLOAK_ISSUER_URI: http://localhost:8180/realms/showcase
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
     ports:
       - "8084:8084"
     depends_on:
+      postgres:
+        condition: service_healthy
       keycloak:
         condition: service_healthy
     healthcheck:
@@ -191,6 +212,7 @@ services:
         GIT_SHA: ${GIT_SHA:-unknown}
     container_name: showcase-fx-service
     environment:
+      <<: *jvm-memory
       REDIS_HOST: redis
       REDIS_PORT: 6379
       FX_PROVIDER_URL: ${FX_PROVIDER_URL:-https://api.frankfurter.dev/v1}
@@ -219,6 +241,7 @@ services:
         GIT_SHA: ${GIT_SHA:-unknown}
     container_name: showcase-gateway-service
     environment:
+      <<: *jvm-memory
       ACCOUNT_SERVICE_URL: http://account-service:8081
       TRANSFER_SERVICE_URL: http://transfer-service:8082
       FX_SERVICE_URL: http://fx-service:8085
@@ -258,6 +281,7 @@ services:
     environment:
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
+      JAVA_OPTS_KC_HEAP: -Xms64m -Xmx512m
       KC_HTTP_ENABLED: "true"
       # Keycloak 26 defaults to "hostname v2": a single URL, not the v1
       # hostname/hostname-port/hostname-strict-https trio (verified live -- the v1 options
@@ -277,12 +301,17 @@ services:
       interval: 10s
       timeout: 5s
       retries: 15
-      start_period: 40s
+      # start-dev re-runs Quarkus augmentation on every fresh container (measured ~130 s on a
+      # loaded Docker Desktop, then ~100 s to start and import the realm); failures before this
+      # do not count, so a slow start is not reported unhealthy.
+      start_period: 120s
 
   tempo:
     image: grafana/tempo:latest
     container_name: showcase-tempo
     command: ["-config.file=/etc/tempo.yaml"]
+    environment:
+      GOMEMLIMIT: 128MiB
     volumes:
       - ./docker/tempo/tempo.yaml:/etc/tempo.yaml:ro
     ports:
@@ -319,6 +348,7 @@ services:
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GOMEMLIMIT: 128MiB
     volumes:
       - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./docker/grafana/dashboards:/etc/grafana/dashboards-data:ro

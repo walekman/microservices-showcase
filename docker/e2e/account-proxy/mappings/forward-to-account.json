@@ -1,0 +1,5 @@
+{
+  "priority": 10,
+  "request": { "urlPattern": ".*" },
+  "response": { "proxyBaseUrl": "http://account-service:8081" }
+}

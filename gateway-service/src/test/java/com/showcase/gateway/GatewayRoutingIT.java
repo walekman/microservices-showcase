@@ -9,6 +9,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -18,6 +19,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -119,6 +121,13 @@ class GatewayRoutingIT {
     @Test
     void creditPathIsUnreachableThroughTheGateway() {
         ResponseEntity<String> response = restTemplate.postForEntity("/accounts/999/credit", null, String.class);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void fraudBlocklistIsUnreachableThroughTheGateway() {
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/fraud/blocklist/" + UUID.randomUUID(), HttpMethod.PUT, null, String.class);
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
     }
 }

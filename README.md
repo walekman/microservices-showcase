@@ -11,7 +11,8 @@ First time only:
     cp .env.example .env
 
 An `.env` copied before Phase 11 lacks `NOTIFICATION_DB_PASSWORD`; add that line from
-`.env.example`.
+`.env.example`. An `.env` copied before Phase 10 lacks `FRAUD_DB_PASSWORD`; add that line too,
+and run `docker compose down -v` so the init script creates the `fraud` database.
 
 If you ran an earlier version of this stack, destroy the Postgres volume first — the
 per-service databases are created by an init script that only runs on an empty data directory
@@ -207,12 +208,11 @@ Background scheduler resolution:
     curl http://localhost:8082/transfers -H "Authorization: Bearer $ADMIN_TOKEN"
     curl "http://localhost:8082/transfers?status=COMPENSATION_REQUIRED" -H "Authorization: Bearer $ADMIN_TOKEN"
 
-    # Trigger a blocked-source rejection (clean failure, no money moves): set
-    # FRAUD_BLOCKLIST_ACCOUNT_IDS in .env to include an account id, restart fraud-service,
-    # then transfer FROM that account.
-    #
-    # Trigger a blocked-destination compensation (money moves, then reverses automatically):
-    # transfer TO a blocklisted account instead.
+    # Blocklist an account (Fraud Service directly -- there is no Gateway route; needs the
+    # admin token, which holds fraud-admin), then transfer FROM it for a clean rejection
+    # (no money moves), or TO it for a compensation (money moves, then reverses
+    # automatically). DELETE the same URL to lift the block.
+    curl -X PUT http://localhost:8084/fraud/blocklist/<id> -H "Authorization: Bearer $ADMIN_TOKEN"
     curl "http://localhost:8082/transfers?status=FAILED" -H "Authorization: Bearer $ADMIN_TOKEN"
 
 Errors are RFC 7807 problem documents with a stable `code`:
@@ -309,3 +309,36 @@ until the database is back. How to trigger each case by hand is in
 The Notification Service health endpoint is available at:
 
     curl http://localhost:8083/actuator/health
+
+## End-to-end tests
+
+`./mvnw test` runs every module's unit and integration tests (Testcontainers, so Docker must
+be running). The end-to-end suite is separate, local only, and not part of CI:
+
+    ./mvnw -Pe2e -pl e2e-tests verify
+
+It builds the six service images, starts its own copy of the whole stack
+(`docker-compose.yml` plus `docker-compose.e2e.yml`, under a random `showcase-e2e-*` project
+name with random host ports, so it never clashes with a dev stack's names or ports), warms it up, runs the
+scenarios through the Gateway as fresh Keycloak users, and removes the stack and its volumes
+at the end. It needs Docker running and a `.env` with every variable from `.env.example`
+(including `FRAUD_DB_PASSWORD`). Expect ~15 min for a cold run, when the images' Maven
+dependency layers have to be rebuilt, and ~5–10 min after that. Two stacks at once need ~10 GB
+or more for Docker; with less, run `docker compose stop` before the suite (your data is kept) and
+`docker compose start` after it.
+
+The scenarios, each checked against both accounts' balances:
+
+- a transfer completes, and repeating it with the same `Idempotency-Key` moves nothing again
+- a EUR → PLN transfer credits the amount at the stubbed exchange rate
+- a blocklisted source fails cleanly, and a blocklisted destination is debited and then
+  refunded by the compensation sweep
+- with Account unreachable, transfers fail cleanly, the circuit breaker opens, and transfers
+  work again once Account is back
+- a debit whose response is lost (held back past Transfer's read timeout) is left `PENDING`
+  and settled exactly once by the stale-`PENDING` sweep
+
+Faults are injected by a WireMock proxy that sits between Transfer and Account in the E2E
+stack only. `-De2e.keepStack=true` keeps the stack after the run so you can read its logs
+(`docker compose -p <name> logs <service>`). A run killed before it finishes can leave its stack
+behind: `docker compose ls` shows it, and `docker compose -p <name> down -v` removes it.

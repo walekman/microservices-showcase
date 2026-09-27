@@ -5,6 +5,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
 
 import static org.hamcrest.Matchers.startsWith;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -19,9 +23,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * test requested the spec. A full-context test, not a WebMvcTest slice: the slice would not
  * load the real SecurityConfig that makes the spec reachable without a token.
  */
+@Testcontainers
 @SpringBootTest
 @AutoConfigureMockMvc
 class OpenApiDocsIT {
+
+    @Container
+    @ServiceConnection
+    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
     @Autowired
     private MockMvc mockMvc;
@@ -32,6 +41,8 @@ class OpenApiDocsIT {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.openapi").value(startsWith("3.")))
                 .andExpect(jsonPath("$.paths['/fraud-check']").exists())
+                .andExpect(jsonPath("$.paths['/fraud/blocklist/{accountId}'].put").exists())
+                .andExpect(jsonPath("$.paths['/fraud/blocklist/{accountId}'].delete").exists())
                 .andExpect(jsonPath("$.components.securitySchemes.bearerAuth.scheme").value("bearer"));
     }
 }

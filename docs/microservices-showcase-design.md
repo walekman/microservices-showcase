@@ -17,7 +17,7 @@ Non-goals: this is not a production banking system. No real payment rails, no do
 | **Auth** | Issues/validates JWT via OAuth2/OIDC | Keycloak (containerized, pre-configured realm) |
 | **Account** | Owns accounts & balances; debit/credit with optimistic locking; each account held in one currency, fixed at creation | PostgreSQL (own database) |
 | **Transfer** | Orchestrates the transfer saga; owns transfer/ledger history + transactional outbox | PostgreSQL (own database) |
-| **Fraud** | Screens each account in a transfer against a configured blocklist (no amount/velocity rules) | stateless (no database) |
+| **Fraud** | Screens each account in a transfer against a blocklist it stores (no amount/velocity rules); `fraud-admin` maintains it through `PUT`/`DELETE /fraud/blocklist/{accountId}`, which has no Gateway route | PostgreSQL (own database) |
 | **FX** | Exchange rates for cross-currency transfers, from the Frankfurter/ECB feed behind a Redis cache (fresh TTL, last-known fallback, cross-instance single-flight lock) | stateless (Redis is a cache, not a store) |
 | **Notification** | Consumes transfer-outcome events; stores one notification per transfer (a redelivery is skipped) and logs a "notification sent"; dead-letters events it cannot read or accept | PostgreSQL (own database) |
 | **Bank UI** | Static browser single-page app for customer self-service (signup/onboarding, balance, transfers, history, quick-transfer); calls the Gateway directly from the browser | stateless (no build tooling — plain HTML/CSS/JS served by nginx) |
@@ -28,7 +28,7 @@ Each stateful service owns its data exclusively — no service queries another's
 
 - **Language/runtime:** Java 21, Spring Boot 3.x
 - **Web:** Spring MVC (blocking, not WebFlux) with **virtual threads enabled** (`spring.threads.virtual.enabled=true`) — gets Java 21's concurrency model with plain sequential blocking code, no reactive programming model. Rationale: Transfer Service's saga makes a sequential chain of blocking downstream calls per request; virtual threads let that scale to many concurrent in-flight transfers without exhausting a platform-thread pool, and without rewriting the orchestration as reactive/async code. Out of scope: explicit thread-pinning verification/diagnostics tooling — the flag is enabled and left at that.
-- **Persistence:** Spring Data JPA + PostgreSQL, one logical database per stateful service (Account, Transfer, Notification), provisioned as separate databases inside a single Postgres container via init script.
+- **Persistence:** Spring Data JPA + PostgreSQL, one logical database per stateful service (Account, Transfer, Notification, Fraud), provisioned as separate databases inside a single Postgres container via init script.
 - **Messaging:** Apache Kafka, **KRaft mode** (no Zookeeper).
 - **Cache:** Redis (single node, no persistence), used only by FX Service in front of its external rate provider. An optimisation, never a dependency: with Redis down, FX Service calls the provider directly. See `docs/phase-12-fx-rates-redis-cache.md`.
 - **Auth:** Keycloak (OAuth2/OIDC), JWT validated at the Gateway and by each resource service via Spring Security Resource Server.
@@ -103,14 +103,14 @@ Every terminal state emits a `TransferCompleted` or `TransferFailed` event throu
 
 - **Unit tests** (JUnit 5 + Mockito): business logic in isolation — saga step sequencing in Transfer Service (mocked Account/Fraud clients), fraud rule evaluation, resilience config behavior.
 - **Integration tests per service** (Testcontainers, real Postgres/Kafka — not H2/mocks): validates JPA optimistic locking, the outbox table + polling publisher, and Kafka producer/consumer wiring against the real infra they actually run against.
-- **End-to-end saga tests** (Phase 10, not yet built): a dedicated test module boots the real services via Testcontainers/Docker Compose and drives full flows through the Gateway — happy path, fraud-rejection-with-compensation, and forced-Account-unavailable (proving circuit breaker/retry behavior end-to-end).
-- **Fault injection:** Spring's `MockRestServiceServer` stands in for Account/Fraud in Transfer Service's client tests, simulating timeouts/5xxs to assert that retry and the circuit breaker behave and that the transfer fails cleanly. Fault injection against the real services is planned for the end-to-end tests (Phase 10).
+- **End-to-end saga tests** (Phase 10): the `e2e-tests` module, built only under `-Pe2e` and run locally (not in CI or `./mvnw test`), starts its own copy of the whole stack (`docker-compose.yml` plus `docker-compose.e2e.yml`, under a random project name with no fixed container names or host ports) and drives six scenarios through the Gateway as fresh Keycloak users, asserting on both balances: happy path with an idempotent repeat, cross-currency at the locked rate, blocked source (clean failure), blocked destination (debited, then compensated), Account unreachable (retry, circuit breaker opens, then recovers), and a lost debit response (left `PENDING`, settled exactly once by the stale-`PENDING` sweep).
+- **Fault injection:** in Transfer Service's client tests, Spring's `MockRestServiceServer` stands in for Account/Fraud/FX, simulating timeouts/5xxs to assert that retry and the circuit breaker behave. Against the real services, the end-to-end stack routes every Transfer → Account call through a WireMock proxy that forwards by default and can reset every connection or hold back debit responses past Transfer's read timeout; a second WireMock stands in for the FX rate provider.
 
 ## 7. Deployment / Local Dev
 
 Single `docker compose up`:
 - 5 Spring Boot services (Gateway, Account, Transfer, Fraud, Notification), plus the Bank UI (`web-ui`, `nginx:alpine` serving static assets, no build step, host port 8090) — see `docs/phase-9-bank-ui.md`
-- One Postgres container, separate database per stateful service (Account, Transfer) via init script
+- One Postgres container, separate database per stateful service (Account, Transfer, Notification, Fraud) via init script
 - Kafka in KRaft mode (no Zookeeper)
 - Keycloak with a pre-loaded realm/client (import file, not manual setup), including the Bank UI's custom login/registration theme
 - OTel Collector, Prometheus, Grafana (provisioned dashboards), Grafana Tempo
@@ -119,4 +119,4 @@ There is no seed script. Keycloak's realm import provides the demo users; bank a
 
 ## 8. Open Items
 
-None at the design level. Build order, per-phase scope and the one remaining phase (end-to-end saga tests) are tracked in `docs/roadmap.md`; deferred findings live in each phase doc's own deferral/known-gaps section. The actual build order differed from this document's original guess — see the roadmap.
+None at the design level. Build order and per-phase scope are tracked in `docs/roadmap.md`; deferred findings live in each phase doc's own deferral/known-gaps section. The actual build order differed from this document's original guess — see the roadmap.

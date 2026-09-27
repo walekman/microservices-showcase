@@ -1,23 +1,29 @@
 package com.showcase.fraud.service;
 
 import com.showcase.fraud.domain.AccountBlockedException;
+import com.showcase.fraud.domain.BlockedAccountRepository;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataAccessResourceFailureException;
 
-import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class FraudCheckServiceTest {
 
     private static final UUID BLOCKED = UUID.fromString("11111111-1111-1111-1111-111111111111");
     private static final UUID CLEAR = UUID.fromString("22222222-2222-2222-2222-222222222222");
 
-    private final FraudCheckService service = new FraudCheckService(new FraudBlocklistProperties(List.of(BLOCKED)));
+    private final BlockedAccountRepository repository = mock(BlockedAccountRepository.class);
+    private final FraudCheckService service = new FraudCheckService(repository);
 
     @Test
     void throwsForABlockedAccount() {
+        when(repository.existsById(BLOCKED)).thenReturn(true);
+
         assertThatThrownBy(() -> service.check(BLOCKED))
                 .isInstanceOf(AccountBlockedException.class)
                 .hasMessageContaining(BLOCKED.toString());
@@ -25,13 +31,16 @@ class FraudCheckServiceTest {
 
     @Test
     void passesForAnUnlistedAccount() {
+        when(repository.existsById(CLEAR)).thenReturn(false);
+
         assertThatCode(() -> service.check(CLEAR)).doesNotThrowAnyException();
     }
 
+    // Fail closed: an unreadable blocklist must never read as "not blocked".
     @Test
-    void aNullConfiguredListDefaultsToEmptyRatherThanThrowing() {
-        FraudCheckService noBlocklist = new FraudCheckService(new FraudBlocklistProperties(null));
+    void propagatesADatabaseFailureRatherThanPassingTheAccount() {
+        when(repository.existsById(BLOCKED)).thenThrow(new DataAccessResourceFailureException("db down"));
 
-        assertThatCode(() -> noBlocklist.check(BLOCKED)).doesNotThrowAnyException();
+        assertThatThrownBy(() -> service.check(BLOCKED)).isInstanceOf(DataAccessResourceFailureException.class);
     }
 }

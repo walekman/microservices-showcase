@@ -33,3 +33,14 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "notification" <<-E
     GRANT ALL PRIVILEGES ON SCHEMA public TO notification_service;
     ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO notification_service;
 EOSQL
+
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+    CREATE DATABASE fraud;
+    CREATE USER fraud_service WITH PASSWORD '$FRAUD_DB_PASSWORD';
+    GRANT ALL PRIVILEGES ON DATABASE fraud TO fraud_service;
+EOSQL
+
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "fraud" <<-EOSQL
+    GRANT ALL PRIVILEGES ON SCHEMA public TO fraud_service;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO fraud_service;
+EOSQL

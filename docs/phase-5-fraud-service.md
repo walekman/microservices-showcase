@@ -1,5 +1,11 @@
 # Fraud Service Implementation Phase (Phase 5)
 
+> **Superseded in part by Phase 10** (`docs/phase-10-end-to-end-saga-tests.md`): the blocklist
+> is no longer the `FRAUD_BLOCKLIST_ACCOUNT_IDS` env var. It lives in Fraud's own `fraud`
+> database and is maintained through `PUT`/`DELETE /fraud/blocklist/{accountId}` (role
+> `fraud-admin`). Code blocks below that use `FraudBlocklistProperties` describe the Phase 5
+> design and must not be copied.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this phase task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add Fraud Service — a stateless account-blocklist screen — as the saga's second and third synchronous calls (once before the debit, once before the credit), giving the compensation machinery Phase 3 built a reliable, on-demand way to trigger through normal API calls, instead of requiring fault injection.

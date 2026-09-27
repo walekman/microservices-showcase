@@ -1,0 +1,17 @@
+{
+  "request": {
+    "method": "GET",
+    "urlPath": "/latest",
+    "queryParameters": { "base": { "equalTo": "EUR" } }
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": {
+      "amount": 1.0,
+      "base": "EUR",
+      "date": "2026-09-24",
+      "rates": { "GBP": 0.8412, "PLN": 4.2537, "USD": 1.1123 }
+    }
+  }
+}
