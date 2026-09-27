@@ -341,4 +341,4 @@ The scenarios, each checked against both accounts' balances:
 Faults are injected by a WireMock proxy that sits between Transfer and Account in the E2E
 stack only. `-De2e.keepStack=true` keeps the stack after the run so you can read its logs
 (`docker compose -p <name> logs <service>`). A run killed before it finishes can leave its stack
-behind: `docker compose ls` shows it, and `docker compose -p <name> down -v` removes it.
+behind: `docker compose ls` shows it, and `docker compose -p <name> down -v --rmi local` removes it.

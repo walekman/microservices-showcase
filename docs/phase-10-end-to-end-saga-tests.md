@@ -132,13 +132,13 @@ created yet, so the blocklist becomes data that can be changed at runtime.
   - a warm-up: one same-currency and one cross-currency transfer, retried until both complete,
     before the first test. A cold stack's first saga took ~20 s.
   - `port <service> <port>`: resolves each mapped host port
-  - `down --volumes --remove-orphans` from a JVM shutdown hook, so every run starts from empty
-    databases
+  - `down --volumes --remove-orphans --rmi local` from a JVM shutdown hook, so every run
+    starts from empty databases and leaves none of its six built images behind
 - Its own project name keeps its volumes and network apart from a dev stack's. The override
   uses `!reset` and `!override`, which need Compose ≥ 2.24.4; the local version is 5.1.3.
 - A run killed before its shutdown hook fires (an IDE stop, Ctrl-C twice) leaves its stack
   behind. `docker compose ls` shows it as `showcase-e2e-…`, and
-  `docker compose -p <name> down -v` removes it.
+  `docker compose -p <name> down -v --rmi local` removes it.
 - `-De2e.keepStack=true` skips the teardown on purpose, so a failed run's service logs can be
   read with `docker compose -p <name> logs <service>`.
 - A cold run spends several minutes building six images and starting Keycloak. Later runs
@@ -1555,7 +1555,7 @@ import static org.awaitility.Awaitility.await;
  * service (see docs/phase-10-end-to-end-saga-tests.md, Design Decisions).
  *
  * <p>A run killed before the shutdown hook fires leaves its stack behind: `docker compose ls`
- * lists it as showcase-e2e-*, and `docker compose -p <name> down -v` removes it. Run with
+ * lists it as showcase-e2e-*, and `docker compose -p <name> down -v --rmi local` removes it. Run with
  * -De2e.keepStack=true to keep the stack on purpose, e.g. to read a failed run's service logs.
  */
 public final class E2EStack {
@@ -1665,14 +1665,16 @@ public final class E2EStack {
     private void down() {
         if (Boolean.getBoolean("e2e.keepStack")) {
             System.out.println("[e2e] -De2e.keepStack=true: leaving " + project + " running. Inspect with `docker compose -p "
-                    + project + " logs <service>`, remove with `docker compose -p " + project + " down -v`.");
+                    + project + " logs <service>`, remove with `docker compose -p " + project + " down -v --rmi local`.");
             return;
         }
         try {
-            compose(false, "down", "--volumes", "--remove-orphans");
+            // --rmi local: the six built images are named after the per-run project, so no later
+            // run reuses them and each run's ~3.5 GB piles up. Rebuilds still hit the build cache.
+            compose(false, "down", "--volumes", "--remove-orphans", "--rmi", "local");
         } catch (RuntimeException ex) {
             System.err.println("[e2e] could not remove stack " + project + "; remove it with `docker compose -p "
-                    + project + " down -v`: " + ex.getMessage());
+                    + project + " down -v --rmi local`: " + ex.getMessage());
         }
     }
 
