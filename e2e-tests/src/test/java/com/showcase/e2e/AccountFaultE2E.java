@@ -76,9 +76,9 @@ class AccountFaultE2E extends E2ETestBase {
         await().atMost(Duration.ofSeconds(15)).pollInterval(Duration.ofSeconds(1))
                 .untilAsserted(() -> assertThat(bank.balance(from)).isEqualByComparingTo("960.00"));
 
-        // Stale after 70 s, then two sweep ticks: PENDING -> COMPENSATION_REQUIRED (debit
+        // Stale after 120 s, then two sweep ticks: PENDING -> COMPENSATION_REQUIRED (debit
         // confirmed by replay) -> COMPLETED (credit). Never FAILED.
-        await().atMost(Duration.ofSeconds(150)).pollInterval(Duration.ofSeconds(2))
+        await().atMost(Duration.ofSeconds(200)).pollInterval(Duration.ofSeconds(2))
                 .until(() -> bank.getTransfer(ada, transferId).text("status"), "COMPLETED"::equals);
 
         assertThat(bank.balance(from)).isEqualByComparingTo("960.00");
