@@ -2,343 +2,150 @@
 
 [![CI](https://github.com/walekman/microservices-showcase/actions/workflows/ci.yml/badge.svg)](https://github.com/walekman/microservices-showcase/actions/workflows/ci.yml)
 
-Design: [docs/microservices-showcase-design.md](docs/microservices-showcase-design.md)
+A money-transfer system built as six Spring Boot 3 / Java 21 services: a transfer saga over
+synchronous HTTP with idempotent compensation, a transactional outbox to Kafka, a Redis-cached
+FX rate service, Keycloak JWT auth, and OpenTelemetry tracing — plus a small browser UI.
+
+- Architecture: [docs/microservices-showcase-design.md](docs/microservices-showcase-design.md)
+- What each phase built: [docs/roadmap.md](docs/roadmap.md)
+- Known gaps and non-goals: [docs/open-items.md](docs/open-items.md)
 
 ## Running locally
 
-First time only:
-
-    cp .env.example .env
-
-An `.env` copied before Phase 11 lacks `NOTIFICATION_DB_PASSWORD`; add that line from
-`.env.example`. An `.env` copied before Phase 10 lacks `FRAUD_DB_PASSWORD`; add that line too,
-and run `docker compose down -v` so the init script creates the `fraud` database.
-
-If you ran an earlier version of this stack, destroy the Postgres volume first — the
-per-service databases are created by an init script that only runs on an empty data directory
-(this discards any locally created accounts). This also matters if you last ran the stack
-before Phase 7b (`docs/phase-7b-account-ownership-authorization.md`): Hibernate can't add
-the new `ownerId`/`initiatorId` columns as `NOT NULL` over existing rows, so accounts/transfers
-created before that phase are left with a null value there and simply become permanently
-inaccessible (a clean 404, not an error, but confusing if you don't know why):
-
-    docker compose down -v
-
-Then:
-
+    cp .env.example .env        # first time only
     docker compose up --build
 
-This starts Postgres, Account Service (8081), Transfer Service (8082), Fraud Service (8084), FX Service (8085), Redis (6379), Kafka, Notification Service (8083), the API Gateway (8080), the Bank UI (8090), Keycloak (8180), and the observability stack: OTel Collector, Grafana Tempo (3200), Prometheus (9090), and Grafana (3001).
+| What | URL |
+|---|---|
+| Bank UI | http://localhost:8090 |
+| API Gateway | http://localhost:8080 |
+| Swagger UI — Account / Transfer / Fraud / FX | http://localhost:{8081,8082,8084,8085}/swagger-ui.html |
+| Notification Service | http://localhost:8083 (Kafka consumer, health only) |
+| Keycloak | http://localhost:8180 |
+| Grafana (anonymous) / Prometheus / Tempo | http://localhost:3001 / :9090 / :3200 |
 
-## Authentication (Keycloak)
+Upgrading an older checkout: add any variable your `.env` is missing from `.env.example`, then
+run `docker compose down -v` before `up`. Per-service databases are created by an init script
+that only runs on an empty volume, and schemas evolve through Hibernate `ddl-auto: update`,
+which cannot add a new `NOT NULL` column over existing rows. This discards local data.
 
-Every endpoint except `/actuator/health`, `/actuator/info`, `/actuator/prometheus`, and Swagger's own pages now needs a bearer JWT
-(see `docs/phase-7-auth-keycloak-jwt.md`). Keycloak comes up pre-configured with a `showcase`
-realm — two demo users, `ada` and `bob` (password `password` for both), each with the
-`customer` role, and a third, `admin` (password `password`), holding `account-admin` and
-`transfer-admin` instead — the two roles that gate the list-all endpoints (`GET /accounts`,
-`GET /transfers`; see `docs/phase-7b-account-ownership-authorization.md`). Swap `username=ada`
-for `username=admin` in the token request below to exercise those.
+Pass `GIT_SHA=$(git rev-parse --short HEAD)` to `docker compose up --build` to have
+`/actuator/info` and the Service Versions dashboard show the commit instead of `unknown`.
 
-Get a token for `curl` (password grant — fine for this demo; the Bank UI at http://localhost:8090 uses Authorization Code + PKCE instead):
+## Authentication
 
-    curl -X POST http://localhost:8180/realms/showcase/protocol/openid-connect/token \
-      -H "Content-Type: application/x-www-form-urlencoded" \
-      -d "grant_type=password&client_id=showcase-ui&username=ada&password=password" \
-      | jq -r .access_token
+Everything except `/actuator/{health,info,prometheus}` and the Swagger pages needs a bearer JWT
+from Keycloak's `showcase` realm. Demo users, all with password `password`:
 
-Export it once and append `-H "Authorization: Bearer $TOKEN"` to every request below:
+- `ada`, `bob` — `customer`: own accounts, send transfers
+- `admin` — `account-admin`, `transfer-admin`, `fraud-admin`: list everything, edit the blocklist
 
-    export TOKEN=$(curl -s -X POST http://localhost:8180/realms/showcase/protocol/openid-connect/token \
-      -H "Content-Type: application/x-www-form-urlencoded" \
-      -d "grant_type=password&client_id=showcase-ui&username=ada&password=password" \
-      | jq -r .access_token)
+The Bank UI signs in with Authorization Code + PKCE. For `curl`, use the password grant:
 
-The two admin-only examples further down (`GET /accounts`, `GET /transfers`) need a separate
-token for the `admin` user instead:
+    token() {
+      curl -s -X POST http://localhost:8180/realms/showcase/protocol/openid-connect/token \
+        -d "grant_type=password&client_id=showcase-ui&username=$1&password=password" \
+        | jq -r .access_token
+    }
+    export TOKEN=$(token ada) ADMIN_TOKEN=$(token admin)
 
-    export ADMIN_TOKEN=$(curl -s -X POST http://localhost:8180/realms/showcase/protocol/openid-connect/token \
-      -H "Content-Type: application/x-www-form-urlencoded" \
-      -d "grant_type=password&client_id=showcase-ui&username=admin&password=password" \
-      | jq -r .access_token)
-
-## Try it (Swagger UI & Bank UI)
-
-All four backend APIs are browsable and callable straight from a browser. Each has an **Authorize**
-button (top right) — paste in a token obtained as above to make "Try it out" calls succeed:
-
-- Account Service — http://localhost:8081/swagger-ui.html
-- Transfer Service — http://localhost:8082/swagger-ui.html
-- Fraud Service — http://localhost:8084/swagger-ui.html
-- FX Service — http://localhost:8085/swagger-ui.html
-
-The Bank UI (customer-facing web app) is at:
-
-- Bank UI — http://localhost:8090
+For Swagger UI, paste a token into the **Authorize** button.
 
 ## API Gateway
 
-A single entry point at `http://localhost:8080` routes to the two client-facing services:
+`http://localhost:8080` routes only the client-facing paths: `/transfers/**`,
+`POST /accounts`, `GET /accounts`, `/accounts/mine`, `/accounts/{id}`,
+`/accounts/{id}/summary`, and `GET /fx/rates`. Account's `debit`/`credit` and all of
+Fraud and Notification have no route — they are internal calls on the Docker network.
+The Gateway and each service validate the token independently.
 
-- `/transfers/**` → Transfer Service (full API)
-- `POST /accounts`, `GET /accounts`, `GET /accounts/mine`, `GET /accounts/{id}`, `GET /accounts/{id}/summary` → Account Service
-- `GET /fx/rates` → FX Service (the Bank UI's quote before sending; needs the `fx-reader` role, which every `customer` holds)
-
-Account's `/accounts/{id}/debit` and `/accounts/{id}/credit` are intentionally **not** routed
-— they're internal saga calls Transfer Service makes directly on the Docker network. Account's
-own port (8081) is still published for local dev, so both are reachable directly, but neither
-lets a customer move someone else's money. `debit` is owner-gated (Phase 7b): a `customer` token
-can only debit an account it created, and calling it against someone else's account 404s, the
-same answer a genuinely missing account would give. `credit` has no ownership check (a transfer
-credits someone else's account), so it requires the `account-crediter` role, which only Transfer
-Service's own machine identity holds. Transfer makes every credit call as itself, and a
-`customer` token calling `credit` directly gets `403`. Every other example in this README still targets each
-service's own port directly (8081/8082/8083/8084); the Gateway doesn't replace those, it adds a
-second, narrower way in. Every routed path requires a bearer JWT with the matching permission,
-same as calling each service directly (see "Authentication" above) — the Gateway and the service
-behind it each independently check the token.
-
-## Observability
-
-Grafana at http://localhost:3001 (no login needed — anonymous viewer access) has four dashboards
-provisioned on startup: a JVM/Micrometer dashboard, a business-metrics dashboard (transfer
-completed/failed/fraud-rejected counters, outbox backlog, circuit-breaker state), a Service Versions dashboard, and an FX Cache dashboard (cache hit ratio, stale serves, Redis bypasses, provider calls). The Service Versions dashboard shows which version and commit each service is running, from the `application_info` metric every service publishes; the same facts are at `/actuator/info` on each service's port, no token needed. Pass the commit when building — `GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build` — or it shows as `unknown`. Prometheus
-(http://localhost:9090) scrapes `/actuator/prometheus` on all six services every 10s — check
-its Targets page if a Grafana panel shows "No data." Every service also exports traces via
-OTLP through an OTel Collector to Grafana Tempo; trigger any transfer below, then open Grafana
-Explore against the Tempo data source to see a single trace spanning Gateway → Transfer →
-Account → Fraud → the Kafka hop → Notification — the concrete proof this system's sync and
-async communication share one trace. Logs are structured JSON on every service's stdout
-(`docker compose logs <service>`), each line carrying the `traceId`/`spanId` of the request
-that produced it, so a trace in Tempo and its log lines can be cross-referenced directly.
+Each service's own port is still published for local dev, but that grants nothing extra:
+`debit` only works on an account the caller owns (anyone else's 404s), and `credit` needs
+`account-crediter`, which only Transfer Service's machine identity holds.
 
 ## Try it (curl)
 
-Every command below needs `-H "Authorization: Bearer $TOKEN"` added (see "Authentication" above) —
-omitted here to keep the examples focused on each endpoint's own request shape.
+Add `-H "Authorization: Bearer $TOKEN"` to each command unless it shows `$ADMIN_TOKEN`.
 
-    # Create an account
-    curl -X POST http://localhost:8081/accounts \
-      -H "Content-Type: application/json" \
-      -d '{"ownerName": "Ada Lovelace", "initialBalance": 100.00}'
+    # Create an account (currency: EUR, USD, GBP or PLN) and fetch it -- only its owner can
+    curl -X POST http://localhost:8080/accounts -H "Content-Type: application/json" \
+      -d '{"ownerName": "Ada Lovelace", "initialBalance": 100.00, "currency": "EUR"}'
+    curl http://localhost:8080/accounts/<id>
 
-    # Fetch it (replace <id> with the id from the response above) -- only the account's owner
-    # can do this; using a token other than the one that created it 404s, same as a genuinely
-    # missing id (see docs/phase-7b-account-ownership-authorization.md)
-    curl http://localhost:8081/accounts/<id>
-
-    # List all accounts -- needs the admin token (username=admin), not ada's/bob's
-    curl http://localhost:8081/accounts -H "Authorization: Bearer $ADMIN_TOKEN"
-
-    # Debit it (Idempotency-Key is required -- a retry with the same key is a no-op, not a
-    # second debit. The key must be unique per operation, not just per account: it is the
-    # sole primary key in Account's idempotency ledger, so copy-pasting a literal example
-    # key like "demo-debit-1" against a second account returns 409
-    # IDEMPOTENCY_KEY_CONFLICT instead of debiting it -- give each account its own key, e.g.
-    # by working the account id into it as below)
-    curl -X POST http://localhost:8081/accounts/<id>/debit \
-      -H "Content-Type: application/json" \
-      -H "Idempotency-Key: demo-debit-<id>" \
-      -d '{"amount": 40.00}'
-
-    # Crediting it directly is refused (403): credit needs the account-crediter role, which only
-    # Transfer Service's machine identity holds. Money only arrives through a transfer.
-    curl -X POST http://localhost:8081/accounts/<id>/credit \
-      -H "Content-Type: application/json" \
-      -H "Idempotency-Key: demo-credit-<id>" \
-      -d '{"amount": 15.00}'
-
-## Transfers
-
-A transfer is a saga: Transfer Service checks both accounts, debits the source, then
-credits the destination, recording the outcome in its own database at each step. There
-is no distributed transaction — each step commits independently, which is why the
-failure states below exist.
-
-**Currencies.** Every account is held in one currency (EUR, USD, GBP or PLN), picked at signup.
-A transfer's amount is in the sender's currency. When the recipient's differs, Transfer asks FX
-Service for the ECB reference rate and locks the rate, its date and the credited amount
-(rounded half-even to cents) onto the transfer before any money moves; every retry and
-compensation reuses those. FX Service caches rates in Redis (fresh for 10 minutes, last-known
-for 24 hours, served as stale while the provider is down) and calls the provider directly if
-Redis is down. Without internet access, cross-currency transfers fail as `FX_SERVICE_UNAVAILABLE`
-once the cache is empty; same-currency transfers never need FX. See
-`docs/phase-12-fx-rates-redis-cache.md`.
-
-### All saga outcomes
-
-Live request (`TransferService.execute()`):
-
-| # | Path | Outcome |
-|---|---|---|
-| 1 | source exists → destination exists → source not blocked → debit succeeds → destination not blocked → credit succeeds | `COMPLETED` |
-| 2 | source or destination doesn't exist | `FAILED` (`ACCOUNT_NOT_FOUND`) |
-| 3 | Account Service unreachable during existence pre-check | `FAILED` (`ACCOUNT_SERVICE_UNAVAILABLE`) |
-| 4 | source account blocklisted | `FAILED` (`SOURCE_ACCOUNT_BLOCKED`) |
-| 5 | Fraud Service unreachable checking the source | `FAILED` (`SOURCE_FRAUD_SERVICE_UNAVAILABLE`) |
-| 6 | debit rejected (e.g. `INSUFFICIENT_FUNDS`) | `FAILED` |
-| 7 | debit call unreachable, retries/circuit breaker exhausted (outcome unknown) | stays `PENDING`, `503` with `transferStatus: PENDING` → scheduler resolves |
-| 8 | destination account blocklisted | `COMPENSATION_REQUIRED` (`DESTINATION_ACCOUNT_BLOCKED`) → scheduler compensates |
-| 9 | Fraud Service unreachable checking the destination | `COMPENSATION_REQUIRED` (`DESTINATION_FRAUD_SERVICE_UNAVAILABLE`) → scheduler retries |
-| 10 | credit rejected | `COMPENSATION_REQUIRED` → scheduler compensates |
-| 11 | credit call unreachable | `COMPENSATION_REQUIRED` → scheduler resolves |
-| 12 | unexpected exception before debit | `FAILED` (`UNEXPECTED_ERROR`) |
-| 13 | unexpected exception after debit | `COMPENSATION_REQUIRED` (`UNEXPECTED_ERROR`) |
-| 14 | process crashes mid-request | stays `PENDING` → scheduler resolves |
-
-Background scheduler resolution:
-
-- **stale `PENDING`** → re-check source fraud: blocked → stays `PENDING` (the debit cannot be safely replayed, see below), retried every sweep until the block is lifted; unreachable → stays `PENDING`, retried next sweep; clear → (idempotent) debit attempt exactly as today (lands → promoted to `COMPENSATION_REQUIRED`; rejected → `FAILED`; unreachable → stays `PENDING`)
-- **`COMPENSATION_REQUIRED`** → re-check destination fraud, unconditionally: blocked → compensate the source (as today's rejected-credit path); unreachable → stays `COMPENSATION_REQUIRED`, retried next sweep; clear → (idempotent) credit attempt exactly as today (lands → `COMPLETED`; rejected → compensate; unreachable → stays `COMPENSATION_REQUIRED`)
-
-    # Transfer money (replace the ids with two accounts you created). Idempotency-Key is
-    # required: resending the same key returns the first attempt's result instead of moving
-    # the money again -- see "Errors" below for the two 409s it can produce.
-    curl -X POST http://localhost:8082/transfers \
-      -H "Content-Type: application/json" \
+    # Transfer -- Idempotency-Key is required; resending it returns the first result
+    curl -X POST http://localhost:8080/transfers -H "Content-Type: application/json" \
       -H "Idempotency-Key: $(uuidgen)" \
       -d '{"fromAccountId": "<from>", "toAccountId": "<to>", "amount": 40.00}'
+    curl http://localhost:8080/transfers/mine
 
-    # Fetch one transfer -- the initiator or the destination account's owner (see
-    # docs/phase-7b-account-ownership-authorization.md)
-    curl http://localhost:8082/transfers/<id>
+    # Admin: list everything, filter by status
+    curl http://localhost:8080/accounts -H "Authorization: Bearer $ADMIN_TOKEN"
+    curl "http://localhost:8080/transfers?status=COMPENSATED" -H "Authorization: Bearer $ADMIN_TOKEN"
 
-    # List transfers, optionally by status -- needs the admin token (username=admin), not
-    # ada's/bob's
-    curl http://localhost:8082/transfers -H "Authorization: Bearer $ADMIN_TOKEN"
-    curl "http://localhost:8082/transfers?status=COMPENSATION_REQUIRED" -H "Authorization: Bearer $ADMIN_TOKEN"
-
-    # Blocklist an account (Fraud Service directly -- there is no Gateway route; needs the
-    # admin token, which holds fraud-admin), then transfer FROM it for a clean rejection
-    # (no money moves), or TO it for a compensation (money moves, then reverses
-    # automatically). DELETE the same URL to lift the block.
+    # Admin: blocklist an account (Fraud directly, no Gateway route); DELETE lifts it.
+    # A transfer FROM it fails cleanly; one TO it is debited, then refunded by the sweep.
     curl -X PUT http://localhost:8084/fraud/blocklist/<id> -H "Authorization: Bearer $ADMIN_TOKEN"
-    curl "http://localhost:8082/transfers?status=FAILED" -H "Authorization: Bearer $ADMIN_TOKEN"
 
-Errors are RFC 7807 problem documents with a stable `code`:
+Errors are RFC 7807 `application/problem+json` with a stable `code` property, e.g.
+`422 INSUFFICIENT_FUNDS`, `422 SOURCE_ACCOUNT_BLOCKED`, `409 IDEMPOTENCY_KEY_CONFLICT`,
+`409 TRANSFER_IN_PROGRESS`, `503 ACCOUNT_SERVICE_UNAVAILABLE`.
 
-    # Insufficient funds                  -> 422 INSUFFICIENT_FUNDS, no money moves
-    # Unknown account                     -> 422 ACCOUNT_NOT_FOUND, no money moves
-    # Source account blocklisted          -> 422 SOURCE_ACCOUNT_BLOCKED, no money moves
-    # Destination account blocklisted     -> transfer recorded COMPENSATION_REQUIRED, source
-    #                                         is automatically credited back within
-    #                                         transfer.compensation.sweep-interval
-    # Missing, blank, or overlong          -> 400 VALIDATION_FAILED (POST /transfers, and
-    #   Idempotency-Key header                Account's debit/credit)
-    # Idempotency key reused with         -> 409 IDEMPOTENCY_KEY_CONFLICT
-    #   different parameters
-    # Idempotency key replayed while      -> 409 TRANSFER_IN_PROGRESS, with the transferId
-    #   that transfer is still PENDING        to poll GET /transfers/{id}
-    # Idempotency key replayed after      -> the first attempt's own response (201, or its
-    #   that transfer settled                 problem), no money moves again
-    # Account down during pre-validation  -> after Retry/CircuitBreaker exhaust their
-    #                                         attempts, 503 ACCOUNT_SERVICE_UNAVAILABLE,
-    #                                         no money moves
-    # Account down during the debit       -> after Retry/CircuitBreaker exhaust their
-    #                                         attempts, 503 ACCOUNT_SERVICE_UNAVAILABLE,
-    #                                         outcome UNKNOWN: recorded FAILED, but the
-    #                                         debit may have committed -- this is a terminal
-    #                                         state, not PENDING, so it is NOT reconciled by
-    #                                         the stale-PENDING sweep below (see the note
-    #                                         at the end of this section)
+## How a transfer works
 
-### Automatic compensation and idempotency
+Transfer Service runs a saga — check both accounts, screen the source with Fraud, debit,
+screen the destination, credit — with each step committing on its own and every Account call
+carrying a deterministic idempotency key (`<transferId>:debit`, `<transferId>:credit`). Calls
+are wrapped in a Resilience4j circuit breaker and retry.
 
-Transfer Service wraps every call into Account Service in a CircuitBreaker + Retry
-(Resilience4j), and every debit/credit carries a deterministic `Idempotency-Key`
-(`"{transferId}:debit"`, `"{transferId}:credit"`) so a retry can never double-move money.
+The outcomes:
 
-If the debit succeeds and the credit then fails, the money is momentarily stranded at the
-source and recorded `COMPENSATION_REQUIRED`. A background sweep (`transfer.compensation.sweep-interval`,
-default 15s) resolves it automatically, by replaying the ambiguous call rather than guessing:
+- **`COMPLETED`** — money moved.
+- **`FAILED`** — rejected before the debit (unknown account, blocked source, insufficient
+  funds, no FX rate…). Nothing moved.
+- **`COMPENSATION_REQUIRED`** — debited, but the credit failed or the destination is blocked.
+  A background sweep (every 15s) replays the credit; if it is definitively refused, the source
+  is credited back → **`COMPENSATED`**, or, if even that is refused, **`COMPENSATION_FAILED`**
+  (manual review).
+- **`PENDING`** — the debit's outcome is unknown (Account timed out). A timeout cannot be told
+  apart from a request that never arrived, so nothing is guessed: the caller gets `503` with
+  `transferStatus: PENDING`, and a stale-`PENDING` sweep (after 120s) replays the debit key to
+  find out. Keep the same `Idempotency-Key` and poll `GET /transfers/{id}`.
 
-- If the destination credit had actually already landed (a lost response, not a lost
-  request) — the transfer is marked `COMPLETED`. Nothing to reverse.
-- If the destination definitively rejects it, the source is credited back and the transfer
-  is marked `COMPENSATED`.
-- If crediting the source back also definitively fails, the transfer is marked
-  `COMPENSATION_FAILED` — a manual-review terminal state, logged at ERROR.
+A cross-currency transfer locks the ECB rate and credited amount on the transfer before any
+money moves; every replay reuses them. FX Service caches rates in Redis (fresh 10 min,
+last-known 24 h) and needs internet access on a cold cache.
 
-A separate sweep (`transfer.compensation.pending-stale-after`, default 120s) recovers
-transfers stuck at `PENDING` — e.g. the process crashed mid-saga — the same way, starting
-from the debit leg.
+Full detail — every failure path and why: §4 of the design doc,
+`docs/phase-3-resilience-compensation-idempotency.md`, `docs/phase-12-fx-rates-redis-cache.md`.
 
-    curl "http://localhost:8082/transfers?status=COMPENSATION_REQUIRED" -H "Authorization: Bearer $ADMIN_TOKEN"
-    curl "http://localhost:8082/transfers?status=COMPENSATED" -H "Authorization: Bearer $ADMIN_TOKEN"
-    curl "http://localhost:8082/transfers?status=COMPENSATION_FAILED" -H "Authorization: Bearer $ADMIN_TOKEN"
+## Events and notifications
 
-A debit whose outcome is unknown after every retry (row 7 above) is left `PENDING` for this
-sweep rather than recorded `FAILED`: the debit may have committed despite the 503, so only
-the replayed key can say. The caller gets `503 ACCOUNT_SERVICE_UNAVAILABLE` with
-`transferStatus: PENDING`, and should keep the same `Idempotency-Key` and poll
-`GET /transfers/{id}` — the transfer can still complete.
+Every settled transfer writes an outbox row in the same transaction; a poller publishes it to
+Kafka (`transfer.completed` / `transfer.failed`). Notification Service stores one row per
+transfer and logs it — watch with `docker compose logs -f notification-service`. Delivery is
+at-least-once and redeliveries are deduplicated by `transferId`; unreadable events go to
+`<topic>-dlt`. See `docs/phase-11-notification-persistence-error-handling.md`.
 
-If the source account has been blocklisted by the time the sweep reaches a stale `PENDING`
-row, the row stays `PENDING` and the sweep logs an ERROR each pass. Replaying the debit key is
-not a read-only check (if the debit never landed, the replay would perform it), and marking
-the row `FAILED` would guess that the debit never landed. The row resolves once the block is
-lifted. Reaching this needs the source blocklisted after the live saga's own fraud screen
-passed, which means reconfiguring and restarting Fraud Service.
+## Observability
 
-## Kafka and Notification Service
+Grafana (http://localhost:3001) ships four dashboards: JVM, business metrics (transfer
+outcomes, outbox backlog, circuit breaker), Service Versions, and FX Cache. Every service
+exports traces to Tempo via an OTel Collector — one transfer yields a single trace from the
+Gateway through Transfer, Account, Fraud and the Kafka hop to Notification. Logs are JSON on
+stdout carrying `traceId`/`spanId`. See `docs/phase-8-observability.md`.
 
-Transfer outcomes (completed or failed) are published to Kafka topics (`transfer.completed` and
-`transfer.failed`) via an outbox table and polling publisher in Transfer Service.
+## Tests
 
-The Notification Service (port 8083) listens to both topics, stores one row per transfer
-outcome in its own `notification` database, and logs transfer notifications. To watch notifications as they arrive:
+    ./mvnw test                           # unit + Testcontainers integration tests (Docker needed); what CI runs
+    ./mvnw -Pe2e -pl e2e-tests verify     # end-to-end suite, local only
 
-    docker compose logs -f notification-service
+The end-to-end suite builds the images, starts its own copy of the stack (random project name
+and ports, so it doesn't clash with a dev stack), and drives the saga through the Gateway:
+happy path and replay, EUR → PLN, blocklisted source and destination, Account outage and
+circuit breaker, and a lost debit response settled by the stale-`PENDING` sweep. Faults come
+from a WireMock proxy between Transfer and Account. Expect 5–15 min. Two stacks need ~10 GB
+for Docker, so `docker compose stop` the dev stack first and `start` it after.
 
-Look for lines like:
-- `Notification sent: transfer completed {...}` for successful transfers
-- `Notification sent: transfer failed {...}` for failed transfers
-
-Delivery is at-least-once: if the publisher crashes after Kafka acknowledges a message but
-before the outbox row is marked published, the same event is republished on the next poll. The
-Notification Service recognises the redelivery by its `transferId`, acknowledges it and stores
-nothing — this is an accepted characteristic of the outbox pattern, not a bug.
-
-Events it cannot use are not retried: a payload that is not valid JSON, an event with no
-`transferId`, or a second, *different* outcome for an already-notified transfer goes to a
-dead-letter topic (`transfer.completed-dlt` / `transfer.failed-dlt`) and is logged at ERROR. If
-its database is unreachable, it retries the same event in place (backoff up to 30s, no limit)
-until the database is back. How to trigger each case by hand is in
-`docs/phase-11-notification-persistence-error-handling.md`, "Running It Locally".
-
-The Notification Service health endpoint is available at:
-
-    curl http://localhost:8083/actuator/health
-
-## End-to-end tests
-
-`./mvnw test` runs every module's unit and integration tests (Testcontainers, so Docker must
-be running). The end-to-end suite is separate, local only, and not part of CI:
-
-    ./mvnw -Pe2e -pl e2e-tests verify
-
-It builds the six service images, starts its own copy of the whole stack
-(`docker-compose.yml` plus `docker-compose.e2e.yml`, under a random `showcase-e2e-*` project
-name with random host ports, so it never clashes with a dev stack's names or ports), warms it up, runs the
-scenarios through the Gateway as fresh Keycloak users, and removes the stack and its volumes
-at the end. It needs Docker running and a `.env` with every variable from `.env.example`
-(including `FRAUD_DB_PASSWORD`). Expect ~15 min for a cold run, when the images' Maven
-dependency layers have to be rebuilt, and ~5–10 min after that. Two stacks at once need ~10 GB
-or more for Docker; with less, run `docker compose stop` before the suite (your data is kept) and
-`docker compose start` after it.
-
-The scenarios, each checked against both accounts' balances:
-
-- a transfer completes, and repeating it with the same `Idempotency-Key` moves nothing again
-- a EUR → PLN transfer credits the amount at the stubbed exchange rate
-- a blocklisted source fails cleanly, and a blocklisted destination is debited and then
-  refunded by the compensation sweep
-- with Account unreachable, transfers fail cleanly, the circuit breaker opens, and transfers
-  work again once Account is back
-- a debit whose response is lost (held back past Transfer's read timeout) is left `PENDING`
-  and settled exactly once by the stale-`PENDING` sweep
-
-Faults are injected by a WireMock proxy that sits between Transfer and Account in the E2E
-stack only. `-De2e.keepStack=true` keeps the stack after the run so you can read its logs
-(`docker compose -p <name> logs <service>`). A run killed before it finishes can leave its stack
-behind: `docker compose ls` shows it, and `docker compose -p <name> down -v` removes it.
+`-De2e.keepStack=true` keeps the stack for its logs. A killed run can leave one behind:
+`docker compose ls`, then `docker compose -p <name> down -v --rmi local`. More in
+`docs/phase-10-end-to-end-saga-tests.md`.
