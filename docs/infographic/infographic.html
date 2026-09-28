@@ -1,0 +1,249 @@
+<!doctype html>
+<!--
+  Source of infographic.png, the README header image, in this directory.
+  Regenerate with docs/infographic/render.sh after editing.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Showcase Infographic</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; background: #0D1320; }
+  svg { display: block; font-family: 'Inter', sans-serif; }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+</style>
+</head>
+<body>
+<svg id="g" xmlns="http://www.w3.org/2000/svg" width="1600" height="1150" viewBox="0 0 1600 1150">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0D1320"/><stop offset="1" stop-color="#111B2E"/>
+    </linearGradient>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7F90AA"/>
+    </marker>
+    <marker id="ahp" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#B28CFF"/>
+    </marker>
+    <marker id="ahg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#3DDC97"/>
+    </marker>
+  </defs>
+  <rect width="1600" height="1150" fill="url(#bg)"/>
+</svg>
+
+<script>
+const NS = 'http://www.w3.org/2000/svg';
+const svg = document.getElementById('g');
+const DEV = n => `https://cdn.jsdelivr.net/gh/devicons/devicon@latest/icons/${n}/${n}-original.svg`;
+const SI = n => `https://cdn.jsdelivr.net/npm/simple-icons@latest/icons/${n}.svg`;
+const ICON = {
+  java: DEV('java'), spring: DEV('spring'), pg: DEV('postgresql'), kafka: DEV('apachekafka'),
+  redis: DEV('redis'), docker: DEV('docker'), otel: DEV('opentelemetry'), prom: DEV('prometheus'),
+  grafana: DEV('grafana'), html: DEV('html5'), nginx: DEV('nginx'), keycloak: SI('keycloak'),
+  gha: DEV('githubactions'),
+};
+const NAME = {
+  java: 'Java 21', spring: 'Spring Boot', pg: 'PostgreSQL', kafka: 'Apache Kafka', redis: 'Redis',
+  keycloak: 'Keycloak', docker: 'Docker', otel: 'OpenTelemetry', prom: 'Prometheus', grafana: 'Grafana',
+};
+const C = { text: '#EEF2F8', sub: '#93A3BC', cardSolid: '#162033', line: '#2B3A55',
+  green: '#3DDC97', blue: '#5AA9FF', amber: '#F5B942', red: '#FF7A7A', purple: '#B28CFF', grey: '#7F90AA' };
+
+function el(tag, attrs, parent = svg) {
+  const e = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) if (k !== 'text') e.setAttribute(k, v);
+  if (attrs.text !== undefined) e.textContent = attrs.text;
+  parent.appendChild(e);
+  return e;
+}
+function text(x, y, s, o = {}) {
+  return el('text', { x, y, fill: o.fill || C.text, 'font-size': o.size || 16, 'font-weight': o.weight || 400,
+    'text-anchor': o.anchor || 'start', class: o.mono ? 'mono' : '', 'letter-spacing': o.ls || 0, text: s });
+}
+function tile(x, y, size, icon, o = {}) {
+  const g = el('g', {});
+  if (o.title) el('title', { text: o.title }, g);   // hover tooltip in the HTML page; no effect on the PNG
+  el('rect', { x, y, width: size, height: size, rx: size * 0.24, fill: o.bg || '#FFFFFF' }, g);
+  const p = size * 0.16;
+  if (icon) el('image', { href: ICON[icon], x: x + p, y: y + p, width: size - 2 * p, height: size - 2 * p }, g);
+}
+function glyph(x, y, size, ch, color) {
+  el('rect', { x, y, width: size, height: size, rx: size * 0.24, fill: color + '26', stroke: color, 'stroke-width': 1.5 });
+  text(x + size / 2, y + size / 2 + 7, ch, { fill: color, size: 20, weight: 800, anchor: 'middle' });
+}
+function node(x, y, w, h, icon, name, sub, o = {}) {
+  el('rect', { x, y, width: w, height: h, rx: 14, fill: C.cardSolid, stroke: o.stroke || C.line, 'stroke-width': o.sw || 1.5 });
+  tile(x + 14, y + 17, 46, icon);
+  text(x + 74, y + 38, name, { size: 18, weight: 700 });
+  text(x + 74, y + 60, sub, { size: 13.5, fill: C.sub });
+  if (o.db) { tile(x + w - 30, y - 12, 26, 'pg', { bg: '#E8EEF8' }); }
+}
+function arrow(d, o = {}) {
+  el('path', { d, fill: 'none', stroke: o.color || C.grey, 'stroke-width': o.sw || 2,
+    'stroke-dasharray': o.dash || '', 'marker-end': `url(#${o.marker || 'ah'})` });
+}
+function chip(x, y, s, color, o = {}) {
+  const w = o.w || s.length * 7.6 + 20;
+  el('rect', { x, y, width: w, height: 24, rx: 12, fill: color + '22', stroke: color + '88' });
+  text(x + w / 2, y + 16.5, s, { size: 12, weight: 600, fill: color, anchor: 'middle', mono: true });
+  return w;
+}
+function label(x, y, s, color = C.sub, anchor = 'middle') {
+  text(x, y, s, { size: 12.5, fill: color, anchor, weight: 500 });
+}
+function section(x, y, s) { text(x, y, s, { size: 13, weight: 700, fill: C.green, ls: 2.2 }); }
+
+/* ---------------- Header ---------------- */
+text(60, 80, 'Banking Microservices Showcase', { size: 46, weight: 800 });
+text(60, 118, 'Money moves between accounts through a fault-tolerant saga across six Spring Boot services.',
+  { size: 19, fill: C.sub });
+['java', 'spring', 'pg', 'kafka', 'redis', 'keycloak', 'docker', 'otel', 'prom', 'grafana']
+  .forEach((k, i) => tile(1000 + i * 57, 50, 48, k, { title: NAME[k] }));
+text(1567, 124, 'Java 21 · Spring Boot 3.5 · docker compose up', { size: 13, fill: C.sub, anchor: 'end', mono: true });
+el('line', { x1: 60, y1: 152, x2: 1570, y2: 152, stroke: C.line });
+
+/* ---------------- Architecture ---------------- */
+section(60, 192, 'ARCHITECTURE');
+// legend
+el('line', { x1: 1080, y1: 187, x2: 1120, y2: 187, stroke: C.grey, 'stroke-width': 2 });
+label(1128, 191, 'sync REST + JWT', C.sub, 'start');
+el('line', { x1: 1250, y1: 187, x2: 1290, y2: 187, stroke: C.purple, 'stroke-width': 2, 'stroke-dasharray': '6 5' });
+label(1298, 191, 'Kafka event', C.sub, 'start');
+tile(1400, 175, 24, 'pg', { bg: '#E8EEF8' });
+label(1432, 191, 'own database', C.sub, 'start');
+
+// Nodes
+node(60, 262, 210, 84, 'html', 'Bank UI', 'browser app');
+node(60, 452, 210, 84, 'keycloak', 'Keycloak', 'OAuth2 · JWT');
+node(340, 262, 210, 84, 'spring', 'API Gateway', 'one entry point');
+// Transfer, highlighted
+el('rect', { x: 614, y: 238, width: 256, height: 132, rx: 16, fill: '#3DDC9714', stroke: C.green, 'stroke-width': 2.5 });
+tile(630, 256, 46, 'spring');
+text(690, 278, 'Transfer Service', { size: 19, weight: 800 });
+text(690, 300, 'saga orchestrator', { size: 13.5, fill: C.green, weight: 600 });
+tile(840, 226, 26, 'pg', { bg: '#E8EEF8' });
+chip(630, 324, 'retry · breaker', C.blue, { w: 124 });
+chip(760, 324, 'outbox', C.purple, { w: 96 });
+
+node(950, 214, 250, 84, 'spring', 'Account Service', 'balances · ledger', { db: true });
+node(950, 322, 250, 84, 'spring', 'Fraud Service', 'blocklist screen', { db: true });
+node(950, 430, 250, 84, 'spring', 'FX Service', 'exchange rates');
+node(1250, 430, 150, 84, 'redis', 'Redis', 'rate cache');
+// ECB source
+el('rect', { x: 1430, y: 430, width: 140, height: 84, rx: 14, fill: C.cardSolid, stroke: C.line, 'stroke-width': 1.5, 'stroke-dasharray': '4 4' });
+text(1500, 466, 'ECB', { size: 20, weight: 800, anchor: 'middle', fill: C.amber });
+text(1500, 488, 'daily FX rates', { size: 13, anchor: 'middle', fill: C.sub });
+
+el('rect', { x: 614, y: 572, width: 256, height: 84, rx: 14, fill: C.cardSolid, stroke: C.purple, 'stroke-width': 1.5 });
+tile(628, 589, 46, 'kafka');
+text(688, 610, 'Kafka', { size: 18, weight: 700 });
+text(688, 632, 'transfer events', { size: 13.5, fill: C.sub });
+node(950, 572, 250, 84, 'spring', 'Notification', 'stores each outcome', { db: true });
+
+// Arrows
+arrow('M270,304 L336,304');                                // UI -> Gateway
+label(303, 294, 'HTTPS');
+arrow('M165,346 L165,448', { dash: '5 5' });               // UI -> Keycloak
+label(172, 402, 'login (PKCE)', C.sub, 'start');
+arrow('M550,304 L610,304');                                // Gateway -> Transfer
+arrow('M470,262 C470,200 560,200 946,236');                // Gateway -> Account (reads)
+label(700, 205, 'account reads');
+arrow('M870,270 L946,256');                                // Transfer -> Account
+arrow('M870,304 L946,364');                                // Transfer -> Fraud
+arrow('M870,338 L946,468');                                // Transfer -> FX
+arrow('M1200,472 L1246,472');                              // FX -> Redis
+arrow('M1400,472 L1426,472', { dash: '4 4' });             // Redis -> ECB
+label(1415, 422, 'on miss', C.sub);
+arrow('M742,370 L742,568', { color: C.purple, marker: 'ahp', dash: '7 6' });  // Transfer -> Kafka
+label(750, 476, 'completed / failed', C.purple, 'start');
+arrow('M870,614 L946,614', { color: C.purple, marker: 'ahp', dash: '7 6' });  // Kafka -> Notification
+arrow('M1200,614 L1236,614', { color: C.red, dash: '4 4' });
+chip(1240, 602, 'dead-letter topic', C.red, { w: 150 });
+
+// Every service validates the JWT itself (no runtime call worth an arrow)
+label(165, 562, 'every service validates the JWT');
+
+// Observability strip
+el('rect', { x: 60, y: 690, width: 1510, height: 64, rx: 14, fill: '#F5B94210', stroke: '#F5B94266' });
+tile(78, 700, 44, 'otel');
+text(134, 728, 'OpenTelemetry', { size: 16, weight: 700 });
+text(134, 745, 'traces', { size: 12.5, fill: C.sub });
+arrow('M262,722 L292,722', { color: C.amber });
+tile(302, 700, 44, 'grafana');
+text(358, 728, 'Tempo', { size: 16, weight: 700 });
+text(358, 745, 'one trace, UI → Kafka', { size: 12.5, fill: C.sub });
+tile(540, 700, 44, 'prom');
+text(596, 728, 'Prometheus', { size: 16, weight: 700 });
+text(596, 745, 'metrics', { size: 12.5, fill: C.sub });
+arrow('M700,722 L730,722', { color: C.amber });
+tile(740, 700, 44, 'grafana');
+text(796, 728, 'Grafana', { size: 16, weight: 700 });
+text(796, 745, '4 dashboards', { size: 12.5, fill: C.sub });
+text(1552, 728, 'every service → traces · metrics · JSON logs with traceId', { size: 15, fill: C.amber, weight: 600, anchor: 'end' });
+
+/* ---------------- Saga ---------------- */
+section(60, 806, 'THE TRANSFER SAGA');
+const steps = [
+  ['1', 'Validate', 'accounts · FX rate'],
+  ['2', 'Fraud check', 'source'],
+  ['3', 'Debit', 'key  id:debit'],
+  ['4', 'Fraud check', 'destination'],
+  ['5', 'Credit', 'key  id:credit'],
+];
+const sx = i => 60 + i * 162, sw = 136, sy = 824, sh = 72;
+steps.forEach(([n, a, b], i) => {
+  const x = sx(i);
+  el('rect', { x, y: sy, width: sw, height: sh, rx: 12, fill: C.cardSolid, stroke: C.line, 'stroke-width': 1.5 });
+  el('circle', { cx: x + 22, cy: sy + 24, r: 13, fill: C.blue });
+  text(x + 22, sy + 29, n, { size: 14, weight: 800, anchor: 'middle', fill: '#0D1320' });
+  text(x + 42, sy + 29, a, { size: 14.5, weight: 700 });
+  text(x + 14, sy + 56, b, { size: 12.5, fill: C.sub, mono: i === 2 || i === 4 });
+  arrow(`M${x + sw},${sy + sh / 2} L${x + 162 - 4},${sy + sh / 2}`, i === 4 ? { color: C.green, marker: 'ahg' } : {});
+});
+el('rect', { x: sx(5), y: sy + 14, width: 150, height: 44, rx: 22, fill: C.green });
+text(sx(5) + 75, sy + 42, 'COMPLETED', { size: 16, weight: 800, anchor: 'middle', fill: '#0D1320' });
+
+// Branches
+function outcome(x, w, color, title, lines, fromXs) {
+  const y = 944;
+  fromXs.forEach(fx => arrow(`M${fx},${sy + sh} L${fx},${y - 4}`, { color, marker: 'ah', sw: 1.8, dash: '4 4' }));
+  el('rect', { x, y, width: w, height: 96, rx: 12, fill: color + '18', stroke: color, 'stroke-width': 1.5 });
+  text(x + 16, y + 28, title, { size: 15, weight: 800, fill: color, mono: true });
+  lines.forEach((l, i) => text(x + 16, y + 52 + i * 20, l, { size: 13.5, fill: C.text }));
+}
+outcome(60, 262, '#A7B3C6', 'FAILED', ['rejected up front', 'no money moved'], [128, 290]);
+outcome(346, 240, C.amber, 'PENDING', ['timeout = outcome unknown', 'sweep replays the debit key'], [452]);
+outcome(610, 300, C.red, 'COMPENSATION_REQUIRED', ['sweep retries the credit,', 'else refunds → COMPENSATED'], [640, 776]);
+text(60, 1076, 'Never guess: an unknown outcome is settled by replaying the same idempotency key — money is never created or lost.',
+  { size: 14.5, fill: C.amber, weight: 600 });
+
+/* ---------------- Highlights ---------------- */
+section(1080, 806, 'WHAT IT DEMONSTRATES');
+const feats = [
+  ['g', '↺', C.green, 'Saga + compensation'],
+  ['g', '1×', C.blue, 'Idempotency keys'],
+  ['g', '◐', C.blue, 'Retry + circuit breaker'],
+  ['i', 'kafka', null, 'Transactional outbox'],
+  ['i', 'redis', null, 'Cache + stale fallback'],
+  ['i', 'keycloak', null, 'OAuth2 PKCE + JWT'],
+  ['i', 'otel', null, 'Distributed tracing'],
+  ['i', 'docker', null, 'E2E + fault injection'],
+];
+feats.forEach(([kind, v, color, t], i) => {
+  const x = 1080 + (i % 2) * 250, y = 824 + Math.floor(i / 2) * 56;
+  el('rect', { x, y, width: 238, height: 46, rx: 11, fill: C.cardSolid, stroke: C.line });
+  if (kind === 'g') glyph(x + 7, y + 7, 32, v, color); else tile(x + 7, y + 7, 32, v);
+  text(x + 50, y + 28, t, { size: 14, weight: 600 });
+});
+
+/* ---------------- Footer ---------------- */
+el('line', { x1: 60, y1: 1102, x2: 1570, y2: 1102, stroke: C.line });
+text(60, 1130, '$ docker compose up', { size: 14, fill: C.green, mono: true, weight: 600 });
+text(250, 1130, '→ 6 services, Postgres, Kafka, Redis, Keycloak and the observability stack, on one machine',
+  { size: 14, fill: C.sub });
+text(1570, 1130, 'Bank UI :8090 · Gateway :8080 · Grafana :3001', { size: 13, fill: C.sub, anchor: 'end', mono: true });
+</script>
+</body>
+</html>
