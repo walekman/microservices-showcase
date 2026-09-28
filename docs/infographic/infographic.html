@@ -43,6 +43,7 @@ const ICON = {
   redis: DEV('redis'), docker: DEV('docker'), otel: DEV('opentelemetry'), prom: DEV('prometheus'),
   grafana: DEV('grafana'), html: DEV('html5'), nginx: DEV('nginx'), keycloak: SI('keycloak'),
   gha: DEV('githubactions'),
+  tempo: 'https://cdn.jsdelivr.net/gh/grafana/tempo@main/cmd/tempo/app/static/tempo-icon.png',
 };
 const NAME = {
   java: 'Java 21', spring: 'Spring Boot', pg: 'PostgreSQL', kafka: 'Apache Kafka', redis: 'Redis',
@@ -92,6 +93,14 @@ function chip(x, y, s, color, o = {}) {
 }
 function label(x, y, s, color = C.sub, anchor = 'middle') {
   text(x, y, s, { size: 12.5, fill: color, anchor, weight: 500 });
+}
+// One observability signal: a small amber glyph tile plus its name
+function sig(x, name, draw, extra) {
+  el('rect', { x, y: 702, width: 40, height: 40, rx: 10, fill: '#F5B94226', stroke: C.amber, 'stroke-width': 1.5 });
+  const g = el('g', { transform: `translate(${x + 9},712)` });
+  draw(g);
+  text(x + 50, 728, name, { size: 15, weight: 700 });
+  if (extra) text(x + 50, 745, extra, { size: 12.5, fill: C.sub, mono: true });
 }
 function section(x, y, s) { text(x, y, s, { size: 13, weight: 700, fill: C.green, ls: 2.2 }); }
 
@@ -148,6 +157,7 @@ label(303, 294, 'HTTPS');
 arrow('M165,346 L165,448', { dash: '5 5' });               // UI -> Keycloak
 label(172, 402, 'login (PKCE)', C.sub, 'start');
 arrow('M550,304 L610,304');                                // Gateway -> Transfer
+label(580, 294, 'transfers');
 arrow('M470,262 C470,200 560,200 946,236');                // Gateway -> Account (reads)
 label(700, 205, 'account reads');
 arrow('M870,270 L946,256');                                // Transfer -> Account
@@ -157,7 +167,9 @@ arrow('M1200,472 L1246,472');                              // FX -> Redis
 arrow('M1400,472 L1426,472', { dash: '4 4' });             // Redis -> ECB
 label(1415, 422, 'on miss', C.sub);
 arrow('M742,370 L742,568', { color: C.purple, marker: 'ahp', dash: '7 6' });  // Transfer -> Kafka
-label(750, 476, 'completed / failed', C.purple, 'start');
+label(750, 430, 'completed / failed', C.purple, 'start');
+arrow('M500,346 C500,500 560,500 946,500');                // Gateway -> FX (rate quotes)
+label(512, 420, 'rate quotes', C.sub, 'start');
 arrow('M870,614 L946,614', { color: C.purple, marker: 'ahp', dash: '7 6' });  // Kafka -> Notification
 arrow('M1200,614 L1236,614', { color: C.red, dash: '4 4' });
 chip(1240, 602, 'dead-letter topic', C.red, { w: 150 });
@@ -171,7 +183,7 @@ tile(78, 700, 44, 'otel');
 text(134, 728, 'OpenTelemetry', { size: 16, weight: 700 });
 text(134, 745, 'traces', { size: 12.5, fill: C.sub });
 arrow('M262,722 L292,722', { color: C.amber });
-tile(302, 700, 44, 'grafana');
+tile(302, 700, 44, 'tempo');
 text(358, 728, 'Tempo', { size: 16, weight: 700 });
 text(358, 745, 'one trace, UI → Kafka', { size: 12.5, fill: C.sub });
 tile(540, 700, 44, 'prom');
@@ -181,7 +193,18 @@ arrow('M700,722 L730,722', { color: C.amber });
 tile(740, 700, 44, 'grafana');
 text(796, 728, 'Grafana', { size: 16, weight: 700 });
 text(796, 745, '4 dashboards', { size: 12.5, fill: C.sub });
-text(1552, 728, 'every service → traces · metrics · JSON logs with traceId', { size: 15, fill: C.amber, weight: 600, anchor: 'end' });
+text(1080, 728, 'every', { size: 13, fill: C.amber, weight: 600 });
+text(1080, 745, 'service', { size: 13, fill: C.amber, weight: 600 });
+arrow('M1138,722 L1166,722', { color: C.amber });
+sig(1180, 'traces', g => {            // spans, gantt-style
+  [[0, 22], [5, 14], [10, 12]].forEach(([dx, w], i) => el('rect', { x: dx, y: i * 7, width: w, height: 4, rx: 2, fill: C.amber }, g));
+});
+sig(1300, 'metrics', g => {           // bar chart
+  [8, 14, 10, 20].forEach((h, i) => el('rect', { x: i * 6, y: 20 - h, width: 4, height: h, rx: 1, fill: C.amber }, g));
+});
+sig(1425, 'logs', g => {              // JSON lines
+  [22, 16, 20].forEach((w, i) => el('rect', { x: 0, y: i * 7, width: w, height: 3, rx: 1.5, fill: C.amber }, g));
+}, '+ traceId');
 
 /* ---------------- Saga ---------------- */
 section(60, 806, 'THE TRANSFER SAGA');
