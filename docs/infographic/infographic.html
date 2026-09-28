@@ -15,7 +15,7 @@
 </style>
 </head>
 <body>
-<svg id="g" xmlns="http://www.w3.org/2000/svg" width="1600" height="1150" viewBox="0 0 1600 1150">
+<svg id="g" xmlns="http://www.w3.org/2000/svg" width="1600" height="1110" viewBox="0 0 1600 1110">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#0D1320"/><stop offset="1" stop-color="#111B2E"/>
@@ -30,7 +30,7 @@
       <path d="M0,0 L10,5 L0,10 z" fill="#3DDC97"/>
     </marker>
   </defs>
-  <rect width="1600" height="1150" fill="url(#bg)"/>
+  <rect width="1600" height="1110" fill="url(#bg)"/>
 </svg>
 
 <script>
@@ -101,7 +101,7 @@ text(60, 118, 'Money moves between accounts through a fault-tolerant saga across
   { size: 19, fill: C.sub });
 ['java', 'spring', 'pg', 'kafka', 'redis', 'keycloak', 'docker', 'otel', 'prom', 'grafana']
   .forEach((k, i) => tile(1000 + i * 57, 50, 48, k, { title: NAME[k] }));
-text(1567, 124, 'Java 21 · Spring Boot 3.5 · docker compose up', { size: 13, fill: C.sub, anchor: 'end', mono: true });
+text(1567, 124, 'Java 21 · Spring Boot 3.5', { size: 13, fill: C.sub, anchor: 'end', mono: true });
 el('line', { x1: 60, y1: 152, x2: 1570, y2: 152, stroke: C.line });
 
 /* ---------------- Architecture ---------------- */
@@ -238,12 +238,6 @@ feats.forEach(([kind, v, color, t], i) => {
   text(x + 50, y + 28, t, { size: 14, weight: 600 });
 });
 
-/* ---------------- Footer ---------------- */
-el('line', { x1: 60, y1: 1102, x2: 1570, y2: 1102, stroke: C.line });
-text(60, 1130, '$ docker compose up', { size: 14, fill: C.green, mono: true, weight: 600 });
-text(250, 1130, '→ 6 services, Postgres, Kafka, Redis, Keycloak and the observability stack, on one machine',
-  { size: 14, fill: C.sub });
-text(1570, 1130, 'Bank UI :8090 · Gateway :8080 · Grafana :3001', { size: 13, fill: C.sub, anchor: 'end', mono: true });
 </script>
 </body>
 </html>
