@@ -1,5 +1,7 @@
 # Banking Microservices Showcase
 
+![Architecture, transfer saga and tech stack at a glance](docs/images/infographic.png)
+
 [![CI](https://github.com/walekman/microservices-showcase/actions/workflows/ci.yml/badge.svg)](https://github.com/walekman/microservices-showcase/actions/workflows/ci.yml)
 
 A money-transfer system built as six Spring Boot 3 / Java 21 services: a transfer saga over
