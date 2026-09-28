@@ -1,6 +1,6 @@
 # Banking Microservices Showcase
 
-![Architecture, transfer saga and tech stack at a glance](docs/images/infographic.png)
+![Architecture, transfer saga and tech stack at a glance](docs/infographic/infographic.png)
 
 [![CI](https://github.com/walekman/microservices-showcase/actions/workflows/ci.yml/badge.svg)](https://github.com/walekman/microservices-showcase/actions/workflows/ci.yml)
 

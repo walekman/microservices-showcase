@@ -1,6 +1,6 @@
 <!doctype html>
 <!--
-  Source of docs/images/infographic.png (the README header image).
+  Source of infographic.png, the README header image, in this directory.
   Regenerate with docs/infographic/render.sh after editing.
 -->
 <html lang="en">
@@ -44,6 +44,10 @@ const ICON = {
   grafana: DEV('grafana'), html: DEV('html5'), nginx: DEV('nginx'), keycloak: SI('keycloak'),
   gha: DEV('githubactions'),
 };
+const NAME = {
+  java: 'Java 21', spring: 'Spring Boot', pg: 'PostgreSQL', kafka: 'Apache Kafka', redis: 'Redis',
+  keycloak: 'Keycloak', docker: 'Docker', otel: 'OpenTelemetry', prom: 'Prometheus', grafana: 'Grafana',
+};
 const C = { text: '#EEF2F8', sub: '#93A3BC', cardSolid: '#162033', line: '#2B3A55',
   green: '#3DDC97', blue: '#5AA9FF', amber: '#F5B942', red: '#FF7A7A', purple: '#B28CFF', grey: '#7F90AA' };
 
@@ -59,9 +63,11 @@ function text(x, y, s, o = {}) {
     'text-anchor': o.anchor || 'start', class: o.mono ? 'mono' : '', 'letter-spacing': o.ls || 0, text: s });
 }
 function tile(x, y, size, icon, o = {}) {
-  el('rect', { x, y, width: size, height: size, rx: size * 0.24, fill: o.bg || '#FFFFFF' });
+  const g = el('g', {});
+  if (o.title) el('title', { text: o.title }, g);   // hover tooltip in the HTML page; no effect on the PNG
+  el('rect', { x, y, width: size, height: size, rx: size * 0.24, fill: o.bg || '#FFFFFF' }, g);
   const p = size * 0.16;
-  if (icon) el('image', { href: ICON[icon], x: x + p, y: y + p, width: size - 2 * p, height: size - 2 * p });
+  if (icon) el('image', { href: ICON[icon], x: x + p, y: y + p, width: size - 2 * p, height: size - 2 * p }, g);
 }
 function glyph(x, y, size, ch, color) {
   el('rect', { x, y, width: size, height: size, rx: size * 0.24, fill: color + '26', stroke: color, 'stroke-width': 1.5 });
@@ -94,7 +100,7 @@ text(60, 80, 'Banking Microservices Showcase', { size: 46, weight: 800 });
 text(60, 118, 'Money moves between accounts through a fault-tolerant saga across six Spring Boot services.',
   { size: 19, fill: C.sub });
 ['java', 'spring', 'pg', 'kafka', 'redis', 'keycloak', 'docker', 'otel', 'prom', 'grafana']
-  .forEach((k, i) => tile(1000 + i * 57, 50, 48, k));
+  .forEach((k, i) => tile(1000 + i * 57, 50, 48, k, { title: NAME[k] }));
 text(1567, 124, 'Java 21 · Spring Boot 3.5 · docker compose up', { size: 13, fill: C.sub, anchor: 'end', mono: true });
 el('line', { x1: 60, y1: 152, x2: 1570, y2: 152, stroke: C.line });
 
@@ -156,10 +162,8 @@ arrow('M870,614 L946,614', { color: C.purple, marker: 'ahp', dash: '7 6' });  //
 arrow('M1200,614 L1236,614', { color: C.red, dash: '4 4' });
 chip(1240, 602, 'dead-letter topic', C.red, { w: 150 });
 
-// Every service validates the JWT
-arrow('M270,494 C330,494 330,340 336,336', { dash: '5 5' });
-label(376, 470, 'every service', C.sub, 'start');
-label(376, 486, 'validates the JWT', C.sub, 'start');
+// Every service validates the JWT itself (no runtime call worth an arrow)
+label(165, 562, 'every service validates the JWT');
 
 // Observability strip
 el('rect', { x: 60, y: 690, width: 1510, height: 64, rx: 14, fill: '#F5B94210', stroke: '#F5B94266' });
