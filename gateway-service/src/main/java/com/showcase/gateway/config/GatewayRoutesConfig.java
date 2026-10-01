@@ -6,6 +6,7 @@ import org.springframework.web.servlet.function.RequestPredicate;
 import org.springframework.web.servlet.function.RouterFunction;
 import org.springframework.web.servlet.function.ServerResponse;
 
+import static org.springframework.cloud.gateway.server.mvc.filter.BeforeFilterFunctions.uri;
 import static org.springframework.cloud.gateway.server.mvc.handler.GatewayRouterFunctions.route;
 import static org.springframework.cloud.gateway.server.mvc.handler.HandlerFunctions.http;
 import static org.springframework.web.servlet.function.RequestPredicates.GET;
@@ -23,7 +24,7 @@ public class GatewayRoutesConfig {
 
     @Bean
     public RouterFunction<ServerResponse> transferRoutes(TransferServiceProperties properties) {
-        return route(path("/transfers/**"), http(properties.baseUrl()));
+        return route("transfers").route(path("/transfers/**"), http()).before(uri(properties.baseUrl())).build();
     }
 
     @Bean
@@ -33,12 +34,12 @@ public class GatewayRoutesConfig {
                 .or(GET("/accounts/mine"))
                 .or(GET("/accounts/{id}"))
                 .or(GET("/accounts/{id}/summary"));
-        return route(accountPaths, http(properties.baseUrl()));
+        return route("accounts").route(accountPaths, http()).before(uri(properties.baseUrl())).build();
     }
 
     // Only the one read the Bank UI needs for a quote. Nothing else FX Service exposes is reachable.
     @Bean
     public RouterFunction<ServerResponse> fxRoutes(FxServiceProperties properties) {
-        return route(GET("/fx/rates"), http(properties.baseUrl()));
+        return route("fx").route(GET("/fx/rates"), http()).before(uri(properties.baseUrl())).build();
     }
 }
