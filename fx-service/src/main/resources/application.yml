@@ -47,6 +47,11 @@ management:
   health:
     redis:
       enabled: false
+  # Registers Micrometer's ObservedAspect, so each @Observed class's public methods are spans
+  # (FxRateController, FxRateService, RateCache, RateProvider -- see TracingConfig).
+  observations:
+    annotations:
+      enabled: true
   opentelemetry:
     resource-attributes:
       "service.version": "@project.version@"

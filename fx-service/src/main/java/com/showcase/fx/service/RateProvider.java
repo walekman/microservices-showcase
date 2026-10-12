@@ -1,6 +1,7 @@
 package com.showcase.fx.service;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import io.micrometer.observation.annotation.Observed;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
@@ -16,6 +17,7 @@ import java.util.stream.Collectors;
  * timeout, a body that is not what was asked for -- collapses onto ProviderUnavailableException,
  * so FxRateService only ever has to decide "fresh rates" or "fall back".
  */
+@Observed
 public class RateProvider {
 
     private final RestClient restClient;

@@ -2,10 +2,12 @@ package com.showcase.fx.api;
 
 import com.showcase.fx.service.FxQuote;
 import com.showcase.fx.service.FxRateService;
+import io.micrometer.observation.annotation.Observed;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+@Observed
 @RestController
 public class FxRateController {
 

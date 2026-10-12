@@ -2,6 +2,7 @@ package com.showcase.fx.service;
 
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.observation.annotation.Observed;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
@@ -20,6 +21,7 @@ import java.util.Optional;
  * else one caller fetches under a Redis lock while the others wait for its result; a provider
  * failure falls back to the last known rates, marked stale; a dead Redis is bypassed entirely.
  */
+@Observed
 @Service
 public class FxRateService {
 
