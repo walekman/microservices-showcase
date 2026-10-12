@@ -84,11 +84,12 @@
 
   const SECTIONS = [
     { title: "Application services", items: [
-      { name: "Gateway", port: 8080, desc: "Single entry point. Validates the JWT and routes /transfers/** and /accounts/**.",
+      { name: "Gateway", port: 8080, desc: "Single entry point. Validates the JWT and routes /transfers/**, the client-safe /accounts/** paths and GET /fx/rates.",
         links: actuator, note: "No Swagger of its own: use the service UIs below. Everything except health/info/metrics needs a bearer token." },
       { name: "Account Service", port: 8081, desc: "Accounts and balances, debit/credit with optimistic locking.", links: [...swagger, ...actuator] },
       { name: "Transfer Service", port: 8082, desc: "Orchestrates the transfer saga, compensation and idempotency.", links: [...swagger, ...actuator] },
       { name: "Fraud Service", port: 8084, desc: "Synchronous fraud check called by Transfer.", links: [...swagger, ...actuator] },
+      { name: "FX Service", port: 8085, desc: "Exchange rates from Frankfurter/ECB, cached in Redis with a last-known fallback.", links: [...swagger, ...actuator] },
       { name: "Notification Service", port: 8083, desc: "Kafka consumer fed by the transfer outbox. No REST API.", links: actuator },
       { name: "Bank UI", port: 8090, desc: "Customer-facing web app: sign up, log in, view balance, send transfers, view history.", links: [["Home", "/"]] },
     ]},
@@ -108,7 +109,7 @@
         ["JVM (Micrometer) dashboard", "/d/a0c90e53-d71a-4128-8f4b-8d272e17e2e1"],
         ["Explore (pick Tempo for traces)", "/explore"],
       ]},
-      { name: "Prometheus", port: 9090, desc: "Scrapes all five services every few seconds.", links: [
+      { name: "Prometheus", port: 9090, desc: "Scrapes all six services every few seconds.", links: [
         ["Query", "/query"], ["Targets", "/targets"], ["Alerts", "/alerts"],
       ]},
       { name: "Tempo", port: 3200, desc: "Trace store. No UI: search traces from Grafana Explore.", links: [["Ready", "/ready"]] },
@@ -116,11 +117,15 @@
         copy: [["OTLP HTTP", "http://localhost:4318"], ["OTLP gRPC", "localhost:4317"]] },
     ]},
     { title: "Data and messaging (no web UI)", items: [
-      { name: "PostgreSQL", port: 5432, desc: "Database per service: account and transfer. Passwords are in .env.", probe: false,
+      { name: "PostgreSQL", port: 5432, desc: "Database per service: account, transfer, notification and fraud. FX has none. Passwords are in .env.", probe: false,
         copy: [["Account DB (user account_service)", "jdbc:postgresql://localhost:5432/account"],
-               ["Transfer DB (user transfer_service)", "jdbc:postgresql://localhost:5432/transfer"]] },
+               ["Transfer DB (user transfer_service)", "jdbc:postgresql://localhost:5432/transfer"],
+               ["Notification DB (user notification_service)", "jdbc:postgresql://localhost:5432/notification"],
+               ["Fraud DB (user fraud_service)", "jdbc:postgresql://localhost:5432/fraud"]] },
       { name: "Kafka", port: 29092, desc: "Single KRaft broker. Use the host listener from outside Docker.", probe: false,
         copy: [["Bootstrap (from host)", "localhost:29092"], ["Bootstrap (inside Docker network)", "kafka:9092"]] },
+      { name: "Redis", port: 6379, desc: "FX Service's rate cache: fresh TTL entries, last-known fallback and the single-flight lock.", probe: false,
+        copy: [["redis-cli (from host)", "redis-cli -h localhost -p 6379"], ["Address (inside Docker network)", "redis:6379"]] },
     ]},
   ];
 
