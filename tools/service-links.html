@@ -176,7 +176,12 @@
     });
     root.append(grid);
   });
-  document.getElementById("token-row").append(copyRow("Copy curl command", TOKEN_CMD));
+  // Relative link: get-token.html sits next to this page in tools/. Keycloak only allows it from
+  // IntelliJ's built-in server (localhost:63342), so it works when both pages are opened from there.
+  document.getElementById("token-row").append(
+    el("li", {}, el("a", { href: "get-token.html", target: "_blank", rel: "noopener" },
+      el("span", { textContent: "Get Token page (open from IntelliJ)" }), el("span", { className: "path", textContent: "tools/get-token.html" }))),
+    copyRow("Copy curl command", TOKEN_CMD));
 
   // A no-cors fetch resolves (opaque) for any HTTP answer and rejects only when nothing is listening,
   // which is all we need to colour a dot. It also sidesteps the CORS block on file:// pages.
