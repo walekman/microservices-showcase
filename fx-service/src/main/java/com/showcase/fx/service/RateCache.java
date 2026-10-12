@@ -2,6 +2,7 @@ package com.showcase.fx.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.observation.annotation.Observed;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -22,6 +23,7 @@ import java.util.UUID;
  * <p>Redis failures are NOT caught here: they surface as Spring's DataAccessException, and
  * FxRateService decides what a dead Redis means (go to the provider directly).
  */
+@Observed
 @Component
 public class RateCache {
 
