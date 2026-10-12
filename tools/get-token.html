@@ -213,9 +213,9 @@
       resultBox.classList.remove('hidden');
     } catch (err) {
       if (err instanceof TypeError) {
-        showError('Network/CORS error reaching the token endpoint. If you opened this file directly '
-          + '(file://), try serving it instead: run "python3 -m http.server 8765" in this folder and '
-          + 'open http://localhost:8765/get-token.html.\n\n' + err.message);
+        showError('Network/CORS error reaching the token endpoint. Keycloak only accepts this page from '
+          + 'IntelliJ\'s built-in server (http://localhost:63342): open tools/get-token.html in IntelliJ '
+          + 'and use its browser preview, not file://. Also check Keycloak is up on :8180.\n\n' + err.message);
       } else {
         showError(err.message);
       }
