@@ -54,6 +54,12 @@
       <version>${springdoc-openapi.version}</version>
     </dependency>
     <dependency>
+      <!-- JDBC spans: Boot does not trace the DataSource itself -->
+      <groupId>net.ttddyy.observation</groupId>
+      <artifactId>datasource-micrometer-spring-boot</artifactId>
+      <version>${datasource-micrometer.version}</version>
+    </dependency>
+    <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-test</artifactId>
       <scope>test</scope>

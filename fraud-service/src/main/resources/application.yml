@@ -51,6 +51,12 @@ management:
     tracing:
       endpoint: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:http://localhost:4318/v1/traces}
 
+# JDBC spans from datasource-micrometer: one per connection (checkout to release) and one per
+# query (SQL text, no bound values), both under the calling span. Result-set FETCH spans are left
+# out: one blocklist row per check adds nothing.
+jdbc:
+  includes: connection,query
+
 keycloak:
   issuer-uri: ${KEYCLOAK_ISSUER_URI:http://localhost:8180/realms/showcase}
   jwk-set-uri: ${KEYCLOAK_JWK_SET_URI:http://localhost:8180/realms/showcase/protocol/openid-connect/certs}
