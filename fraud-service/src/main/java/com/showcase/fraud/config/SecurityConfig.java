@@ -1,7 +1,10 @@
 package com.showcase.fraud.config;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Profile;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -15,11 +18,16 @@ import org.springframework.security.web.SecurityFilterChain;
  * relayed live-saga call Transfer Service makes on a real user's behalf and
  * transfer-service's own client-credentials token for CompensationScheduler's background sweep.
  * fraud-admin gates the blocklist API, and is held only by the realm's admin user.
+ * The "no-auth" profile swaps in an open chain for local testing without tokens; never set it
+ * outside a dev machine.
  */
 @Configuration
 public class SecurityConfig {
 
+    private static final Logger log = LoggerFactory.getLogger(SecurityConfig.class);
+
     @Bean
+    @Profile("!no-auth")
     public SecurityFilterChain securityFilterChain(HttpSecurity http, JwtDecoder jwtDecoder) throws Exception {
         JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
         converter.setJwtGrantedAuthoritiesConverter(new KeycloakRealmRoleConverter());
@@ -37,6 +45,16 @@ public class SecurityConfig {
                 .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt
                         .decoder(jwtDecoder)
                         .jwtAuthenticationConverter(converter)));
+        return http.build();
+    }
+
+    @Bean
+    @Profile("no-auth")
+    public SecurityFilterChain noAuthSecurityFilterChain(HttpSecurity http) throws Exception {
+        log.warn("'no-auth' profile active: fraud-service accepts every request without a token");
+        http.sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .csrf(AbstractHttpConfigurer::disable)
+                .authorizeHttpRequests(authorize -> authorize.anyRequest().permitAll());
         return http.build();
     }
 }

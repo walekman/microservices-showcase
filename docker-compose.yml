@@ -177,6 +177,8 @@ services:
       KEYCLOAK_JWK_SET_URI: http://keycloak:8080/realms/showcase/protocol/openid-connect/certs
       KEYCLOAK_ISSUER_URI: http://localhost:8180/realms/showcase
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
+      # FRAUD_PROFILES=no-auth turns off JWT checks for local testing (see SecurityConfig)
+      SPRING_PROFILES_ACTIVE: ${FRAUD_PROFILES:-}
     ports:
       - "8084:8084"
     depends_on:
@@ -219,6 +221,8 @@ services:
       KEYCLOAK_JWK_SET_URI: http://keycloak:8080/realms/showcase/protocol/openid-connect/certs
       KEYCLOAK_ISSUER_URI: http://localhost:8180/realms/showcase
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
+      # FX_PROFILES=no-auth turns off JWT checks for local testing (see SecurityConfig)
+      SPRING_PROFILES_ACTIVE: ${FX_PROFILES:-}
     ports:
       - "8085:8085"
     depends_on:
