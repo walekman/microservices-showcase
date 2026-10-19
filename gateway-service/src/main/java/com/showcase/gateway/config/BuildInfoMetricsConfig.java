@@ -15,7 +15,7 @@ import org.springframework.context.annotation.Configuration;
  * BuildProperties is optional so a run from an IDE without build-info.properties reports
  * "unknown" instead of failing to start.
  */
-@Configuration(proxyBeanMethods = false)
+@Configuration
 public class BuildInfoMetricsConfig {
 
     @Bean
