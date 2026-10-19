@@ -52,7 +52,7 @@ import java.util.Map;
  * database is down every record fails the same way, so moving each one to a retry topic would
  * only reorder events and fill the retry topics without letting anything else succeed.
  */
-@Configuration(proxyBeanMethods = false)
+@Configuration
 @EnableConfigurationProperties(NotificationRetryProperties.class)
 public class KafkaErrorHandlingConfig {
 
