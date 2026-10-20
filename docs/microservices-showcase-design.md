@@ -24,6 +24,32 @@ Non-goals: this is not a production banking system. No real payment rails, no do
 
 Each stateful service owns its data exclusively — no service queries another's database directly (database-per-service).
 
+### Internal structure
+
+The other services use a plain layered layout (`api` → `service` → `domain` with JPA
+entities and Spring Data repositories). **Account Service is the exception: it is built as
+hexagonal architecture (ports and adapters).** It is the project's reference example of a
+framework-free domain core. See `docs/hexagonal-architecture-account-service.md`.
+
+- **`domain`** is plain Java. `Account` holds the balance rules. `AccountOperation` is the
+  idempotency-ledger entry and holds the replay-conflict rule.
+- **`application`** holds the use cases. `AccountApplicationService` implements the in-ports
+  (`CreateAccountUseCase`, `AccountOperationUseCase`, `AccountQueries`). It reaches storage
+  and transactions only through the out-ports (`AccountStore`, `AccountOperationLedger`,
+  `TransactionRunner`). It has no Spring annotations; `config.AccountApplicationConfig` wires it.
+- **`adapter.in.web`** is the REST controller and the RFC 7807 handler.
+  **`adapter.out.persistence`** holds the JPA entities, the Spring Data repositories, the
+  transaction runner, and the translation of storage exceptions into domain ones. A uniqueness
+  race becomes `AccountAlreadyExistsException` or `ConcurrentOperationException`; an
+  optimistic-lock failure becomes `AccountConcurrentlyModifiedException`.
+- **ArchUnit enforces the boundaries** in `HexagonalArchitectureTest`.
+
+One behaviour is now stated in code rather than left to Hibernate's flush ordering: a debit or
+credit writes its ledger entry **before** the balance. A same-key race therefore loses with a
+500, which Transfer treats as an unknown outcome and reconciles by replay, and never with a 409,
+which Transfer treats as a rejection. That keeps the saga's "never compensate on a guess"
+invariant (§4).
+
 ## 3. Tech Stack
 
 - **Language/runtime:** Java 21, Spring Boot 3.x
@@ -101,7 +127,8 @@ Every terminal state emits a `TransferCompleted` or `TransferFailed` event throu
 
 ## 6. Testing Strategy
 
-- **Unit tests** (JUnit 5 + Mockito): business logic in isolation — saga step sequencing in Transfer Service (mocked Account/Fraud clients), fraud rule evaluation, resilience config behavior.
+- **Unit tests** (JUnit 5 + Mockito): business logic in isolation — saga step sequencing in Transfer Service (mocked Account/Fraud clients), fraud rule evaluation, resilience config behavior. Account Service's use cases are tested without Mockito or Spring, against in-memory implementations of its out-ports.
+- **Architecture tests** (ArchUnit, Account Service only): `HexagonalArchitectureTest` fails the build if the domain or application layer depends on a framework, if an adapter bypasses a port, or if persistence types leak out of the persistence adapter.
 - **Integration tests per service** (Testcontainers, real Postgres/Kafka — not H2/mocks): validates JPA optimistic locking, the outbox table + polling publisher, and Kafka producer/consumer wiring against the real infra they actually run against.
 - **End-to-end saga tests** (Phase 10): the `e2e-tests` module, built only under `-Pe2e` and run locally (not in CI or `./mvnw test`), starts its own copy of the whole stack (`docker-compose.yml` plus `docker-compose.e2e.yml`, under a random project name with no fixed container names or host ports) and drives six scenarios through the Gateway as fresh Keycloak users, asserting on both balances: happy path with an idempotent repeat, cross-currency at the locked rate, blocked source (clean failure), blocked destination (debited, then compensated), Account unreachable (retry, circuit breaker opens, then recovers), and a lost debit response (left `PENDING`, settled exactly once by the stale-`PENDING` sweep).
 - **Fault injection:** in Transfer Service's client tests, Spring's `MockRestServiceServer` stands in for Account/Fraud/FX, simulating timeouts/5xxs to assert that retry and the circuit breaker behave. Against the real services, the end-to-end stack routes every Transfer → Account call through a WireMock proxy that forwards by default and can reset every connection or hold back debit responses past Transfer's read timeout; a second WireMock stands in for the FX rate provider.

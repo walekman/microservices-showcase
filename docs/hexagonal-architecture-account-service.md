@@ -11,8 +11,8 @@ currently leaks straight into them:
 - `AccountService` catches `DataIntegrityViolationException` and depends on `saveAndFlush` timing.
 - `ApiExceptionHandler` maps Spring's `ObjectOptimisticLockingFailureException`.
 
-**Status:** Exploratory. It lives on `feature/hexagonal-architecture`, and merging it into
-`master` is not decided. Until then it has no phase number or roadmap row, and this branch is
+**Status:** Built (tasks 1–3, PRs #135, #136 and the docs PR). It lives on
+`feature/hexagonal-architecture`, and merging it into `master` is not decided. Until then it has no phase number or roadmap row, and this branch is
 the only place its doc changes appear.
 
 **Spec:** This document, agreed with the user on 2026-10-20.
@@ -152,3 +152,32 @@ high-stakes.
   same-currency and a cross-currency transfer.
 - E2E: `./mvnw -Pe2e -pl e2e-tests verify` with the dev stack stopped. It covers the idempotent
   repeat, the lost-debit replay by the stale-PENDING sweep, and compensation.
+
+## Implementation Notes (as built)
+
+- **Differences from this spec as first written.** Decision 4a, the explicit
+  ledger-before-balance order, was found during task 1. The original split of tasks 1 and 2
+  could not compile, so they were merged (see Delivery). The ArchUnit domain rule allows Lombok's
+  `@Generated` marker.
+- **Behaviour preservation.** No integration-test assertion changed; the edits were imports and
+  comments only. The database schema is unchanged, because the entities keep the same table and
+  column names. The only test moved between layers is the legacy null-currency → EUR case, from
+  `AccountTest` to `AccountPersistenceAdapterTest`, because that fallback now lives in the
+  mapping.
+- **Verification run on 2026-10-20:**
+  - **`./mvnw -B test`, full root suite:** green. account-service ran 106 tests; 445 in total
+    across all modules.
+  - **Mutation checks:**
+    - Swapping the ledger/balance write order makes the same-key race IT fail with `[200, 409]`.
+    - A Spring type referenced from `domain`, plus the controller referencing
+      `AccountApplicationService`, makes three ArchUnit rules fail.
+  - **`./mvnw -Pe2e -pl e2e-tests verify`:** 6/6 scenarios pass against images built from this
+    branch: happy path with an idempotent repeat, cross-currency, blocked source, blocked
+    destination compensated, Account unreachable (retry, breaker, recovery), and the lost debit
+    settled once by the stale-PENDING sweep.
+    - The first attempt never reached the tests. The stack's Postgres went unhealthy while
+      every container started at once on a freshly started Docker Desktop (a ~7.4 GB VM).
+      Started alone with the same config, Postgres was healthy within seconds, and the rerun
+      passed. Environmental, not code.
+  - **Not done:** a manual click-through on the dev stack through the UI. The E2E suite drives
+    the same flows through the Gateway against a full stack.
