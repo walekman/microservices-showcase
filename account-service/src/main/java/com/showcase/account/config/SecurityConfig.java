@@ -56,7 +56,7 @@ public class SecurityConfig {
                         // without this, HEAD /accounts/{id} fell through to anyRequest().authenticated()
                         // and any valid token (not just account-reader) could confirm an account's
                         // existence. Found in code review. Ownership itself is enforced in
-                        // AccountService.getAccount, which HEAD reaches too (same handler as GET).
+                        // AccountQueries.getAccount, which HEAD reaches too (same handler as GET).
                         .requestMatchers(HttpMethod.GET, "/accounts/*").hasAuthority("account-reader")
                         .requestMatchers(HttpMethod.HEAD, "/accounts/*").hasAuthority("account-reader")
                         // credit has no ownership check (a transfer credits someone else's account),

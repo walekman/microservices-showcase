@@ -61,12 +61,29 @@ config/                   security/JWT/metrics config, and AccountApplicationCon
    `TransactionTemplate`. A `RuntimeException` still rolls back. A ledger-insert race therefore
    still rolls the balance change back with it.
 4. **Optimistic locking is preserved, and translated in the adapter.**
-   `AccountStore.save(Account)` maps the domain object to a detached entity that carries `id`
-   and `version`, and calls `saveAndFlush`. The merge compares versions. Flushing inside the
-   adapter makes a stale version fail there rather than at commit. The adapter catches
-   `ObjectOptimisticLockingFailureException` and throws the domain
+   `AccountStore.save(Account)` loads the managed entity. Inside the caller's transaction that
+   is the instance its earlier read loaded, so it carries the version that read saw. If the
+   domain copy's `version` differs, it rejects the copy as stale. Otherwise it copies the
+   balance onto the entity and calls `saveAndFlush`. Flushing inside the adapter makes a lost
+   `WHERE version = ?` race fail there rather than at commit. The adapter catches
+   `OptimisticLockingFailureException` and throws the domain
    `AccountConcurrentlyModifiedException`. The web adapter maps that exception to the same
    `409 CONCURRENT_MODIFICATION` as before.
+4a. **The ledger entry is written before the balance, and the order is load-bearing.** It was
+   found while building this. Before the refactor, a single flush wrote both rows, and
+   Hibernate's insert-before-update ordering put the ledger INSERT first. Now each port writes
+   immediately, so `AccountApplicationService.apply()` states the order itself:
+   `ledger.record(...)` first, then `accountStore.save(...)`. This decides how a same-key race
+   loses:
+   - **Ledger first (correct):** the loser blocks on the winner's uncommitted ledger row and
+     fails with a 500. Transfer treats a 500 as an unknown outcome and reconciles by replaying
+     the key.
+   - **Balance first (wrong):** the loser blocks on the account row and fails with a 409.
+     Transfer reads a 409 as a definite rejection, yet the winner's debit, under the same key,
+     did land. That breaks the saga invariant in CLAUDE.md.
+
+   `AccountControllerIT`'s same-key race test pins this. With the order swapped, it fails with
+   `[200, 409]`; this was checked by mutation.
 5. **Uniqueness races are translated in the adapter.**
    - `AccountStore.insert(Account)` returns the saved account (its id is still
      `@GeneratedValue`), and turns `DataIntegrityViolationException` into
@@ -108,12 +125,11 @@ does not manage it.
 Each task branches off `feature/hexagonal-architecture` as
 `feature/hexagonal-architecture-task-<M>-<desc>`, and gets its own PR back into it.
 
-1. Domain, ports and the application service, plus ArchUnit.
-2. The persistence adapter (JPA entities, mapping, translations, `TransactionRunner`) and its
-   tests.
-3. Move the web adapter, add the exception mapping and the wiring config, delete the old
-   `service/` package and the old repositories from `domain/`, and enable every ArchUnit rule.
-4. Docs: update the design doc's Account Service section, and finish this document.
+1. Domain, ports, application service, persistence adapter, wiring config, and the domain
+   exception mapping in the existing controller. These ship as one task because a framework-free
+   `Account` cannot compile without the JPA entity that replaces it.
+2. Move `api/` to `adapter/in/web/`, and add ArchUnit with every rule enabled.
+3. Docs: update the design doc's Account Service section, and finish this document.
 
 The final whole-branch review runs on a strong model, because the money and locking paths are
 high-stakes.
