@@ -13,7 +13,7 @@ Six Spring Boot 3.5 / Java 21 services and a static UI, all started by `docker c
 | Service | Port | Role |
 |---|---|---|
 | `gateway-service` | 8080 | Routing only (`GatewayRoutesConfig`): `/transfers/**`, five client-safe Account paths, `GET /fx/rates`. No route to Account debit/credit, Fraud, Notification. |
-| `account-service` | 8081 | Balances; debit/credit with optimistic locking and the `AccountOperation` idempotency ledger. |
+| `account-service` | 8081 | Balances; debit/credit with optimistic locking and the `AccountOperation` idempotency ledger. Hexagonal (ports and adapters, ArchUnit-enforced): see `docs/hexagonal-architecture-account-service.md`. |
 | `transfer-service` | 8082 | Saga over sync HTTP to Account/Fraud/FX, Resilience4j, `CompensationScheduler`, transactional outbox → Kafka. |
 | `notification-service` | 8083 | Kafka consumer; one row per outcome, idempotent; DB errors retried in place, all else → `<topic>-dlt`. |
 | `fraud-service` | 8084 | Blocklist in its own DB; `PUT`/`DELETE /fraud/blocklist/{id}`, `fraud-admin` only. |

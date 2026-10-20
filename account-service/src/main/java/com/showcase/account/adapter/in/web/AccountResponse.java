@@ -1,4 +1,4 @@
-package com.showcase.account.api;
+package com.showcase.account.adapter.in.web;
 
 import com.showcase.account.domain.Account;
 
@@ -7,7 +7,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 // Deliberately no ownerId field: POST /accounts/{id}/credit returns this same response and has
-// no ownership check (see AccountService.credit's javadoc) -- exposing ownerId here would let
+// no ownership check (see AccountOperationUseCase.credit's comment) -- exposing ownerId here would let
 // any customer learn another account's owner by crediting it, exactly the identity leak
 // docs/phase-7b-account-ownership-authorization.md's GET /accounts/exists/{id} split was meant
 // to prevent. Found in code review.

@@ -1,71 +1,61 @@
 package com.showcase.account.domain;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.Id;
-import jakarta.persistence.Table;
-import jakarta.persistence.Version;
-import lombok.AccessLevel;
 import lombok.Getter;
-import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
 
-@Entity
-@Table(name = "accounts")
+/**
+ * An account and its balance rules. Plain Java: how it is stored is the persistence adapter's
+ * concern (see adapter.out.persistence.AccountJpaEntity), which rebuilds it through
+ * {@link #restore}.
+ */
 @Getter
-@NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Account {
 
-    @Id
-    @GeneratedValue
-    private UUID id;
+    // Null until the account is first stored -- the database assigns it.
+    private final UUID id;
 
     // The JWT `sub` of whoever created this account (see docs/phase-7b-account-ownership-authorization.md).
     // Never client-supplied -- bound server-side from the authenticated caller at creation.
-    @Column(nullable = false, unique = true)
-    private UUID ownerId;
+    private final UUID ownerId;
 
-    @Column(nullable = false)
-    private String ownerName;
+    private final String ownerName;
 
-    // scale 2, not more: AmountRequest restricts every debit/credit to 2 decimal places
-    // (@Digits(fraction = 2)), and Transfer rounds every converted amount to 2 places before it
-    // gets here (docs/phase-12-fx-rates-redis-cache.md). A wider scale would be unused headroom.
-    @Column(nullable = false, precision = 19, scale = 2)
     private BigDecimal balance;
 
-    // Fixed at creation. Nullable at the database level only because ddl-auto: update cannot add a
-    // NOT NULL column over existing rows; getCurrency() reads such a pre-Phase-12 row as EUR.
-    @Enumerated(EnumType.STRING)
-    @Column(length = 3, updatable = false)
-    private SupportedCurrency currency;
+    // Fixed at creation.
+    private final SupportedCurrency currency;
 
-    @Version
-    private long version;
+    // The stored row's optimistic-locking version, carried through untouched so the persistence
+    // adapter can tell a stale copy from a current one. Never interpreted here.
+    private final long version;
 
-    @Column(nullable = false, updatable = false)
-    private Instant createdAt;
+    private final Instant createdAt;
 
     public Account(UUID ownerId, String ownerName, BigDecimal balance, SupportedCurrency currency) {
+        this(null, ownerId, ownerName, balance, currency, 0, Instant.now());
+    }
+
+    private Account(UUID id, UUID ownerId, String ownerName, BigDecimal balance, SupportedCurrency currency,
+                    long version, Instant createdAt) {
         if (currency == null) {
             throw new IllegalArgumentException("currency is required");
         }
+        this.id = id;
         this.ownerId = ownerId;
         this.ownerName = ownerName;
         this.balance = balance;
         this.currency = currency;
-        this.createdAt = Instant.now();
+        this.version = version;
+        this.createdAt = createdAt;
     }
 
-    // Hand-written, so Lombok's @Getter skips this field. See the comment on the field.
-    public SupportedCurrency getCurrency() {
-        return currency != null ? currency : SupportedCurrency.EUR;
+    /** Rebuilds an account that already exists, from its stored state. */
+    public static Account restore(UUID id, UUID ownerId, String ownerName, BigDecimal balance,
+                                  SupportedCurrency currency, long version, Instant createdAt) {
+        return new Account(id, ownerId, ownerName, balance, currency, version, createdAt);
     }
 
     public void debit(BigDecimal amount) {

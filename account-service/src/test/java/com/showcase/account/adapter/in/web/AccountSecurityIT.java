@@ -1,9 +1,9 @@
-package com.showcase.account.api;
+package com.showcase.account.adapter.in.web;
 
 import com.showcase.account.domain.Account;
 import com.showcase.account.domain.AccountNotFoundException;
 import com.showcase.account.domain.SupportedCurrency;
-import com.showcase.account.service.AccountService;
+import com.showcase.account.application.AccountApplicationService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -33,10 +33,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * Proves the REAL per-route authorization matrix -- not a WebMvcTest slice's default fallback
- * (see FraudCheckControllerTest's comment for why that distinction matters). AccountService
- * stays mocked so this only exercises the authorization matrix and the JWT-to-service-argument
- * wiring, not the ownership business logic itself (that's AccountServiceTest's job, against a
- * mocked repository); JPA autoconfiguration still needs a real datasource for a full context
+ * (see FraudCheckControllerTest's comment for why that distinction matters). The application
+ * service stays mocked so this only exercises the authorization matrix and the JWT-to-service-argument
+ * wiring, not the ownership business logic itself (that's AccountApplicationServiceTest's job,
+ * against in-memory ports); JPA autoconfiguration still needs a real datasource for a full context
  * boot, hence Testcontainers Postgres.
  */
 @SpringBootTest
@@ -52,7 +52,7 @@ class AccountSecurityIT {
     private MockMvc mockMvc;
 
     @MockBean
-    private AccountService accountService;
+    private AccountApplicationService accountService;
 
     @Test
     void getAccountsReturns401WithNoToken() throws Exception {
@@ -153,7 +153,7 @@ class AccountSecurityIT {
 
     @Test
     void getAccountReturns404WhenTheServiceRejectsOwnership() throws Exception {
-        // AccountService.getAccount reuses AccountNotFoundException for a non-owning caller --
+        // AccountApplicationService.getAccount reuses AccountNotFoundException for a non-owning caller --
         // see docs/phase-7b-account-ownership-authorization.md's Design Decisions. This proves
         // that 404, however it originates, reaches the caller correctly through the real filter
         // chain and ApiExceptionHandler.

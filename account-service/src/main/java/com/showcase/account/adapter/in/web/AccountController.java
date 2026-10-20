@@ -1,7 +1,9 @@
-package com.showcase.account.api;
+package com.showcase.account.adapter.in.web;
 
 import com.showcase.account.domain.Account;
-import com.showcase.account.service.AccountService;
+import com.showcase.account.application.port.in.AccountOperationUseCase;
+import com.showcase.account.application.port.in.AccountQueries;
+import com.showcase.account.application.port.in.CreateAccountUseCase;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
@@ -36,16 +38,21 @@ public class AccountController {
     // Decisions for why debit's ownership check exempts this caller.
     private static final String TRUSTED_SERVICE_CLIENT_ID = "transfer-service";
 
-    private final AccountService accountService;
+    private final CreateAccountUseCase createAccount;
+    private final AccountOperationUseCase accountOperations;
+    private final AccountQueries accountQueries;
 
-    public AccountController(AccountService accountService) {
-        this.accountService = accountService;
+    public AccountController(CreateAccountUseCase createAccount, AccountOperationUseCase accountOperations,
+                             AccountQueries accountQueries) {
+        this.createAccount = createAccount;
+        this.accountOperations = accountOperations;
+        this.accountQueries = accountQueries;
     }
 
     @PostMapping
     public ResponseEntity<AccountResponse> createAccount(@AuthenticationPrincipal Jwt jwt,
                                                            @Valid @RequestBody CreateAccountRequest request) {
-        Account account = accountService.createAccount(
+        Account account = createAccount.createAccount(
                 UUID.fromString(jwt.getSubject()), request.ownerName(), request.initialBalance(), request.currency());
         return ResponseEntity.created(URI.create("/accounts/" + account.getId()))
                 .body(AccountResponse.from(account));
@@ -55,21 +62,21 @@ public class AccountController {
     // read in this controller.
     @GetMapping
     public List<AccountResponse> getAllAccounts() {
-        return accountService.getAllAccounts().stream()
+        return accountQueries.getAllAccounts().stream()
                 .map(AccountResponse::from)
                 .toList();
     }
 
     @GetMapping("/mine")
     public List<AccountResponse> getMyAccounts(@AuthenticationPrincipal Jwt jwt) {
-        return accountService.getMyAccounts(UUID.fromString(jwt.getSubject())).stream()
+        return accountQueries.getMyAccounts(UUID.fromString(jwt.getSubject())).stream()
                 .map(AccountResponse::from)
                 .toList();
     }
 
     @GetMapping("/{id}")
     public AccountResponse getAccount(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID id) {
-        return AccountResponse.from(accountService.getAccount(id, UUID.fromString(jwt.getSubject())));
+        return AccountResponse.from(accountQueries.getAccount(id, UUID.fromString(jwt.getSubject())));
     }
 
     // Any authenticated caller, deliberately NOT owner-gated -- the one exception to this
@@ -78,7 +85,7 @@ public class AccountController {
     // See docs/phase-9-bank-ui.md's Design Decisions.
     @GetMapping("/{id}/summary")
     public AccountSummaryResponse getAccountSummary(@PathVariable UUID id) {
-        return AccountSummaryResponse.from(accountService.getAccountSummary(id));
+        return AccountSummaryResponse.from(accountQueries.getAccountSummary(id));
     }
 
     // Existence and currency only, no ownership check -- see docs/phase-7b-account-ownership-authorization.md
@@ -87,7 +94,7 @@ public class AccountController {
     // staying a general probe.
     @GetMapping("/exists/{id}")
     public AccountExistsResponse accountExists(@PathVariable UUID id) {
-        return new AccountExistsResponse(accountService.getCurrency(id).name());
+        return new AccountExistsResponse(accountQueries.getCurrency(id).name());
     }
 
     @PostMapping("/{id}/debit")
@@ -96,12 +103,12 @@ public class AccountController {
                                   @RequestHeader("Idempotency-Key") @NotBlank @Size(max = 255) String idempotencyKey) {
         UUID callerId = UUID.fromString(jwt.getSubject());
         boolean serviceCaller = TRUSTED_SERVICE_CLIENT_ID.equals(jwt.getClaimAsString("azp"));
-        return AccountResponse.from(accountService.debit(id, request.amount(), request.currency(), idempotencyKey, callerId, serviceCaller));
+        return AccountResponse.from(accountOperations.debit(id, request.amount(), request.currency(), idempotencyKey, callerId, serviceCaller));
     }
 
     @PostMapping("/{id}/credit")
     public AccountResponse credit(@PathVariable UUID id, @Valid @RequestBody AmountRequest request,
                                    @RequestHeader("Idempotency-Key") @NotBlank @Size(max = 255) String idempotencyKey) {
-        return AccountResponse.from(accountService.credit(id, request.amount(), request.currency(), idempotencyKey));
+        return AccountResponse.from(accountOperations.credit(id, request.amount(), request.currency(), idempotencyKey));
     }
 }

@@ -1,4 +1,4 @@
-package com.showcase.account.api;
+package com.showcase.account.adapter.in.web;
 
 import com.showcase.account.domain.SupportedCurrency;
 import jakarta.validation.constraints.DecimalMin;

@@ -1,4 +1,4 @@
-package com.showcase.account.api;
+package com.showcase.account.adapter.in.web;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;

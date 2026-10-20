@@ -1,4 +1,4 @@
-package com.showcase.account.api;
+package com.showcase.account.adapter.in.web;
 
 import com.showcase.account.domain.SupportedCurrency;
 import com.showcase.account.support.TestSecurityConfig;
@@ -78,7 +78,7 @@ class AccountControllerIT {
      * overlapped, whatever the HTTP stack's timing.
      *
      * <p>The lock is taken on a connection of the test's own, outside the application's pool. It
-     * touches nothing in AccountService's dependency graph, so the race is still a real one
+     * touches nothing in AccountApplicationService's dependency graph, so the race is still a real one
      * between real transactions.
      */
     private List<ResponseEntity<String>> sendWhileAccountRowIsLocked(
@@ -196,9 +196,9 @@ class AccountControllerIT {
     }
 
     // Real end-to-end proof of ownership denial: two DIFFERENT customer identities, both real
-    // requests through the full filter chain and AccountService against the real repository --
-    // not AccountServiceTest's mocked repository, and not AccountSecurityIT's mocked
-    // AccountService. Found missing in code review: without this, nothing actually proved a
+    // requests through the full filter chain and the application service against the real
+    // database -- not AccountApplicationServiceTest's in-memory ports, and not AccountSecurityIT's
+    // mocked application service. Found missing in code review: without this, nothing actually proved a
     // second real customer gets denied, only that a mocked service returning
     // AccountNotFoundException maps to 404 correctly.
     @Test
@@ -356,8 +356,8 @@ class AccountControllerIT {
         // their own operation row, then block on the locked account's UPDATE. Once released, the
         // first one commits; Postgres re-evaluates the second one's `WHERE version = ?` against
         // the new row version, updates nothing, and Hibernate reports the optimistic-lock
-        // failure. This is the real HTTP debit endpoint end to end -- see AccountRepositoryTest
-        // for the repository-level proof of the same optimistic-locking behavior.
+        // failure. This is the real HTTP debit endpoint end to end -- see AccountPersistenceAdapterTest
+        // for the adapter-level proof of the same optimistic-locking behavior.
         UUID id = createAccount(new BigDecimal("1000.00"));
 
         List<Callable<ResponseEntity<String>>> debitCalls = new ArrayList<>();
@@ -374,9 +374,10 @@ class AccountControllerIT {
                 .as("exactly one of %s concurrent debits wins and the rest lose the optimistic-lock race", CONCURRENT_REQUESTS)
                 .containsExactlyInAnyOrderElementsOf(oneWinnerAndLosers(HttpStatus.CONFLICT));
         // Transfer Service records CONCURRENT_MODIFICATION and aborts (does not retry);
-        // retry policy is a later plan's concern. This is the only error code derived
-        // from a framework exception type rather than an app-owned one, so it is the most
-        // likely to drift silently under a Spring/Hibernate upgrade.
+        // retry policy is a later plan's concern. This code starts as Hibernate's optimistic-lock
+        // failure, which AccountPersistenceAdapter.save translates into the app-owned
+        // AccountConcurrentlyModifiedException -- the translation is what could drift silently
+        // under a Spring/Hibernate upgrade, so this end-to-end check stays.
         assertThat(responses)
                 .filteredOn(response -> response.getStatusCode() == HttpStatus.CONFLICT)
                 .as("every 409 body must carry the CONCURRENT_MODIFICATION code")
@@ -390,19 +391,19 @@ class AccountControllerIT {
     void concurrentDebitsWithTheSameIdempotencyKeyNeverDoubleApplyAndTheLoserGets500() throws Exception {
         // A genuine same-key race: unlike returns409ForConcurrentUpdateConflict above (each
         // request uses its OWN key), every request here shares ONE idempotency key, and all of
-        // them pass AccountService.apply()'s existing-operation check as "not yet applied",
+        // them pass AccountApplicationService.apply()'s existing-operation check as "not yet applied",
         // because nothing can commit while the test holds the account row. The first request's
         // INSERT succeeds and it blocks on the locked UPDATE; every other request's INSERT of
         // the same primary key blocks behind it, and fails once the winner commits.
-        // @Transactional rolls the loser back, so its balance change never persists, and a
+        // The transaction rolls the loser back, so its balance change never persists, and a
         // generic 500 (not 409) is the documented, deliberately-uncaught outcome (see
-        // AccountService.apply()'s comment).
+        // AccountApplicationService.apply()'s comment).
         //
-        // This proves Hibernate's insert-before-update flush ordering live rather than assuming
-        // it -- which is what actually keeps a losing request from double-debiting instead of
-        // merely failing loudly -- as Phase 3's final review flagged (docs/roadmap.md). Were the
-        // UPDATE flushed first, every request would queue on the row lock and the losers would
-        // get 409s instead, failing this test.
+        // This proves the ledger-before-balance write order live rather than assuming it -- which
+        // is what actually keeps a losing request from double-debiting instead of merely failing
+        // loudly -- as Phase 3's final review flagged (docs/roadmap.md). Were the UPDATE written
+        // first, every request would queue on the row lock and the losers would get 409s
+        // instead, failing this test.
         UUID id = createAccount(new BigDecimal("100.00"));
         String sharedKey = "race-key";
 

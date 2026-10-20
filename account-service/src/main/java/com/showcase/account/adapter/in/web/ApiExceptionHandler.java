@@ -1,6 +1,7 @@
-package com.showcase.account.api;
+package com.showcase.account.adapter.in.web;
 
 import com.showcase.account.domain.AccountAlreadyExistsException;
+import com.showcase.account.domain.AccountConcurrentlyModifiedException;
 import com.showcase.account.domain.AccountNotFoundException;
 import com.showcase.account.domain.AccountOperationConflictException;
 import com.showcase.account.domain.CurrencyMismatchException;
@@ -14,7 +15,6 @@ import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
-import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.ServletRequestBindingException;
@@ -48,8 +48,8 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         return Problems.of(HttpStatus.UNPROCESSABLE_ENTITY, "CURRENCY_MISMATCH", "Currency mismatch", ex.getMessage());
     }
 
-    @ExceptionHandler(ObjectOptimisticLockingFailureException.class)
-    public ProblemDetail handleConflict(ObjectOptimisticLockingFailureException ex) {
+    @ExceptionHandler(AccountConcurrentlyModifiedException.class)
+    public ProblemDetail handleConflict(AccountConcurrentlyModifiedException ex) {
         return Problems.of(HttpStatus.CONFLICT, "CONCURRENT_MODIFICATION", "Concurrent modification",
                 "Account was modified concurrently, please retry");
     }
