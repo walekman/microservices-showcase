@@ -1,15 +1,6 @@
 package com.showcase.account.domain;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
-import jakarta.persistence.Id;
-import jakarta.persistence.Table;
-import lombok.AccessLevel;
 import lombok.Getter;
-import lombok.NoArgsConstructor;
-import org.springframework.data.domain.Persistable;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -23,45 +14,29 @@ import java.util.UUID;
  *
  * <p>Never updated after creation. A repeat of the same idempotencyKey returns this row's
  * balanceAfter instead of reapplying the operation.
- *
- * <p>Implements {@link Persistable} and hardcodes {@link #isNew()} to {@code true}: the
- * {@code @Id} here is a caller-assigned String, never {@code @GeneratedValue}, so Spring
- * Data JPA's default new-vs-existing detection (a null id means new) always sees a non-null
- * id and would route every {@code save()} through {@code EntityManager.merge()} -- a silent
- * upsert -- instead of {@code persist()}. That would make a duplicate idempotency key update
- * the existing row instead of hitting the unique-constraint violation the dedup logic
- * depends on. Since every save here is genuinely a new row, isNew() always returning true
- * forces persist() every time.
  */
-@Entity
-@Table(name = "account_operations")
 @Getter
-@NoArgsConstructor(access = AccessLevel.PROTECTED)
-public class AccountOperation implements Persistable<String> {
+public class AccountOperation {
 
-    @Id
-    @Column(length = 255)
-    private String idempotencyKey;
+    private final String idempotencyKey;
 
-    @Column(nullable = false, updatable = false)
-    private UUID accountId;
+    private final UUID accountId;
 
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false, updatable = false, length = 16)
-    private AccountOperationType operation;
+    private final AccountOperationType operation;
 
-    // scale 2, matching Account.balance -- see the comment there.
-    @Column(nullable = false, precision = 19, scale = 2, updatable = false)
-    private BigDecimal amount;
+    private final BigDecimal amount;
 
-    @Column(nullable = false, precision = 19, scale = 2, updatable = false)
-    private BigDecimal balanceAfter;
+    private final BigDecimal balanceAfter;
 
-    @Column(nullable = false, updatable = false)
-    private Instant createdAt;
+    private final Instant createdAt;
 
     public AccountOperation(String idempotencyKey, UUID accountId, AccountOperationType operation,
-                             BigDecimal amount, BigDecimal balanceAfter) {
+                            BigDecimal amount, BigDecimal balanceAfter) {
+        this(idempotencyKey, accountId, operation, amount, balanceAfter, Instant.now());
+    }
+
+    private AccountOperation(String idempotencyKey, UUID accountId, AccountOperationType operation,
+                             BigDecimal amount, BigDecimal balanceAfter, Instant createdAt) {
         if (idempotencyKey == null || idempotencyKey.isBlank()) {
             throw new IllegalArgumentException("idempotencyKey is required");
         }
@@ -73,7 +48,13 @@ public class AccountOperation implements Persistable<String> {
         this.operation = operation;
         this.amount = amount;
         this.balanceAfter = balanceAfter;
-        this.createdAt = Instant.now();
+        this.createdAt = createdAt;
+    }
+
+    /** Rebuilds an operation that was already recorded, from its stored state. */
+    public static AccountOperation restore(String idempotencyKey, UUID accountId, AccountOperationType operation,
+                                           BigDecimal amount, BigDecimal balanceAfter, Instant createdAt) {
+        return new AccountOperation(idempotencyKey, accountId, operation, amount, balanceAfter, createdAt);
     }
 
     /**
@@ -86,15 +67,5 @@ public class AccountOperation implements Persistable<String> {
         return !this.accountId.equals(accountId)
                 || this.operation != operation
                 || this.amount.compareTo(amount) != 0;
-    }
-
-    @Override
-    public String getId() {
-        return idempotencyKey;
-    }
-
-    @Override
-    public boolean isNew() {
-        return true;
     }
 }

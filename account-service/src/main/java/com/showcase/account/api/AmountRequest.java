@@ -10,6 +10,6 @@ import java.math.BigDecimal;
 public record AmountRequest(
         @NotNull @DecimalMin(value = "0.01") @Digits(integer = 15, fraction = 2) BigDecimal amount,
         // Optional: the currency the caller computed amount in. Absent only on a replay of a
-        // pre-Phase-12 transfer's leg. See AccountService.requireCurrency.
+        // pre-Phase-12 transfer's leg. See AccountApplicationService.requireCurrency.
         @Pattern(regexp = "[A-Z]{3}") String currency) {
 }

@@ -1,7 +1,6 @@
 package com.showcase.account.domain;
 
 import org.junit.jupiter.api.Test;
-import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
 import java.util.UUID;
@@ -67,14 +66,6 @@ class AccountTest {
         Account account = new Account(UUID.randomUUID(), "Ada", new BigDecimal("10.00"), SupportedCurrency.PLN);
 
         assertThat(account.getCurrency()).isEqualTo(SupportedCurrency.PLN);
-    }
-
-    @Test
-    void aRowFromBeforeCurrenciesExistedReadsAsEur() {
-        Account account = new Account(UUID.randomUUID(), "Ada", new BigDecimal("10.00"), SupportedCurrency.PLN);
-        ReflectionTestUtils.setField(account, "currency", null);
-
-        assertThat(account.getCurrency()).isEqualTo(SupportedCurrency.EUR);
     }
 
     @Test
