@@ -108,6 +108,9 @@ config/                   security/JWT/metrics config, and AccountApplicationCon
 - Adapters reach the core only through `application.port..`, never through
   `AccountApplicationService` itself. `config.AccountApplicationConfig` is the one place that
   wires the two together.
+- The web adapter depends only on in-ports, never on out-ports, so a controller cannot reach
+  `AccountStore` or the ledger and skip the use cases' rules. The persistence adapter never
+  depends on in-ports.
 - `adapter.in` and `adapter.out` do not depend on each other.
 - Only `adapter.out.persistence` touches `jakarta.persistence`, Hibernate, Spring Data, Spring
   ORM/DAO exceptions or Spring transactions.
@@ -165,7 +168,7 @@ high-stakes.
   `AccountTest` to `AccountPersistenceAdapterTest`, because that fallback now lives in the
   mapping.
 - **Verification run on 2026-10-20:**
-  - **`./mvnw -B test`, full root suite:** green. account-service ran 106 tests; 445 in total
+  - **`./mvnw -B test`, full root suite:** green. account-service ran 106 tests; 445 in total (before the review fixes below)
     across all modules.
   - **Mutation checks:**
     - Swapping the ledger/balance write order makes the same-key race IT fail with `[200, 409]`.
@@ -179,5 +182,18 @@ high-stakes.
       every container started at once on a freshly started Docker Desktop (a ~7.4 GB VM).
       Started alone with the same config, Postgres was healthy within seconds, and the rerun
       passed. Environmental, not code.
+  - **Final whole-branch review (Opus):** no Critical or Important findings. Three Minor ones
+    were fixed:
+    - A stale IT comment about where `CONCURRENT_MODIFICATION` comes from.
+    - An adapter-level test of the database `WHERE version` path. The earlier adapter test only
+      hit the in-Java stale-copy check.
+    - Two ArchUnit rules on in/out-port direction.
+
+    Both new guards were mutation-checked. Removing the optimistic-lock translation fails the
+    new adapter test, and an `AccountStore` field in the controller fails the new rule.
+  - **Known, pre-existing, unchanged by this refactor:** the "same-key loser gets 500" guarantee
+    covers a race between two requests. With a third, different-key request committing in
+    between, a same-key request can still lose the version check and get a 409, exactly as on
+    `master`.
   - **Not done:** a manual click-through on the dev stack through the UI. The E2E suite drives
     the same flows through the Gateway against a full stack.

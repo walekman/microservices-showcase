@@ -79,7 +79,26 @@ class AccountPersistenceAdapterTest {
     }
 
     @Test
-    void concurrentUpdatesAreRejectedByOptimisticLocking() {
+    void anUpdateCommittedByAnotherTransactionMeanwhileIsRejectedByTheDatabaseVersionCheck() {
+        // The production path: within one transaction the domain copy and the managed entity
+        // agree on the version, so only the database's `WHERE version = ?` can notice that
+        // another transaction committed in between. Simulated by bumping the stored version
+        // behind the persistence context's back (it keeps the version it loaded).
+        Account saved = accountStore.insert(new Account(UUID.randomUUID(), "Ada Lovelace", new BigDecimal("100.00"), SupportedCurrency.EUR));
+        entityManager.clear();
+
+        Account account = accountStore.findById(saved.getId()).orElseThrow();
+        entityManager.createNativeQuery("UPDATE accounts SET version = version + 1 WHERE id = :id")
+                .setParameter("id", saved.getId())
+                .executeUpdate();
+
+        account.credit(new BigDecimal("10.00"));
+        assertThatThrownBy(() -> accountStore.save(account))
+                .isInstanceOf(AccountConcurrentlyModifiedException.class);
+    }
+
+    @Test
+    void aStaleCopyFromAnEarlierReadIsRejectedBeforeAnyUpdate() {
         Account saved = accountStore.insert(new Account(UUID.randomUUID(), "Ada Lovelace", new BigDecimal("100.00"), SupportedCurrency.EUR));
         entityManager.clear();
 

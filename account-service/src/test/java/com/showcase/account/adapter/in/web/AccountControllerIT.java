@@ -374,9 +374,10 @@ class AccountControllerIT {
                 .as("exactly one of %s concurrent debits wins and the rest lose the optimistic-lock race", CONCURRENT_REQUESTS)
                 .containsExactlyInAnyOrderElementsOf(oneWinnerAndLosers(HttpStatus.CONFLICT));
         // Transfer Service records CONCURRENT_MODIFICATION and aborts (does not retry);
-        // retry policy is a later plan's concern. This is the only error code derived
-        // from a framework exception type rather than an app-owned one, so it is the most
-        // likely to drift silently under a Spring/Hibernate upgrade.
+        // retry policy is a later plan's concern. This code starts as Hibernate's optimistic-lock
+        // failure, which AccountPersistenceAdapter.save translates into the app-owned
+        // AccountConcurrentlyModifiedException -- the translation is what could drift silently
+        // under a Spring/Hibernate upgrade, so this end-to-end check stays.
         assertThat(responses)
                 .filteredOn(response -> response.getStatusCode() == HttpStatus.CONFLICT)
                 .as("every 409 body must carry the CONCURRENT_MODIFICATION code")
