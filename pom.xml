@@ -32,6 +32,8 @@
     <resilience4j.version>2.4.0</resilience4j.version>
     <!-- 1.x is the Boot 3 line (1.5.0 builds against Boot 3.5.16); 2.x targets Boot 4 -->
     <datasource-micrometer.version>1.5.0</datasource-micrometer.version>
+    <!-- Not managed by Boot's BOM. account-service's HexagonalArchitectureTest -->
+    <archunit.version>1.4.1</archunit.version>
   </properties>
 
   <!-- Local-only end-to-end suite (docs/phase-10-end-to-end-saga-tests.md). Never in the

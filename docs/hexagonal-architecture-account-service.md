@@ -102,13 +102,23 @@ config/                   security/JWT/metrics config, and AccountApplicationCon
 
 `HexagonalArchitectureTest` enforces these rules:
 
-- `domain` depends only on `java..`.
-- `application` depends on neither `org.springframework..`, `jakarta.persistence..` nor `..adapter..`.
+- `domain` depends only on `java..`, plus Lombok's `@Generated` marker on the getters it
+  writes at compile time.
+- `application` depends only on `java..`, `domain` and itself.
+- Adapters reach the core only through `application.port..`, never through
+  `AccountApplicationService` itself. `config.AccountApplicationConfig` is the one place that
+  wires the two together.
 - `adapter.in` and `adapter.out` do not depend on each other.
-- Only `adapter.out.persistence` touches `jakarta.persistence` or Spring Data.
+- Only `adapter.out.persistence` touches `jakarta.persistence`, Hibernate, Spring Data, Spring
+  ORM/DAO exceptions or Spring transactions.
+- Every type in `application.port..` is an interface.
 
-`com.tngtech.archunit:archunit-junit5` is pinned in the root `pom.xml`, because Boot's BOM
-does not manage it.
+The rules check production code only. Tests may cross layers: `AccountSecurityIT` mocks the
+application service. Each rule was checked by mutation: a Spring type referenced from the
+domain, and the controller referencing the service class, made three rules fail.
+
+`archunit.version` is pinned in the root `pom.xml`, because Boot's BOM does not manage it. It
+is used by `account-service/pom.xml`.
 
 ## Testing
 
