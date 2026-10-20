@@ -19,6 +19,8 @@ class HexagonalArchitectureTest {
     private static final String DOMAIN = "com.showcase.account.domain..";
     private static final String APPLICATION = "com.showcase.account.application..";
     private static final String PORTS = "com.showcase.account.application.port..";
+    private static final String IN_PORTS = "com.showcase.account.application.port.in..";
+    private static final String OUT_PORTS = "com.showcase.account.application.port.out..";
     private static final String ADAPTERS = "com.showcase.account.adapter..";
     private static final String WEB_ADAPTER = "com.showcase.account.adapter.in..";
     private static final String PERSISTENCE_ADAPTER = "com.showcase.account.adapter.out..";
@@ -42,6 +44,19 @@ class HexagonalArchitectureTest {
             .should().dependOnClassesThat().resideInAPackage("com.showcase.account.application")
             .because("an adapter talks to the core through a port, never to its implementation; "
                     + "config.AccountApplicationConfig is the one place that wires them together");
+
+    @ArchTest
+    static final ArchRule inboundAdaptersDriveTheCoreOnlyThroughInPorts = noClasses()
+            .that().resideInAPackage(WEB_ADAPTER)
+            .should().dependOnClassesThat().resideInAPackage(OUT_PORTS)
+            .because("a controller reaching AccountStore or the ledger directly would skip the use "
+                    + "cases' ownership, currency and idempotency rules");
+
+    @ArchTest
+    static final ArchRule outboundAdaptersOnlyImplementOutPorts = noClasses()
+            .that().resideInAPackage(PERSISTENCE_ADAPTER)
+            .should().dependOnClassesThat().resideInAPackage(IN_PORTS)
+            .because("a driven adapter serves the core; it never calls back into its use cases");
 
     @ArchTest
     static final ArchRule inboundAdaptersDoNotUseOutboundAdapters = noClasses()
