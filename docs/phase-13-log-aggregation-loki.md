@@ -246,3 +246,376 @@ Everything else is verified live, against the dev stack:
    bodies.
 7. **Docker socket on Docker Desktop for Windows**: `/var/run/docker.sock` must be mounted
    read-only and actually work there. Verify live, not just that Alloy starts.
+
+---
+
+# Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. If something in this plan is wrong or impossible, report it rather than silently working around it — read it critically rather than transcribing it.
+
+**Goal:** Build the design above in three tasks, each its own branch off `feature/phase-13` and
+its own PR back into it.
+
+**Architecture:** Task 1 adds Loki and Alloy to Compose and wires them into Grafana; logs flow
+from that point on. Task 2 adds the request log line to five services; it touches no
+infrastructure and can be built in parallel with Task 1. Task 3 adds the dashboard and the live
+check script, which need both, and finishes the docs.
+
+**Tech Stack:** as in the header of this document. Pinned images, current stable at the time of
+writing (2026-10-21, Docker Hub): `grafana/loki:3.7.9`, `grafana/alloy:v1.21.0`. A newer patch
+release of the same minor is fine; write the configs against the pinned version's docs.
+
+**Spec:** the design sections above.
+
+## Review Focus (plan)
+
+Things the spec implies but no happy-path check would catch, most likely first. Each has a
+check in the task named.
+
+1. **Grafana provisioning eats `${...}`** (Task 1). Grafana expands environment variables in
+   provisioning files, so `${__trace.traceId}` in the Tempo data source's query, or
+   `${__value.raw}` in Loki's derived field, silently becomes empty. They must be written
+   `$${__trace.traceId}` and `$${__value.raw}`. The check reads the provisioned data source back
+   from Grafana's API.
+2. **The request line without a trace ID** (Task 2). A filter ordered before
+   `ServerHttpObservationFilter` logs fine but with no `traceId`. `RequestLoggingIT` checks it
+   through the real servlet filter chain.
+3. **Non-JSON lines dropped** (Task 1). A JSON stage that drops unparsable lines hides JVM
+   warnings and stray stderr. The check finds `Picked up JAVA_TOOL_OPTIONS` in Loki.
+4. **The wrong containers collected** (Task 1). The check lists the `service` label's values:
+   exactly the six.
+5. **The E2E stack broken by the new services** (Task 1). A `scale: 0` service that another
+   service `depends_on` makes `up --wait` fail. Grafana must not depend on Loki, and the E2E
+   suite is run once.
+
+## Before any task that runs Docker
+
+Per `CLAUDE.md`, the coordinating session (never an implementer) brings down any other
+worktree's `docker compose` stack before a task's live-verification step. Container names are
+fixed, so two stacks collide. The E2E run in Task 1 also needs the dev stack stopped
+(`docker compose stop`, then `docker compose start` afterwards): this machine's Docker VM can't
+hold both.
+
+## Task 1: Loki, Alloy, Grafana data sources
+
+Branch: `feature/phase-13-task-1-loki-alloy`, off `feature/phase-13`.
+
+**Files:**
+- Create: `docker/loki/loki.yaml`
+- Create: `docker/alloy/config.alloy`
+- Modify: `docker-compose.yml` (two services, one volume)
+- Modify: `docker-compose.e2e.yml` (the two services at `scale: 0`)
+- Modify: `docker/grafana/provisioning/datasources/datasources.yml`
+
+**Interfaces:**
+- Produces: Loki at `http://loki:3100` in Compose and `http://localhost:3100` on the host;
+  streams labelled `service` (Compose service name) and `level`; Grafana data sources
+  `uid: loki` and `uid: tempo`. Task 3's dashboard and script rely on these exact names.
+
+- [ ] **Step 1: Write `docker/loki/loki.yaml`**
+
+  Single-binary Loki (all targets in one process), `auth_enabled: false`, HTTP on `3100`,
+  `replication_factor: 1`, in-memory ring, filesystem storage under `/loki`. Schema: one entry,
+  `store: tsdb`, `object_store: filesystem`, `schema: v13`, `period: 24h`, `from` any date
+  before today. Retention: `limits_config.retention_period: 72h`, and the compactor with
+  `retention_enabled: true` (Loki 3 also requires `delete_request_store: filesystem` when
+  retention is on).
+
+- [ ] **Step 2: Write `docker/alloy/config.alloy`**
+
+  - `discovery.docker` on `unix:///var/run/docker.sock`.
+  - `loki.source.docker` with those targets and `relabel_rules` that **keep** only containers
+    whose `__meta_docker_container_label_com_docker_compose_service` matches exactly
+    `gateway-service|account-service|transfer-service|notification-service|fraud-service|fx-service`,
+    and copy that label into `service`.
+  - `loki.process`: a `stage.json` extracting `level` and `@timestamp`, a `stage.labels` making
+    `level` a label, and a `stage.timestamp` from `@timestamp` (keep it or not, per the spec,
+    after looking at a real line's format). Unparsable lines must pass through unchanged;
+    `drop_malformed` stays off.
+  - `loki.write` to `http://loki:3100/loki/api/v1/push`.
+
+- [ ] **Step 3: Add `loki` and `alloy` to `docker-compose.yml`**
+
+  Next to `tempo`, in the same style:
+  - `loki`: `grafana/loki:3.7.9`, `container_name: showcase-loki`,
+    `command: ["-config.file=/etc/loki/loki.yaml"]`, config mounted `:ro`, a `loki-data` volume
+    on `/loki` (add it under `volumes:`), port `3100:3100`, `GOMEMLIMIT: 192MiB`. A healthcheck
+    on `/ready` only if the image has a tool to run it (check; Tempo has none either).
+  - `alloy`: `grafana/alloy:v1.21.0`, `container_name: showcase-alloy`, the config mounted
+    `:ro`, `/var/run/docker.sock:/var/run/docker.sock:ro`, `GOMEMLIMIT: 96MiB`, port
+    `12345:12345` for Alloy's pipeline UI (run with `--server.http.listen-addr=0.0.0.0:12345`),
+    `depends_on: [loki]`.
+  - `grafana` does **not** get a `depends_on` on Loki (Review Focus 5).
+
+- [ ] **Step 4: Keep them out of the E2E stack**
+
+  In `docker-compose.e2e.yml`, after `grafana`: `loki` and `alloy` with `scale: 0`,
+  `container_name: !reset null` and `ports: !reset []`, with a one-line comment saying why
+  (memory; see the spec).
+
+- [ ] **Step 5: Provision the data sources**
+
+  In `datasources.yml`, leave Prometheus as it is. Give Tempo `uid: tempo` and
+  `jsonData.tracesToLogsV2`: `datasourceUid: loki`, `spanStartTimeShift: '-1m'`,
+  `spanEndTimeShift: '1m'`, `customQuery: true`,
+  `query: '{service=~".+"} | json | traceId="$${__trace.traceId}"'`.
+  Add Loki: `uid: loki`, `type: loki`, `url: http://loki:3100`, `editable: false`,
+  `jsonData.derivedFields` with one entry: `name: traceId`,
+  `matcherRegex: '"traceId":"(\w+)"'`, `datasourceUid: tempo`, `url: '$${__value.raw}'`,
+  `urlDisplayLabel: View trace`.
+
+- [ ] **Step 6: Bring it up and generate traffic**
+
+  Run `docker compose up -d loki alloy`, then `docker compose up -d --force-recreate grafana`,
+  then `docker compose restart fraud-service` (so a fresh start, including the JVM's stderr
+  line, is read), then make one transfer in the Bank UI (http://localhost:8090).
+
+  Expected: `curl -s http://localhost:3100/ready` prints `ready`, and
+  `docker compose logs alloy` shows no repeated errors.
+
+- [ ] **Step 7: Check the labels (Review Focus 4)**
+
+  Run: `curl -s http://localhost:3100/loki/api/v1/label/service/values` and
+  `curl -s http://localhost:3100/loki/api/v1/label/level/values`
+
+  Expected: `service` lists exactly the six service names; `level` lists at least `INFO`.
+
+- [ ] **Step 8: Check that non-JSON lines survive (Review Focus 3)**
+
+  Query Loki's `/loki/api/v1/query_range` with
+  `{service="fraud-service"} |= "Picked up JAVA_TOOL_OPTIONS"` over the last 15 minutes
+  (`curl -G` with `--data-urlencode` for `query` and `since=15m`).
+
+  Expected: at least one result, and its stream has no `level` label.
+
+- [ ] **Step 9: Check the provisioned links (Review Focus 1)**
+
+  Run: `curl -s -u admin:admin http://localhost:3001/api/datasources/uid/tempo`, and the same
+  for `uid/loki`.
+
+  Expected: Tempo's `tracesToLogsV2.query` contains the literal `${__trace.traceId}`, and Loki's
+  derived field `url` the literal `${__value.raw}`, not empty strings. Then, in Grafana, open the
+  transfer's trace (Explore → Tempo → Search) and click a span's "Logs for this span": transfer
+  log lines appear (the other services' request lines come with Task 2). From one of those log
+  lines, "View trace" opens the same trace.
+
+- [ ] **Step 10: Check memory**
+
+  Run: `docker stats --no-stream showcase-loki showcase-alloy`
+  Expected: together under ~400 MB. Put the figures in the PR description.
+
+- [ ] **Step 11: Run the E2E suite once (Review Focus 5)**
+
+  After the coordinator stops the dev stack (see above), run `./mvnw -Pe2e -pl e2e-tests verify`.
+  Expected: `BUILD SUCCESS`, and during the run `docker ps` shows no `loki` or `alloy`
+  container for the `showcase-e2e-*` project. Then `docker compose start` the dev stack again.
+
+- [ ] **Step 12: Commit**
+
+```bash
+git add docker/loki docker/alloy docker-compose.yml docker-compose.e2e.yml docker/grafana/provisioning/datasources/datasources.yml
+git commit -m "feat(observability): collect service logs in Loki via Alloy"
+```
+
+  Open the PR into `feature/phase-13`, and stop.
+
+## Task 2: The request log line
+
+Branch: `feature/phase-13-task-2-request-logging`, off `feature/phase-13`.
+
+**Files**, for each of the five services, where `<svc>`/`<pkg>` is `gateway-service`/`gateway`,
+`account-service`/`account`, `transfer-service`/`transfer`, `fraud-service`/`fraud`,
+`fx-service`/`fx`:
+- Create: `<svc>/src/main/java/com/showcase/<pkg>/config/RequestLoggingFilter.java`
+- Test: `<svc>/src/test/java/com/showcase/<pkg>/config/RequestLoggingFilterTest.java`
+
+and once:
+- Test: `gateway-service/src/test/java/com/showcase/gateway/RequestLoggingIT.java`
+
+**Interfaces:**
+- Produces: in each service,
+  `@Component @Order(Ordered.HIGHEST_PRECEDENCE + 2) public class RequestLoggingFilter extends OncePerRequestFilter`
+  with `protected boolean shouldNotFilter(HttpServletRequest)` and
+  `protected void doFilterInternal(HttpServletRequest, HttpServletResponse, FilterChain)`.
+  Logger: `LoggerFactory.getLogger(RequestLoggingFilter.class)`. One log event per request:
+  message `"{method} {path} {status} {millis}ms"` (e.g. `POST /transfers 201 184ms`), level
+  `INFO`, or `WARN` when the status is 500 or above; key-value pairs `http.method`,
+  `http.path`, `http.status` (int), `duration_ms` (long), via SLF4J's fluent API
+  (`log.atLevel(level).addKeyValue(...)`). Task 3's script relies on the line carrying
+  `traceId`.
+
+- [ ] **Step 1: Write the failing unit test, in gateway-service**
+
+  `RequestLoggingFilterTest`: attach a Logback `ListAppender<ILoggingEvent>` to the filter's
+  logger in `@BeforeEach` (detach in `@AfterEach`), and drive the filter through its public
+  `doFilter(request, response, chain)`, so `shouldNotFilter` applies, with
+  `MockHttpServletRequest`/`MockHttpServletResponse` and a lambda `FilterChain` that sets the
+  response status. Tests:
+  - `logsOneLineWithMethodPathStatusAndDuration`: `POST /transfers`, chain sets 201 → exactly
+    one event, level `INFO`, formatted message matches `^POST /transfers 201 \d+ms$`.
+  - `leavesOutTheQueryString`: `GET /fx/rates` with query string `base=PLN&quote=EUR` → the
+    message starts with `GET /fx/rates 200 ` and contains neither `?` nor `base=`.
+  - `skipsActuatorEndpoints`: `/actuator/health`, `/actuator/prometheus` and `/actuator` → no
+    events.
+  - `logsServerErrorsAsWarn`: status 503 → `WARN`.
+  - `logsClientErrorsAsInfo`: status 404 → `INFO`.
+  - `logsA500AndRethrowsWhenTheChainThrows`: the chain throws `new IllegalStateException("boom")`
+    → `assertThatThrownBy` sees that same instance, and one `WARN` event with ` 500 ` in the
+    message.
+  - `attachesKeyValuePairs`: the event's `getKeyValuePairs()` holds `http.method=POST`,
+    `http.path=/transfers`, `http.status=201` and a non-negative `duration_ms`.
+
+- [ ] **Step 2: Run it to verify it fails**
+
+  Run: `./mvnw -pl gateway-service -Dtest=RequestLoggingFilterTest test`
+  Expected: compilation failure, `RequestLoggingFilter` not found.
+
+- [ ] **Step 3: Implement `RequestLoggingFilter` in `com.showcase.gateway.config`**
+
+  Per the Interfaces block and the spec's "The request log line". `shouldNotFilter` is true for
+  a URI equal to `/actuator` or starting with `/actuator/`. The path is
+  `request.getRequestURI()` (never the query string). Time with `System.nanoTime()`; log in a
+  `finally`, with status 500 when the chain threw and `response.getStatus()` otherwise; rethrow
+  unchanged. The `@Order` places it after Boot's `ServerHttpObservationFilter`
+  (`HIGHEST_PRECEDENCE + 1`), so the request's span is current, and before Spring Security's
+  filter chain (`-100`), so 401/403 responses are logged. A short comment says so.
+
+- [ ] **Step 4: Run it to verify it passes**
+
+  Run: `./mvnw -pl gateway-service -Dtest=RequestLoggingFilterTest test`
+  Expected: PASS, 7 tests.
+
+- [ ] **Step 5: Write `RequestLoggingIT` (Review Focus 2)**
+
+  In gateway-service, shaped like `GatewaySecurityIT` (`RANDOM_PORT`,
+  `@Import(TestSecurityConfig.class)`; no upstream needed, since the request never gets past
+  security), plus `@ExtendWith(OutputCaptureExtension.class)`:
+  - `requestLineIsJsonInsideTheRequestTrace`: `GET /transfers/123` with no token → `401`.
+    Find the captured stdout line containing `GET /transfers/123 401` and parse it with Jackson:
+    `level` is `INFO`, and `traceId` and `spanId` are present and non-blank.
+  - In the same test, check whether the line has an `http.status` field. If it does, assert it
+    equals `401`. If Boot's `logstash` format doesn't write key-value pairs, don't assert it;
+    say so in the PR description (Task 3 records it in "Implementation Notes (as built)").
+
+- [ ] **Step 6: Run it**
+
+  Run: `./mvnw -pl gateway-service -Dtest=RequestLoggingIT test`
+  Expected: PASS. If `traceId` is missing, the filter's order is wrong: fix the order, not the
+  test.
+
+- [ ] **Step 7: Copy the filter and its unit test to account, transfer, fraud and fx**
+
+  Same class and test in each service's `config` package; only the package line differs. In
+  each test, use that service's real paths where the gateway test used `/transfers` and
+  `/fx/rates` (e.g. `POST /accounts/{id}/debit` in account; fraud's and fx's own endpoints). No
+  IT in these four: the ordering is the same in every service, and Task 3's live check covers
+  all of them.
+
+- [ ] **Step 8: Run the five modules' full suites**
+
+  Run: `./mvnw -pl gateway-service,account-service,transfer-service,fraud-service,fx-service test`
+  Expected: `BUILD SUCCESS`, including the five `RequestLoggingFilterTest`s and
+  `RequestLoggingIT`. Report the test counts per module.
+
+- [ ] **Step 9: Live check**
+
+  Set `GIT_SHA` (CLAUDE.md), then
+  `docker compose up -d --build --no-deps gateway-service account-service transfer-service fraud-service fx-service`,
+  wait for healthy, make one transfer in the Bank UI, and read
+  `docker compose logs --since 2m gateway-service account-service transfer-service fraud-service`.
+
+  Expected: one request line per hop (Gateway's `POST /transfers 201`, Account's `exists`,
+  `debit` and `credit`, Fraud's checks), each JSON and all with the same `traceId`; no
+  `/actuator` lines.
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add gateway-service/src account-service/src transfer-service/src fraud-service/src fx-service/src
+git commit -m "feat: log one line per HTTP request in every HTTP-facing service"
+```
+
+  Open the PR into `feature/phase-13`, and stop.
+
+## Task 3: Logs dashboard, live check script, docs
+
+Branch: `feature/phase-13-task-3-logs-dashboard-docs`, off `feature/phase-13` after Tasks 1 and
+2 are merged into it.
+
+**Files:**
+- Create: `docker/grafana/dashboards/service-logs.json`
+- Create: `tools/check-trace-logs.ps1`
+- Modify: `docs/microservices-showcase-design.md` (§1 non-goals line, §3 Observability bullet,
+  §5 Logging)
+- Modify: `docs/roadmap.md` (Phase 13 row: ✅ Done, scope as built)
+- Modify: `docs/open-items.md` (drop "log aggregation" from §2's Observability row; add this
+  phase's Scope Boundary items to §2)
+- Modify: `CLAUDE.md` ("Phases 1–12" → "1–13"; the "Also:" line gains Loki and Alloy)
+- Modify: `README.md` (where to look at logs in Grafana)
+- Modify: `tools/service-links.html` (the dashboard under Grafana; a Loki entry with `/ready`,
+  like Tempo's)
+- Modify: this document (an "Implementation Notes (as built)" section)
+
+**Interfaces:**
+- Consumes: Task 1's labels `service`/`level` and data source uids; Task 2's request line.
+
+- [ ] **Step 1: Write the dashboard**
+
+  `service-logs.json`, in the style of the existing four (`uid: showcase-service-logs`, title
+  `Microservices Showcase — Service Logs`, data source `{ "type": "loki", "uid": "loki" }`):
+  - variables: `service` (query `label_values(service)`, multi, include All, all value `.+`),
+    `level` (custom `DEBUG,INFO,WARN,ERROR`, multi, include All, all value `.*`, so lines with
+    no `level` label still match), `search` (textbox, default empty).
+  - a time series "Log volume by level":
+    `sum by (level) (count_over_time({service=~"$service", level=~"$level"} |= "$search" [$__auto]))`
+  - a logs panel "Logs", newest first:
+    `{service=~"$service", level=~"$level"} |= "$search"`
+
+- [ ] **Step 2: Check the dashboard**
+
+  Run `docker compose up -d --force-recreate grafana` and open
+  http://localhost:3001/d/showcase-service-logs.
+  Expected: both panels show data; choosing `transfer-service` and `INFO` narrows both;
+  searching for a transfer ID from the UI leaves only lines containing it.
+
+- [ ] **Step 3: Write `tools/check-trace-logs.ps1`**
+
+  Windows PowerShell 5.1 compatible. Parameters with defaults: `-Gateway http://localhost:8080`,
+  `-Keycloak http://localhost:8180`, `-Loki http://localhost:3100`, `-TimeoutSeconds 60`.
+  1. Tokens for `ada` and `bob` (password `password`): password grant on
+     `realms/showcase/protocol/openid-connect/token`, `client_id=showcase-ui`.
+  2. For each, `GET /accounts/mine` through the Gateway; if the list is empty, `POST /accounts`
+     with `ownerName` = the username, `initialBalance` `1000.00`, `currency` `EUR`.
+  3. A random 32-hex `traceId` and 16-hex parent span ID; `POST /transfers` as ada with
+     `{fromAccountId, toAccountId, amount: 1.00}` and headers `Idempotency-Key` (a new GUID)
+     and `traceparent: 00-<traceId>-<spanId>-01`.
+  4. Expected services: gateway, transfer, account, fraud and notification, plus fx when the
+     two accounts' currencies differ.
+  5. Every 2 s until all are found or the timeout: `GET /loki/api/v1/query_range` with
+     `query={service=~".+"} |= "<traceId>"`, `since=5m`, `limit=1000`; collect the `service`
+     labels of the returned streams.
+  6. Print found and missing services; exit `0` if none is missing, `1` otherwise.
+
+- [ ] **Step 4: Run it**
+
+  Run: `powershell -File tools/check-trace-logs.ps1`
+  Expected: every expected service found, exit code `0`. Then do the spec's manual checks
+  (Testing section) not already done in Task 1, and record the results in the PR.
+
+- [ ] **Step 5: Update the docs**
+
+  Per the Files list. In the design doc, "no centralized log aggregation" is replaced by what
+  this phase built (Loki via Alloy, trace ↔ logs links, the request log line); the other
+  non-goals stay. "Implementation Notes (as built)" records: the image versions used, whether
+  `@timestamp` became the Loki timestamp, whether Boot's `logstash` format writes the request
+  line's key-value pairs (Task 2's finding), measured memory, and anything that differed from
+  this plan.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add docker/grafana/dashboards/service-logs.json tools docs CLAUDE.md README.md
+git commit -m "feat(observability): service logs dashboard, trace-logs check, docs"
+```
+
+  Open the PR into `feature/phase-13`, and stop. The user merges the phase PR (#140).
