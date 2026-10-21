@@ -1,0 +1,40 @@
+# Single-binary Loki for the local stack: one process, filesystem storage, no auth. Logs are
+# kept for 3 days (compactor retention), see docs/phase-13-log-aggregation-loki.md.
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+
+common:
+  path_prefix: /loki
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+
+schema_config:
+  configs:
+    - from: 2026-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  retention_period: 72h
+  # Only the labels Alloy sets (service, level); no derived service_name copy of service.
+  discover_service_name: []
+
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+  delete_request_store: filesystem
+
+analytics:
+  reporting_enabled: false
