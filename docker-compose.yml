@@ -321,6 +321,36 @@ services:
     ports:
       - "3200:3200"
 
+  # Pinned, unlike the other observability images: Loki's and Alloy's config formats change
+  # between majors, and an unpinned upgrade would break them silently.
+  loki:
+    image: grafana/loki:3.7.9
+    container_name: showcase-loki
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    environment:
+      GOMEMLIMIT: 192MiB
+    volumes:
+      - ./docker/loki/loki.yaml:/etc/loki/loki.yaml:ro
+      - loki-data:/loki
+    ports:
+      - "3100:3100"
+
+  # Reads the six services' container output through the Docker socket and pushes it to Loki
+  # (docker/alloy/config.alloy). Port 12345 is Alloy's pipeline UI.
+  alloy:
+    image: grafana/alloy:v1.21.0
+    container_name: showcase-alloy
+    command: ["run", "--server.http.listen-addr=0.0.0.0:12345", "--storage.path=/var/lib/alloy/data", "/etc/alloy/config.alloy"]
+    environment:
+      GOMEMLIMIT: 96MiB
+    volumes:
+      - ./docker/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - "12345:12345"
+    depends_on:
+      - loki
+
   otel-collector:
     image: otel/opentelemetry-collector-contrib:latest
     container_name: showcase-otel-collector
@@ -372,3 +402,4 @@ services:
 
 volumes:
   postgres-data:
+  loki-data:

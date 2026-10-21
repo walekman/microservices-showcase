@@ -75,6 +75,16 @@ services:
   grafana:
     container_name: !reset null
     ports: !reset []
+  # Not started: the tests never read logs, and two stacks barely fit in memory as it is.
+  # Nothing depends_on them, so `up --wait` is unaffected.
+  loki:
+    scale: 0
+    container_name: !reset null
+    ports: !reset []
+  alloy:
+    scale: 0
+    container_name: !reset null
+    ports: !reset []
 
   account-proxy:
     image: wiremock/wiremock:3.13.1
