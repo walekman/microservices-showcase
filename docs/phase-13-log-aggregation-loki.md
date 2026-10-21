@@ -94,6 +94,9 @@ implementation is added to it once this design is approved.
   - a logs panel showing the matching lines, newest first, with the JSON fields expandable
 - **Explore** works with Loki out of the box, e.g.
   `{service="transfer-service", level="ERROR"}` or `{service=~".+"} | json | traceId="<id>"`.
+- **Anonymous visitors are Editors** (`GF_AUTH_ANONYMOUS_ORG_ROLE: Editor`, was `Viewer`).
+  Grafana sends Viewers away from Explore, and both trace ↔ logs links open there; found in
+  Task 3, chosen by the user over the deprecated `viewers_can_edit` and over signing in.
 
 ### The request log line
 
@@ -224,7 +227,8 @@ Everything else is verified live, against the dev stack:
   - The dashboard's service/level/search filters narrow the panel as expected.
   - A non-JSON line (e.g. `Picked up JAVA_TOOL_OPTIONS`) is in Loki, without a `level` label.
   - Only the six services' streams exist: `/loki/api/v1/label/service/values` lists exactly six.
-  - Retention is configured (the compactor logs its retention setting at start).
+  - Retention is configured: Loki's `/config` shows `retention_period: 3d` and the compactor's
+    `retention_enabled: true` (Loki does not log the setting at start).
   - Memory: `docker stats --no-stream` for Loki and Alloy, within the cap above.
   - `docker compose -f docker-compose.yml -f docker-compose.e2e.yml config` shows Loki and Alloy
     not started.
@@ -319,15 +323,19 @@ Branch: `feature/phase-13-task-1-loki-alloy`, off `feature/phase-13`.
   `store: tsdb`, `object_store: filesystem`, `schema: v13`, `period: 24h`, `from` any date
   before today. Retention: `limits_config.retention_period: 72h`, and the compactor with
   `retention_enabled: true` (Loki 3 also requires `delete_request_store: filesystem` when
-  retention is on).
+  retention is on). `limits_config.discover_service_name: []`, or Loki 3 adds a third label,
+  `service_name`, to every stream.
 
 - [ ] **Step 2: Write `docker/alloy/config.alloy`**
 
   - `discovery.docker` on `unix:///var/run/docker.sock`.
-  - `loki.source.docker` with those targets and `relabel_rules` that **keep** only containers
-    whose `__meta_docker_container_label_com_docker_compose_service` matches exactly
+  - `discovery.relabel` over those targets that **keeps** only containers whose
+    `__meta_docker_container_label_com_docker_compose_service` matches exactly
     `gateway-service|account-service|transfer-service|notification-service|fraud-service|fx-service`,
-    and copy that label into `service`.
+    and copies that label into `service`.
+  - `loki.source.docker` with `targets = discovery.relabel.<name>.output`. Not `relabel_rules`
+    on `loki.source.docker`: there, the keep rule let every container through (as
+    `service_name="unknown_service"`).
   - `loki.process`: a `stage.json` extracting `level` and `@timestamp`, a `stage.labels` making
     `level` a label, and a `stage.timestamp` from `@timestamp` (keep it or not, per the spec,
     after looking at a real line's format). Unparsable lines must pass through unchanged;
@@ -355,7 +363,9 @@ Branch: `feature/phase-13-task-1-loki-alloy`, off `feature/phase-13`.
 
 - [ ] **Step 5: Provision the data sources**
 
-  In `datasources.yml`, leave Prometheus as it is. Give Tempo `uid: tempo` and
+  In `datasources.yml`, leave Prometheus as it is. Add `deleteDatasources: [{name: Tempo,
+  orgId: 1}]`: an existing Grafana container fails to start ("data source not found") when the
+  provisioned Tempo's uid changes. Give Tempo `uid: tempo` and
   `jsonData.tracesToLogsV2`: `datasourceUid: loki`, `spanStartTimeShift: '-1m'`,
   `spanEndTimeShift: '1m'`, `customQuery: true`,
   `query: '{service=~".+"} | json | traceId="$${__trace.traceId}"'`.
@@ -619,3 +629,42 @@ git commit -m "feat(observability): service logs dashboard, trace-logs check, do
 ```
 
   Open the PR into `feature/phase-13`, and stop. The user merges the phase PR (#140).
+
+## Implementation Notes (as built)
+
+Phase 13 shipped as PRs #141 (Task 1), #142 (Task 2) and the Task 3 PR. Where the merged code
+departs from the plan above, the plan was wrong and the code is right; the Task 1 blocks above
+are re-synced.
+
+- **Images:** `grafana/loki:3.7.9`, `grafana/alloy:v1.21.0`, both pinned. Grafana stays on
+  `latest` (13.2.2 when built).
+- **Alloy's container filter** runs in `discovery.relabel`, whose `output` feeds
+  `loki.source.docker`. As `relabel_rules` on `loki.source.docker`, the keep rule let every
+  container through, labelled `service_name="unknown_service"`.
+- **Loki's labels:** Loki 3 copies a `service_name` label onto every stream by default;
+  `discover_service_name: []` turns that off, so the only labels are `service` and `level`.
+  Grafana's Logs Drilldown app keys on `service_name`; re-enable it if that app is wanted.
+- **Timestamps:** `@timestamp` is the Loki entry timestamp. Checked on a transfer line: the
+  entry's `1792623370788939974` ns is the line's `2026-10-21T22:56:10.788939974Z`.
+- **Request line key-value pairs:** Boot 3.5's `logstash` format writes them as top-level JSON
+  fields (`http.method`, `http.path`, `http.status`, `duration_ms`), so they can be filtered with
+  `| json`.
+- **Grafana data sources:** `deleteDatasources: Tempo` was needed. Giving the provisioned Tempo
+  a `uid` made an existing Grafana container fail to start ("data source not found").
+- **Grafana access:** anonymous visitors are now Editors, not Viewers. Viewers are sent away
+  from Explore, where "Related logs" and "View trace" open. Task 1 had checked the links through
+  `/api/ds/query`, which doesn't need Explore, so this only showed up in Task 3's click-through.
+- **First start:** Alloy replays each container's existing log history once; Loki rejects lines
+  older than 7 days, so the first start logs a batch of "timestamp too old" errors. Not tuned.
+- **Retention:** Loki doesn't log its retention setting at start; `/config` shows
+  `retention_period: 3d` with the compactor's `retention_enabled: true`.
+- **Dashboard:** the logs panel sets `prettifyLogMessage: false`. Otherwise Grafana 13 prints
+  each JSON line over about ten rows.
+- **Memory** (`docker stats --no-stream`): after Task 1's checks, Loki 63.5 MiB and Alloy
+  56.9 MiB; after Task 3's transfers, Loki 129 MiB and Alloy 97 MiB, about 227 MiB together,
+  under the ~400 MB budget.
+- **`tools/check-trace-logs.ps1`:** found all five expected services and exited 0; with
+  notification-service stopped, it reported that one missing and exited 1.
+- **Follow-up:** `RequestLoggingFilter` and its test are five identical copies. A shared
+  infrastructure module (with `JwtDecoderConfig`, `KeycloakProperties` and the build-info
+  binder) is planned as its own refactor after this phase; `docs/open-items.md` §1.

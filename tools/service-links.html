@@ -69,7 +69,7 @@
       <tr><td>Keycloak admin console</td><td><code>admin</code></td><td><code>admin</code></td><td>master realm</td></tr>
       <tr><td>Realm <code>showcase</code></td><td><code>ada</code>, <code>bob</code></td><td><code>password</code></td><td>customer</td></tr>
       <tr><td>Realm <code>showcase</code></td><td><code>admin</code></td><td><code>password</code></td><td>account-admin, transfer-admin</td></tr>
-      <tr><td>Grafana</td><td colspan="3">anonymous access enabled as Viewer, no login needed</td></tr>
+      <tr><td>Grafana</td><td colspan="3">anonymous access enabled as Editor (Explore needs it), no login needed</td></tr>
     </table>
   </div>
   <p class="sub" style="margin-top:12px">Get a token for Swagger's <em>Authorize</em> button (client <code>showcase-ui</code>, direct grant):</p>
@@ -102,17 +102,20 @@
       ]},
     ]},
     { title: "Observability", items: [
-      { name: "Grafana", port: 3001, desc: "Dashboards plus Tempo trace search. Host port 3001, container 3000.", links: [
+      { name: "Grafana", port: 3001, desc: "Dashboards, Tempo traces and Loki logs, linked both ways by traceId. Host port 3001, container 3000.", links: [
         ["Home", "/"],
         ["Business metrics dashboard", "/d/showcase-business-metrics"],
         ["Service versions dashboard", "/d/showcase-service-versions"],
         ["JVM (Micrometer) dashboard", "/d/a0c90e53-d71a-4128-8f4b-8d272e17e2e1"],
-        ["Explore (pick Tempo for traces)", "/explore"],
+        ["Service logs dashboard", "/d/showcase-service-logs"],
+        ["Explore (Tempo for traces, Loki for logs)", "/explore"],
       ]},
       { name: "Prometheus", port: 9090, desc: "Scrapes all six services every few seconds.", links: [
         ["Query", "/query"], ["Targets", "/targets"], ["Alerts", "/alerts"],
       ]},
       { name: "Tempo", port: 3200, desc: "Trace store. No UI: search traces from Grafana Explore.", links: [["Ready", "/ready"]] },
+      { name: "Loki", port: 3100, desc: "Log store for the six services, 3-day retention. No UI: browse logs from Grafana.", links: [["Ready", "/ready"]] },
+      { name: "Alloy", port: 12345, desc: "Tails the six services' container output and pushes it to Loki.", links: [["Pipeline UI", "/"]] },
       { name: "OTel Collector", port: 4318, desc: "Receives OTLP from the services and forwards to Tempo. No UI.",
         copy: [["OTLP HTTP", "http://localhost:4318"], ["OTLP gRPC", "localhost:4317"]] },
     ]},
