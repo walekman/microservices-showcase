@@ -665,6 +665,11 @@ are re-synced.
   under the ~400 MB budget.
 - **`tools/check-trace-logs.ps1`:** found all five expected services and exited 0; with
   notification-service stopped, it reported that one missing and exited 1.
+- **Final review fix, `check-trace-logs.ps1`:** Windows PowerShell 5.1's `Invoke-RestMethod`
+  emits a JSON array as one object, so `@(...)` counted an empty `/accounts/mine` as 1 and never
+  created the missing account. The script pipes the result (`| ForEach-Object { $_ }`) to unroll
+  it. Reproduced against a local server returning `[]` and a two-item list (old: 1 and 1, fixed:
+  0 and 2).
 - **Follow-up:** `RequestLoggingFilter` and its test are five identical copies. A shared
   infrastructure module (with `JwtDecoderConfig`, `KeycloakProperties` and the build-info
   binder) is planned as its own refactor after this phase; `docs/open-items.md` §1.

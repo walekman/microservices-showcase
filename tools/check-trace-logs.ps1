@@ -24,7 +24,9 @@ function Get-Token([string]$user) {
 
 function Get-OrCreateAccount([string]$user, [string]$token) {
     $headers = @{ Authorization = "Bearer $token" }
-    $accounts = @(Invoke-RestMethod -Uri "$Gateway/accounts/mine" -Headers $headers)
+    # PS 5.1's Invoke-RestMethod emits a JSON array as one object; piping unrolls it, so an
+    # empty list counts 0 (not 1) and accounts[0] is one account (not every id joined).
+    $accounts = @(Invoke-RestMethod -Uri "$Gateway/accounts/mine" -Headers $headers | ForEach-Object { $_ })
     if ($accounts.Count -gt 0) {
         return $accounts[0]
     }
