@@ -381,7 +381,9 @@ services:
     container_name: showcase-grafana
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
-      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      # Editor, not Viewer: Viewers can't open Explore, where the Tempo <-> Loki links land
+      # (docs/phase-13-log-aggregation-loki.md). Local-only stack; provisioned dashboards reload from files.
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Editor
       GOMEMLIMIT: 128MiB
     volumes:
       - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
