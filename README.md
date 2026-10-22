@@ -24,7 +24,7 @@ FX rate service, Keycloak JWT auth, and OpenTelemetry tracing — plus a small b
 | Swagger UI — Account / Transfer / Fraud / FX | http://localhost:{8081,8082,8084,8085}/swagger-ui.html |
 | Notification Service | http://localhost:8083 (Kafka consumer, health only) |
 | Keycloak | http://localhost:8180 |
-| Grafana (anonymous) / Prometheus / Tempo | http://localhost:3001 / :9090 / :3200 |
+| Grafana (anonymous) / Prometheus / Tempo / Loki | http://localhost:3001 / :9090 / :3200 / :3100 |
 
 Upgrading an older checkout: add any variable your `.env` is missing from `.env.example`, then
 run `docker compose down -v` before `up`. Per-service databases are created by an init script
@@ -130,11 +130,19 @@ at-least-once and redeliveries are deduplicated by `transferId`; unreadable even
 
 ## Observability
 
-Grafana (http://localhost:3001) ships four dashboards: JVM, business metrics (transfer
-outcomes, outbox backlog, circuit breaker), Service Versions, and FX Cache. Every service
+Grafana (http://localhost:3001) ships five dashboards: JVM, business metrics (transfer
+outcomes, outbox backlog, circuit breaker), Service Versions, FX Cache, and Service Logs. Every service
 exports traces to Tempo via an OTel Collector — one transfer yields a single trace from the
 Gateway through Transfer, Account, Fraud and the Kafka hop to Notification. Logs are JSON on
 stdout carrying `traceId`/`spanId`. See `docs/phase-8-observability.md`.
+
+Grafana Alloy ships the six services' logs to Loki (kept 3 days). Browse them on the Service
+Logs dashboard (filter by service, level and text), or open a trace in Explore → Tempo and
+click a span's **Related logs** to see every line logged under that trace; a log line's
+`traceId` has a **View trace** link back. Each HTTP service logs one line per request
+(`POST /transfers 201 184ms`), so every hop appears. `tools/check-trace-logs.ps1` sends one
+transfer and checks that its trace's logs reached Loki from every service. See
+`docs/phase-13-log-aggregation-loki.md`.
 
 ## Tests
 

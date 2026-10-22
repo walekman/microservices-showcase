@@ -15,6 +15,7 @@ lands, and add new ones as phases defer them.
 | 4 | **Automated browser tests for the Bank UI** (e.g. Playwright). | `phase-9-bank-ui.md` Scope Boundary |
 | 5 | **Replaying Notification's dead-letter topics.** Dead-lettered records stay parked on `transfer.*-dlt`; re-publishing one after a fix is a manual Kafka CLI step. | `phase-11-notification-persistence-error-handling.md` Scope Boundary |
 | 6 | **A Grafana panel for Notification's consumer metrics** (`notification_events_total`, `notification_delivery_failures_total`, `notification_dead_lettered_total`). Prometheus scrapes them; no dashboard shows them. | `phase-11-notification-persistence-error-handling.md` Scope Boundary |
+| 7 | **A shared platform module** for per-service infrastructure copies: `RequestLoggingFilter` (five copies), `JwtDecoderConfig`, `KeycloakProperties`, the build-info binder. Infrastructure only, never contracts: the RFC 7807 handler and DTOs stay per service. Reverses the design doc's "no shared module" stance for infrastructure code, so it starts with a design-doc change. Its own refactor, after Phase 13. | `phase-13-log-aggregation-loki.md` Implementation Notes |
 
 ## 2. Deliberately not planned
 
@@ -24,7 +25,7 @@ decision.
 | Area | Items | Source |
 |---|---|---|
 | Fraud | Amount/velocity rules; listing the blocklist (`GET /fraud/blocklist`) or a UI for it; blocklist audit history (who blocked, why, unblocks). Phase 10 added the persisted blocklist and its `fraud-admin` write API that Phase 5 had ruled out | `phase-5-fraud-service.md`, `phase-10-end-to-end-saga-tests.md` Scope Boundary |
-| Gateway | Rate limiting, CORS and logging filters; a Gateway-level resilience layer | `phase-6-api-gateway.md` |
+| Gateway | Rate limiting and CORS filters (Phase 13 added a per-request log line); a Gateway-level resilience layer | `phase-6-api-gateway.md` |
 | Auth | Keycloak Authorization Services; `oauth2Login` for Swagger; silent token refresh; email/password-reset flows; admin views in the UI | `phase-7-auth-keycloak-jwt.md`, `phase-7b-account-ownership-authorization.md`, `phase-9-bank-ui.md` |
 | Transfer outbox | Pruning published `outbox_events` rows (a retention policy); the table grows forever, which is irrelevant at demo scale, and the index on `publishedAt` keeps the poll query cheap regardless | `phase-4-outbox-kafka-notification.md` Final Review |
 | Notification | A distinct event type/topic for `COMPENSATION_FAILED` (today it publishes `TRANSFER_FAILED`, like a clean failure). Notifications only log and will not become customer-facing in this demo, and the payload's `status` field already tells the outcomes apart | `phase-4-outbox-kafka-notification.md` Final Review |
@@ -33,4 +34,5 @@ decision.
 | Saga | A read-only (or void-if-absent) operation lookup on Account to settle a stale-`PENDING` row whose source has since been blocklisted. Such a row stays `PENDING`, retried every sweep, until the block is lifted; reaching it needs the source blocked through `PUT /fraud/blocklist/{id}` after the live saga's own screen | `microservices-showcase-design.md` §4, `README.md` |
 | FX | Redis high availability and persistence; converted balance display; rate margins or fees; honouring the displayed quote at send time (quote locking); changing an account's currency or multi-currency accounts; an offline provider stub | `phase-12-fx-rates-redis-cache.md` Scope Boundary |
 | End-to-end tests | Running them in CI; chaos against Postgres, Kafka, Redis or Keycloak (faults are injected only on the Transfer → Account link); load testing; more than one E2E run at a time | `phase-10-end-to-end-saga-tests.md` Scope Boundary |
-| Observability and platform | Alerting; trace-to-metrics exemplars; log aggregation; a Resilience4j TimeLimiter; multi-account per user | `phase-3-resilience-compensation-idempotency.md`, `phase-8-observability.md`, `phase-9-bank-ui.md` |
+| Observability and platform | Alerting; trace-to-metrics exemplars; a Resilience4j TimeLimiter; multi-account per user | `phase-3-resilience-compensation-idempotency.md`, `phase-8-observability.md`, `phase-9-bank-ui.md` |
+| Logs | Collecting infrastructure containers' logs (Kafka, Postgres, Keycloak, Redis, nginx, the observability stack); new or changed log statements beyond the request log line; a request log line in Notification (no business HTTP endpoints); alerting on log patterns and log-based metrics; Loki in the E2E stack; multi-tenant Loki, object storage, high availability | `phase-13-log-aggregation-loki.md` Scope Boundary |

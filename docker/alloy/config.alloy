@@ -1,0 +1,55 @@
+// Ships the six Spring services' container output to Loki. Containers are picked by their
+// Compose service label, not container_name. Lines are Boot's logstash JSON; `level` becomes a
+// label, everything else (traceId, spanId, message, ...) stays in the line for `| json` at query
+// time. Non-JSON lines pass through unchanged, without a level label.
+// See docs/phase-13-log-aggregation-loki.md.
+
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+// The filter has to run here, on the discovered targets: as loki.source.docker's relabel_rules
+// it only rewrites labels and every container is still read.
+discovery.relabel "services" {
+  targets = discovery.docker.containers.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    regex         = "gateway-service|account-service|transfer-service|notification-service|fraud-service|fx-service"
+    action        = "keep"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+}
+
+loki.source.docker "services" {
+  host          = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.services.output
+  forward_to = [loki.process.services.receiver]
+}
+
+loki.process "services" {
+  stage.json {
+    expressions = { level = "level", ts = "\"@timestamp\"" }
+  }
+
+  stage.labels {
+    values = { level = "" }
+  }
+
+  stage.timestamp {
+    source = "ts"
+    format = "RFC3339Nano"
+  }
+
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
