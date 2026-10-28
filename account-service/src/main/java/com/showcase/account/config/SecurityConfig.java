@@ -1,5 +1,6 @@
 package com.showcase.account.config;
 
+import com.showcase.platform.security.KeycloakRealmRoleConverter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;

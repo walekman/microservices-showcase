@@ -3,6 +3,7 @@ FROM eclipse-temurin:21-jdk AS build
 WORKDIR /app
 COPY .mvn/ .mvn/
 COPY mvnw pom.xml ./
+COPY platform/pom.xml platform/pom.xml
 COPY account-service/pom.xml account-service/pom.xml
 COPY transfer-service/pom.xml transfer-service/pom.xml
 COPY notification-service/pom.xml notification-service/pom.xml
@@ -10,6 +11,7 @@ COPY fraud-service/pom.xml fraud-service/pom.xml
 COPY gateway-service/pom.xml gateway-service/pom.xml
 COPY fx-service/pom.xml fx-service/pom.xml
 RUN chmod +x mvnw && ./mvnw -pl account-service -am dependency:go-offline -B
+COPY platform/src platform/src
 COPY account-service/src account-service/src
 RUN ./mvnw -pl account-service -am package -DskipTests -B
 
