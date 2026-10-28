@@ -15,7 +15,7 @@ lands, and add new ones as phases defer them.
 | 4 | **Automated browser tests for the Bank UI** (e.g. Playwright). | `phase-9-bank-ui.md` Scope Boundary |
 | 5 | **Replaying Notification's dead-letter topics.** Dead-lettered records stay parked on `transfer.*-dlt`; re-publishing one after a fix is a manual Kafka CLI step. | `phase-11-notification-persistence-error-handling.md` Scope Boundary |
 | 6 | **A Grafana panel for Notification's consumer metrics** (`notification_events_total`, `notification_delivery_failures_total`, `notification_dead_lettered_total`). Prometheus scrapes them; no dashboard shows them. | `phase-11-notification-persistence-error-handling.md` Scope Boundary |
-| 7 | **A shared platform module** for per-service infrastructure copies: `RequestLoggingFilter` (five copies), `JwtDecoderConfig`, `KeycloakProperties`, the build-info binder. Infrastructure only, never contracts: the RFC 7807 handler and DTOs stay per service. Reverses the design doc's "no shared module" stance for infrastructure code, so it starts with a design-doc change. Its own refactor, after Phase 13. | `phase-13-log-aggregation-loki.md` Implementation Notes |
+| 7 | **A shared platform module** for per-service infrastructure copies: `RequestLoggingFilter`, `JwtDecoderConfig`, `KeycloakProperties`, `KeycloakRealmRoleConverter`, the build-info binder, and the generic part of the RFC 7807 handling. Infrastructure only, never contracts: DTOs and service-specific error codes stay per service. In progress as Phase 14. PR #138 (hexagonal Account) is ignored by this work until further notice. | `phase-14-shared-platform-module.md`; originally `phase-13-log-aggregation-loki.md` Implementation Notes |
 
 ## 2. Deliberately not planned
 

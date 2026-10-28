@@ -38,9 +38,19 @@ Each stateful service owns its data exclusively — no service queries another's
   `title`, `status` and `detail` fields. Consumers branch on `code`, never on the prose in
   `detail`, and never on the `type` URI (which is an identifier, not a dereferenceable
   URL). Un-enumerated 4xx statuses carry `REQUEST_REJECTED`, un-enumerated 5xx carry
-  `INTERNAL_ERROR`, so the property is never absent. The handler and its codes are
-  duplicated per service rather than shared through a common module: a shared DTO jar
-  turns every contract change into a lockstep redeploy of every service.
+  `INTERNAL_ERROR`, so the property is never absent. The format, those generic codes and
+  the handling of request-shape errors (validation, malformed input, the catch-all) are
+  shared through the platform module (below). Each service's own codes and handlers stay
+  in that service.
+- **Shared code — infrastructure, never contracts:** one `platform` module, built and
+  versioned with the services, holds the cross-cutting infrastructure every service would
+  otherwise copy: the request log line, JWT decoding and Keycloak role mapping, the
+  build-info metric, and the generic error handling above. It holds nothing that is part of
+  a service's contract: no DTOs, event payloads or domain types, no service-specific error
+  codes, endpoint paths, roles or authorization rules. Contracts stay duplicated per
+  service on purpose: a shared contract jar turns every contract change into a lockstep
+  redeploy of every service. Each service can replace any platform piece with its own. See
+  `docs/phase-14-shared-platform-module.md`.
 - **Observability:** Micrometer Tracing bridged to OpenTelemetry → OTel Collector → Grafana Tempo; Micrometer + Prometheus (`/actuator/prometheus`) scraped by Prometheus, visualized in Grafana; structured JSON logs with `traceId`/`spanId` auto-injected via MDC, collected from the six services' container stdout by Grafana Alloy into Grafana Loki and linked both ways with Tempo traces.
 - **Deployment (local):** Docker Compose — single `docker compose up` brings up all services, Postgres, Kafka, Keycloak, and the observability stack.
 
