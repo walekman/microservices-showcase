@@ -8,6 +8,7 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.util.ClassUtils;
+import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -17,8 +18,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * notification-service takes only the build metric from the platform module (BuildInfoIT checks
- * that one). This guards what it must not get: Spring Security on its classpath, or the request
- * log line it has no business endpoints for (docs/phase-14-shared-platform-module.md).
+ * that one). This guards what it must not get: Spring Security on its classpath, the request
+ * log line or the generic error handling it has no business endpoints for
+ * (docs/phase-14-shared-platform-module.md).
  */
 @Testcontainers
 @SpringBootTest
@@ -49,5 +51,10 @@ class PlatformWiringIT {
     @Test
     void noRequestLogLine() {
         assertThat(context.getBeansOfType(RequestLoggingFilter.class)).isEmpty();
+    }
+
+    @Test
+    void noGenericErrorHandling() {
+        assertThat(context.getBeansOfType(ResponseEntityExceptionHandler.class)).isEmpty();
     }
 }
