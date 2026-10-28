@@ -25,6 +25,12 @@ Tempo, Prometheus, Loki (fed by Alloy from container stdout), Grafana (3001). Ev
 validates the JWT itself and returns RFC 7807 errors with a stable `code`. Versions are in the root `pom.xml` (Spring Cloud in
 `gateway-service/pom.xml`); Lombok and Testcontainers throughout.
 
+Shared infrastructure lives once, in the `platform` module (auto-configured, optional deps only):
+the request log line, the Keycloak `JwtDecoder` and role mapping, the `application_info` metric,
+and the generic RFC 7807 handling (`Problems`, `PlatformExceptionHandler`, which each API
+service's `ApiExceptionHandler` extends). Contracts never go there: DTOs, events, service-specific
+codes and security rules stay per service (design doc §3).
+
 ## Saga invariant
 
 **Preserve this when touching the saga or compensator:** a call failing with
