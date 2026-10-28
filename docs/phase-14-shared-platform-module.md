@@ -237,3 +237,29 @@ Docs updated alongside:
   gateway no longer has to avoid the `jwtDecoder` bean name; their comments say so.
 - **Dockerfiles:** each copies `platform/pom.xml` with the other poms and `platform/src` before
   its own `src`. `-am` builds the module, and `dependency:go-offline` skips reactor modules.
+
+### Task 2
+
+- **`com.showcase.platform.web`:** `Problems` (now public, otherwise unchanged) and the abstract
+  `PlatformExceptionHandler extends ResponseEntityExceptionHandler`. It is not an
+  auto-configuration. A service opts in by having its `@RestControllerAdvice ApiExceptionHandler`
+  extend it, which is why the gateway and Notification are unaffected.
+- **Precedence comes from a single advice.** Both halves sit in one class, and Spring's
+  `ExceptionHandlerMethodResolver` picks the handler for the closest exception type, so
+  `ACCOUNT_NOT_FOUND` and the rest beat the inherited `@ExceptionHandler(Exception.class)`.
+  `PlatformExceptionHandlerTest.aServicesOwnHandlerWinsOverTheCatchAll` pins it. A separate
+  platform advice would have needed `@Order` juggling, and two `ResponseEntityExceptionHandler`s
+  would both claim the MVC exceptions.
+- **The generic set** is the union of the four handlers: `ConstraintViolationException`, the
+  catch-all, `handleMethodArgumentNotValid`, `handleServletRequestBindingException`,
+  `handleMissingServletRequestParameter` (FX's version, which names the parameter),
+  `handleHttpMessageNotReadable`, `handleTypeMismatch` and the `handleExceptionInternal` code guard.
+  Fraud's `handleServletRequestBindingException` hard-coded "Missing required parameter:
+  accountId". It is replaced by the generic one, but no Fraud request reaches it: a missing
+  `accountId` arrives as `MissingServletRequestParameterException`, which has its own hook and
+  produces the same text.
+- **No per-service test assertion changed.** All four services already had tests asserting a
+  generic code (`VALIDATION_FAILED`/`MALFORMED_REQUEST`) and their own codes, so they prove the
+  wiring as they are.
+- Transfer's `AccountServiceUnavailableException` javadoc sat above the wrong handler
+  (`IdempotencyKeyConflictException`). It moved to the handler it describes.
