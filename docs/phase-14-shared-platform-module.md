@@ -214,3 +214,26 @@ Docs updated alongside:
 5. **No contract crept in:** no service name, path, role or domain type in the module.
 6. **No status or `code` assertion changed** in any per-service test. One that did is a
    behaviour change the user didn't agree to.
+
+## Implementation Notes (as built)
+
+### Task 1
+
+- **Spring Boot auto-configuration**, registered in
+  `platform/src/main/resources/META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`:
+  `RequestLoggingAutoConfiguration`, `KeycloakJwtAutoConfiguration` (with `KeycloakProperties`),
+  `BuildInfoMetricsAutoConfiguration`, in packages `com.showcase.platform.{logging,security,metrics}`.
+  `KeycloakRealmRoleConverter` is a plain class each `SecurityConfig` still instantiates.
+- **Only `spring-boot-starter` is a required dependency.** Spring Web, the servlet API, Spring
+  Security's resource server and JOSE, and Micrometer are `optional`, so none reaches a service
+  through the module. Each auto-configuration is conditional on its classes being present, and
+  every bean is `@ConditionalOnMissingBean`. The version is managed once, in the root pom's
+  `dependencyManagement`.
+- **notification-service:** gets the build metric only. It has Spring Web (for Actuator), so
+  the request log line is switched off by a property instead of a missing class:
+  `showcase.platform.request-logging.enabled: false` (default `true`). `PlatformWiringIT` guards
+  both that and the absence of Spring Security.
+- **The JWT decoder backs off for the tests' stub decoders.** `TestSecurityConfig` in account and
+  gateway no longer has to avoid the `jwtDecoder` bean name; their comments say so.
+- **Dockerfiles:** each copies `platform/pom.xml` with the other poms and `platform/src` before
+  its own `src`. `-am` builds the module, and `dependency:go-offline` skips reactor modules.
