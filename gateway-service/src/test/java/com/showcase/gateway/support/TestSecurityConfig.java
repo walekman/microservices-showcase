@@ -38,11 +38,9 @@ public class TestSecurityConfig {
         return PREFIX + String.join(DELIMITER, authorities);
     }
 
-    // Named differently from the production JwtDecoderConfig's "jwtDecoder" bean -- a full
-    // @SpringBootTest (unlike a @WebMvcTest slice) DOES scan that real @Configuration class too,
-    // and two bean definitions sharing one name is a hard registration error regardless of
-    // @Primary (which only resolves ambiguity between distinctly-named candidates at an
-    // injection point, not a same-name registration collision).
+    // The platform module's auto-configured "jwtDecoder" backs off when this bean exists
+    // (@ConditionalOnMissingBean, docs/phase-14-shared-platform-module.md), so it is the only
+    // decoder in the context and @Primary is redundant, though harmless.
     @Bean
     @Primary
     public JwtDecoder stubJwtDecoder() {

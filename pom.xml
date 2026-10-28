@@ -17,6 +17,7 @@
   <packaging>pom</packaging>
 
   <modules>
+    <module>platform</module>
     <module>account-service</module>
     <module>transfer-service</module>
     <module>notification-service</module>
@@ -33,6 +34,16 @@
     <!-- 1.x is the Boot 3 line (1.5.0 builds against Boot 3.5.16); 2.x targets Boot 4 -->
     <datasource-micrometer.version>1.5.0</datasource-micrometer.version>
   </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>com.showcase</groupId>
+        <artifactId>platform</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
 
   <!-- Local-only end-to-end suite (docs/phase-10-end-to-end-saga-tests.md). Never in the
        default <modules>: CI must not build it, and none of the service Dockerfiles copy its
