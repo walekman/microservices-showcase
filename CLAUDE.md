@@ -4,7 +4,7 @@ Guidance for Claude Code in this repository.
 
 ## Project
 
-Phases 1–12 (plus 7b, 8b) are done; `docs/roadmap.md` indexes them. Architecture lives in
+Phases 1–13 (plus 7b, 8b) are done; `docs/roadmap.md` indexes them. Architecture lives in
 `docs/microservices-showcase-design.md` and each phase's build in `docs/phase-N-*.md`.
 **Do not re-derive decisions already settled there.**
 
@@ -21,8 +21,8 @@ Six Spring Boot 3.5 / Java 21 services and a static UI, all started by `docker c
 | `web-ui` | 8090 | Plain HTML/JS on nginx, Auth Code + PKCE via Keycloak `showcase-ui`. |
 
 Also: Postgres (database per service), Kafka (KRaft), Redis, Keycloak (8180), OTel Collector →
-Tempo, Prometheus, Grafana (3001). Every service validates the JWT itself and returns RFC 7807
-errors with a stable `code`. Versions are in the root `pom.xml` (Spring Cloud in
+Tempo, Prometheus, Loki (fed by Alloy from container stdout), Grafana (3001). Every service
+validates the JWT itself and returns RFC 7807 errors with a stable `code`. Versions are in the root `pom.xml` (Spring Cloud in
 `gateway-service/pom.xml`); Lombok and Testcontainers throughout.
 
 ## Saga invariant
