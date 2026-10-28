@@ -214,3 +214,52 @@ Docs updated alongside:
 5. **No contract crept in:** no service name, path, role or domain type in the module.
 6. **No status or `code` assertion changed** in any per-service test. One that did is a
    behaviour change the user didn't agree to.
+
+## Implementation Notes (as built)
+
+### Task 1
+
+- **Spring Boot auto-configuration**, registered in
+  `platform/src/main/resources/META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`:
+  `RequestLoggingAutoConfiguration`, `KeycloakJwtAutoConfiguration` (with `KeycloakProperties`),
+  `BuildInfoMetricsAutoConfiguration`, in packages `com.showcase.platform.{logging,security,metrics}`.
+  `KeycloakRealmRoleConverter` is a plain class each `SecurityConfig` still instantiates.
+- **Only `spring-boot-starter` is a required dependency.** Spring Web, the servlet API, Spring
+  Security's resource server and JOSE, and Micrometer are `optional`, so none reaches a service
+  through the module. Each auto-configuration is conditional on its classes being present, and
+  every bean is `@ConditionalOnMissingBean`. The version is managed once, in the root pom's
+  `dependencyManagement`.
+- **notification-service:** gets the build metric only. It has Spring Web (for Actuator), so
+  the request log line is switched off by a property instead of a missing class:
+  `showcase.platform.request-logging.enabled: false` (default `true`). `PlatformWiringIT` guards
+  both that and the absence of Spring Security.
+- **The JWT decoder backs off for the tests' stub decoders.** `TestSecurityConfig` in account and
+  gateway no longer has to avoid the `jwtDecoder` bean name; their comments say so.
+- **Dockerfiles:** each copies `platform/pom.xml` with the other poms and `platform/src` before
+  its own `src`. `-am` builds the module, and `dependency:go-offline` skips reactor modules.
+
+### Task 2
+
+- **`com.showcase.platform.web`:** `Problems` (now public, otherwise unchanged) and the abstract
+  `PlatformExceptionHandler extends ResponseEntityExceptionHandler`. It is not an
+  auto-configuration. A service opts in by having its `@RestControllerAdvice ApiExceptionHandler`
+  extend it, which is why the gateway and Notification are unaffected.
+- **Precedence comes from a single advice.** Both halves sit in one class, and Spring's
+  `ExceptionHandlerMethodResolver` picks the handler for the closest exception type, so
+  `ACCOUNT_NOT_FOUND` and the rest beat the inherited `@ExceptionHandler(Exception.class)`.
+  `PlatformExceptionHandlerTest.aServicesOwnHandlerWinsOverTheCatchAll` pins it. A separate
+  platform advice would have needed `@Order` juggling, and two `ResponseEntityExceptionHandler`s
+  would both claim the MVC exceptions.
+- **The generic set** is the union of the four handlers: `ConstraintViolationException`, the
+  catch-all, `handleMethodArgumentNotValid`, `handleServletRequestBindingException`,
+  `handleMissingServletRequestParameter` (FX's version, which names the parameter),
+  `handleHttpMessageNotReadable`, `handleTypeMismatch` and the `handleExceptionInternal` code guard.
+  Fraud's `handleServletRequestBindingException` hard-coded "Missing required parameter:
+  accountId". It is replaced by the generic one, but no Fraud request reaches it: a missing
+  `accountId` arrives as `MissingServletRequestParameterException`, which has its own hook and
+  produces the same text.
+- **No per-service test assertion changed.** All four services already had tests asserting a
+  generic code (`VALIDATION_FAILED`/`MALFORMED_REQUEST`) and their own codes, so they prove the
+  wiring as they are.
+- Transfer's `AccountServiceUnavailableException` javadoc sat above the wrong handler
+  (`IdempotencyKeyConflictException`). It moved to the handler it describes.

@@ -1,0 +1,3 @@
+com.showcase.platform.logging.RequestLoggingAutoConfiguration
+com.showcase.platform.metrics.BuildInfoMetricsAutoConfiguration
+com.showcase.platform.security.KeycloakJwtAutoConfiguration

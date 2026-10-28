@@ -1,5 +1,7 @@
 package com.showcase.transfer.api;
 
+import com.showcase.platform.web.PlatformExceptionHandler;
+import com.showcase.platform.web.Problems;
 import com.showcase.transfer.client.AccountServiceUnavailableException;
 import com.showcase.transfer.domain.DebitOutcomeUnknownException;
 import com.showcase.transfer.domain.IdempotencyKeyConflictException;
@@ -10,27 +12,13 @@ import com.showcase.transfer.domain.TransferInProgressException;
 import com.showcase.transfer.domain.TransferNotFoundException;
 import com.showcase.transfer.domain.TransferStatus;
 import com.showcase.transfer.service.TransferPersistenceException;
-import jakarta.validation.ConstraintViolationException;
-import jakarta.validation.Path;
-
-import java.time.Instant;
-import org.springframework.beans.TypeMismatchException;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ProblemDetail;
-import org.springframework.http.ResponseEntity;
-import org.springframework.http.converter.HttpMessageNotReadableException;
-import org.springframework.web.bind.MethodArgumentNotValidException;
-import org.springframework.web.bind.MissingRequestHeaderException;
-import org.springframework.web.bind.ServletRequestBindingException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
-import org.springframework.web.context.request.WebRequest;
-import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
 @RestControllerAdvice
-public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
+public class ApiExceptionHandler extends PlatformExceptionHandler {
 
     private static final String INTERNAL_FAILURE_DETAIL =
             "The transfer could not be completed due to an internal error";
@@ -137,14 +125,6 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         return Problems.of(HttpStatus.BAD_REQUEST, "SAME_ACCOUNT_TRANSFER", "Same account", ex.getMessage());
     }
 
-    /**
-     * Only reachable from GET /transfers/{id}'s destination-owner ownership check
-     * ({@code AccountClient.isOwnedByCaller}) -- every other AccountClient call the live saga
-     * makes is already caught and turned into Transfer state inside TransferService.execute()
-     * before it can reach here. Without this handler, Account being unreachable during a read
-     * fell through to the generic 500 below instead of this project's usual 503
-     * ACCOUNT_SERVICE_UNAVAILABLE for exactly that condition. Found in code review.
-     */
     @ExceptionHandler(IdempotencyKeyConflictException.class)
     public ProblemDetail handleIdempotencyConflict(IdempotencyKeyConflictException ex) {
         return Problems.of(HttpStatus.CONFLICT, "IDEMPOTENCY_KEY_CONFLICT", "Idempotency key conflict", ex.getMessage());
@@ -179,101 +159,16 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     }
 
     /**
-     * @Validated on TransferController routes the constraints on its Idempotency-Key
-     * @RequestHeader through Spring's AOP MethodValidationInterceptor, which throws this rather
-     * than the MethodArgumentNotValidException handled below. Without it a blank or overlong key
-     * fell through to the generic 500. Same handler as account-service's.
+     * Only reachable from GET /transfers/{id}'s destination-owner ownership check
+     * ({@code AccountClient.isOwnedByCaller}) -- every other AccountClient call the live saga
+     * makes is already caught and turned into Transfer state inside TransferService.execute()
+     * before it can reach here. Without this handler, Account being unreachable during a read
+     * fell through to the inherited catch-all 500 instead of this project's usual 503
+     * ACCOUNT_SERVICE_UNAVAILABLE for exactly that condition. Found in code review.
      */
-    @ExceptionHandler(ConstraintViolationException.class)
-    public ProblemDetail handleConstraintViolation(ConstraintViolationException ex) {
-        String detail = ex.getConstraintViolations().stream()
-                .findFirst()
-                .map(violation -> lastPathSegment(violation.getPropertyPath()) + " " + violation.getMessage())
-                .orElse("Validation failed");
-        return Problems.of(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "Validation failed", detail);
-    }
-
-    private static String lastPathSegment(Path path) {
-        String last = "request";
-        for (Path.Node node : path) {
-            last = node.getName();
-        }
-        return last;
-    }
-
     @ExceptionHandler(AccountServiceUnavailableException.class)
     public ProblemDetail handleAccountUnavailable(AccountServiceUnavailableException ex) {
         return Problems.of(HttpStatus.SERVICE_UNAVAILABLE, "ACCOUNT_SERVICE_UNAVAILABLE",
                 "Account Service unavailable", "Account Service is currently unavailable");
-    }
-
-    @ExceptionHandler(Exception.class)
-    public ProblemDetail handleUnexpected(Exception ex) {
-        logger.error("Unhandled exception", ex);
-        return Problems.of(HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", "Internal error",
-                "An unexpected error occurred");
-    }
-
-    @Override
-    protected ResponseEntity<Object> handleMethodArgumentNotValid(
-            MethodArgumentNotValidException ex, HttpHeaders headers, HttpStatusCode status, WebRequest request) {
-        String detail = ex.getBindingResult().getFieldErrors().stream()
-                .findFirst()
-                .map(error -> error.getField() + " " + error.getDefaultMessage())
-                .orElse("Validation failed");
-        return ResponseEntity.badRequest()
-                .body(Problems.of(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "Validation failed", detail));
-    }
-
-    /**
-     * A missing Idempotency-Key arrives as {@link MissingRequestHeaderException}, which
-     * {@code ResponseEntityExceptionHandler} routes through this general hook -- without the
-     * override it would get the generic REQUEST_REJECTED code rather than VALIDATION_FAILED.
-     * Mirrors account-service's handler.
-     */
-    @Override
-    protected ResponseEntity<Object> handleServletRequestBindingException(
-            ServletRequestBindingException ex, HttpHeaders headers, HttpStatusCode status, WebRequest request) {
-        String detail = (ex instanceof MissingRequestHeaderException missingHeader)
-                ? "Missing required header: " + missingHeader.getHeaderName()
-                : "Malformed request";
-        return ResponseEntity.badRequest()
-                .body(Problems.of(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "Validation failed", detail));
-    }
-
-    @Override
-    protected ResponseEntity<Object> handleHttpMessageNotReadable(
-            HttpMessageNotReadableException ex, HttpHeaders headers, HttpStatusCode status, WebRequest request) {
-        return ResponseEntity.badRequest()
-                .body(Problems.of(HttpStatus.BAD_REQUEST, "MALFORMED_REQUEST", "Malformed request",
-                        "Malformed request body"));
-    }
-
-    @Override
-    protected ResponseEntity<Object> handleTypeMismatch(
-            TypeMismatchException ex, HttpHeaders headers, HttpStatusCode status, WebRequest request) {
-        return ResponseEntity.badRequest()
-                .body(Problems.of(HttpStatus.BAD_REQUEST, "MALFORMED_REQUEST", "Malformed request",
-                        "Invalid value for parameter: " + ex.getPropertyName()));
-    }
-
-    /**
-     * Stamps the {@code code}/{@code timestamp} invariant onto the ~14 MVC exception types
-     * this class does not override explicitly (405, 415, 406, unmapped paths, and the rest).
-     * Without it they render a ProblemDetail with NO code at all, and a consumer reading
-     * {@code code} gets null on exactly the paths a mis-wired caller hits most. The handler
-     * is duplicated per service rather than shared, so every service carries its own copy
-     * of this guard.
-     */
-    @Override
-    protected ResponseEntity<Object> handleExceptionInternal(Exception ex, Object body,
-            HttpHeaders headers, HttpStatusCode statusCode, WebRequest request) {
-        ResponseEntity<Object> response = super.handleExceptionInternal(ex, body, headers, statusCode, request);
-        if (response != null && response.getBody() instanceof ProblemDetail problem
-                && (problem.getProperties() == null || !problem.getProperties().containsKey("code"))) {
-            problem.setProperty("code", statusCode.is5xxServerError() ? "INTERNAL_ERROR" : "REQUEST_REJECTED");
-            problem.setProperty("timestamp", Instant.now());
-        }
-        return response;
     }
 }

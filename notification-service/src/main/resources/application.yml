@@ -93,3 +93,10 @@ notification:
     initial-interval: 1s
     multiplier: 2.0
     max-interval: 30s
+
+# No business HTTP endpoints, so no per-request log line (docs/phase-13-log-aggregation-loki.md);
+# the platform module registers it in every other servlet service.
+showcase:
+  platform:
+    request-logging:
+      enabled: false

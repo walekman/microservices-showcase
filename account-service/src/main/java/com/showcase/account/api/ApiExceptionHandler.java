@@ -5,28 +5,16 @@ import com.showcase.account.domain.AccountNotFoundException;
 import com.showcase.account.domain.AccountOperationConflictException;
 import com.showcase.account.domain.CurrencyMismatchException;
 import com.showcase.account.domain.InsufficientFundsException;
-import jakarta.validation.ConstraintViolationException;
-import jakarta.validation.Path;
-import org.springframework.beans.TypeMismatchException;
-import org.springframework.http.HttpHeaders;
+import com.showcase.platform.web.PlatformExceptionHandler;
+import com.showcase.platform.web.Problems;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ProblemDetail;
-import org.springframework.http.ResponseEntity;
-import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
-import org.springframework.web.bind.MethodArgumentNotValidException;
-import org.springframework.web.bind.MissingRequestHeaderException;
-import org.springframework.web.bind.ServletRequestBindingException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
-import org.springframework.web.context.request.WebRequest;
-import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
-
-import java.time.Instant;
 
 @RestControllerAdvice
-public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
+public class ApiExceptionHandler extends PlatformExceptionHandler {
 
     @ExceptionHandler(AccountNotFoundException.class)
     public ProblemDetail handleNotFound(AccountNotFoundException ex) {
@@ -57,101 +45,5 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(AccountOperationConflictException.class)
     public ProblemDetail handleIdempotencyConflict(AccountOperationConflictException ex) {
         return Problems.of(HttpStatus.CONFLICT, "IDEMPOTENCY_KEY_CONFLICT", "Idempotency key conflict", ex.getMessage());
-    }
-
-    /**
-     * @Validated on the controller (see its javadoc) routes a constraint on an
-     * @RequestHeader/@PathVariable method parameter through Spring's AOP-based
-     * MethodValidationInterceptor, which throws this -- not the @Valid-on-@RequestBody path
-     * MethodArgumentNotValidException covers below. Without this handler, a blank or overlong
-     * Idempotency-Key fell through to the generic Exception handler as a 500.
-     */
-    @ExceptionHandler(ConstraintViolationException.class)
-    public ProblemDetail handleConstraintViolation(ConstraintViolationException ex) {
-        String detail = ex.getConstraintViolations().stream()
-                .findFirst()
-                .map(violation -> lastPathSegment(violation.getPropertyPath()) + " " + violation.getMessage())
-                .orElse("Validation failed");
-        return Problems.of(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "Validation failed", detail);
-    }
-
-    private static String lastPathSegment(Path path) {
-        String last = "request";
-        for (Path.Node node : path) {
-            last = node.getName();
-        }
-        return last;
-    }
-
-    @ExceptionHandler(Exception.class)
-    public ProblemDetail handleUnexpected(Exception ex) {
-        logger.error("Unhandled exception", ex);
-        return Problems.of(HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", "Internal error",
-                "An unexpected error occurred");
-    }
-
-    @Override
-    protected ResponseEntity<Object> handleMethodArgumentNotValid(
-            MethodArgumentNotValidException ex, HttpHeaders headers, HttpStatusCode status, WebRequest request) {
-        String detail = ex.getBindingResult().getFieldErrors().stream()
-                .findFirst()
-                .map(error -> error.getField() + " " + error.getDefaultMessage())
-                .orElse("Validation failed");
-        return ResponseEntity.badRequest()
-                .body(Problems.of(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "Validation failed", detail));
-    }
-
-    /**
-     * {@code ResponseEntityExceptionHandler} has no dedicated hook for a missing
-     * {@code @RequestHeader} the way it does for a missing request parameter --
-     * {@link MissingRequestHeaderException} is handled through this more general one instead
-     * (it extends {@code MissingRequestValueException} extends
-     * {@link ServletRequestBindingException}). Special-cased for the header-name detail since
-     * that is the only subtype this codebase's controllers can currently trigger; any other
-     * {@code ServletRequestBindingException} falls back to a generic message rather than a
-     * missing branch.
-     */
-    @Override
-    protected ResponseEntity<Object> handleServletRequestBindingException(
-            ServletRequestBindingException ex, HttpHeaders headers, HttpStatusCode status, WebRequest request) {
-        String detail = (ex instanceof MissingRequestHeaderException missingHeader)
-                ? "Missing required header: " + missingHeader.getHeaderName()
-                : "Malformed request";
-        return ResponseEntity.badRequest()
-                .body(Problems.of(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "Validation failed", detail));
-    }
-
-    @Override
-    protected ResponseEntity<Object> handleHttpMessageNotReadable(
-            HttpMessageNotReadableException ex, HttpHeaders headers, HttpStatusCode status, WebRequest request) {
-        return ResponseEntity.badRequest()
-                .body(Problems.of(HttpStatus.BAD_REQUEST, "MALFORMED_REQUEST", "Malformed request",
-                        "Malformed request body"));
-    }
-
-    @Override
-    protected ResponseEntity<Object> handleTypeMismatch(
-            TypeMismatchException ex, HttpHeaders headers, HttpStatusCode status, WebRequest request) {
-        return ResponseEntity.badRequest()
-                .body(Problems.of(HttpStatus.BAD_REQUEST, "MALFORMED_REQUEST", "Malformed request",
-                        "Invalid value for parameter: " + ex.getPropertyName()));
-    }
-
-    /**
-     * Last line of defence for the "every error response carries a {@code code}" contract: the
-     * exceptions {@link ResponseEntityExceptionHandler} handles for us (405, 415, 406, unmapped
-     * paths, missing path variables, ...) render a {@code ProblemDetail} that carries no custom
-     * properties, so stamp the invariant here rather than overriding every hook individually.
-     */
-    @Override
-    protected ResponseEntity<Object> handleExceptionInternal(Exception ex, Object body,
-            HttpHeaders headers, HttpStatusCode statusCode, WebRequest request) {
-        ResponseEntity<Object> response = super.handleExceptionInternal(ex, body, headers, statusCode, request);
-        if (response != null && response.getBody() instanceof ProblemDetail problem
-                && (problem.getProperties() == null || !problem.getProperties().containsKey("code"))) {
-            problem.setProperty("code", statusCode.is5xxServerError() ? "INTERNAL_ERROR" : "REQUEST_REJECTED");
-            problem.setProperty("timestamp", Instant.now());
-        }
-        return response;
     }
 }
