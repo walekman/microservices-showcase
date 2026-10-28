@@ -29,6 +29,10 @@ import java.time.Instant;
  * Both halves live in one advice, so Spring picks the handler for the most specific exception
  * type: a service's handler always wins over the inherited catch-all, and a service can
  * override any method here. See docs/phase-14-shared-platform-module.md.
+ *
+ * <p>An extending service needs {@code jakarta.validation-api} at runtime, since the module only
+ * has it as an optional dependency: without it Spring can't read the
+ * {@code ConstraintViolationException} handler and the context fails to start.
  */
 public abstract class PlatformExceptionHandler extends ResponseEntityExceptionHandler {
 

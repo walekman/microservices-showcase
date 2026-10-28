@@ -48,8 +48,10 @@ class PlatformAutoConfigurationTest {
     }
 
     @Test
-    void requestLogLineRunsAfterTheObservationFilterAndBeforeSecurity() {
+    void requestLogLineKeepsItsOrderBetweenTheObservationFilterAndSecurity() {
         // ServerHttpObservationFilter is HIGHEST_PRECEDENCE + 1, Spring Security's chain -100.
+        // This only pins the constant; gateway's RequestLoggingIT and tools/check-trace-logs.ps1
+        // prove the real position (the line carries the traceId, and still appears for a 401).
         assertThat(OrderUtils.getOrder(RequestLoggingFilter.class)).isEqualTo(Ordered.HIGHEST_PRECEDENCE + 2);
     }
 

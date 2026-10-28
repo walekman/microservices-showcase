@@ -224,8 +224,9 @@ Docs updated alongside:
   `RequestLoggingAutoConfiguration`, `KeycloakJwtAutoConfiguration` (with `KeycloakProperties`),
   `BuildInfoMetricsAutoConfiguration`, in packages `com.showcase.platform.{logging,security,metrics}`.
   `KeycloakRealmRoleConverter` is a plain class each `SecurityConfig` still instantiates.
-- **Only `spring-boot-starter` is a required dependency.** Spring Web, the servlet API, Spring
-  Security's resource server and JOSE, and Micrometer are `optional`, so none reaches a service
+- **Only `spring-boot-starter` is a required dependency.** `spring-webmvc`, the servlet API,
+  Spring Security's resource server and JOSE, Micrometer and (from Task 2) `jakarta.validation-api`
+  are `optional`, so none reaches a service
   through the module. Each auto-configuration is conditional on its classes being present, and
   every bean is `@ConditionalOnMissingBean`. The version is managed once, in the root pom's
   `dependencyManagement`.
@@ -263,3 +264,16 @@ Docs updated alongside:
   wiring as they are.
 - Transfer's `AccountServiceUnavailableException` javadoc sat above the wrong handler
   (`IdempotencyKeyConflictException`). It moved to the handler it describes.
+
+### Final review fixes
+
+The whole-branch review found nothing critical or important. Its four minor points:
+
+- **A service extending `PlatformExceptionHandler` needs `jakarta.validation-api` at runtime**
+  (for the `ConstraintViolationException` handler). Fraud and FX had it only through springdoc,
+  so both now declare it; the handler's javadoc states the requirement.
+- `PlatformWiringIT` also asserts Notification has no `ResponseEntityExceptionHandler`, as the
+  Testing section promises.
+- The filter-order test in `PlatformAutoConfigurationTest` is renamed and says it only pins the
+  constant; gateway's `RequestLoggingIT` and `check-trace-logs.ps1` prove the real position.
+- The optional-dependency list above was corrected.
