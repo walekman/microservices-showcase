@@ -54,32 +54,32 @@
     },
     {
       "id": 5,
-      "title": "Events consumed by topic and outcome",
+      "title": "Events consumed by topic and outcome (since start)",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 6 },
       "datasource": { "type": "prometheus", "uid": "Prometheus" },
       "targets": [
-        { "expr": "sum by (topic, outcome) (rate(notification_events_total[1m]))", "legendFormat": "{{topic}} - {{outcome}}", "refId": "A" }
+        { "expr": "sum by (topic, outcome) (notification_events_total)", "legendFormat": "{{topic}} - {{outcome}}", "refId": "A" }
       ]
     },
     {
       "id": 6,
-      "title": "Failed delivery attempts by exception (retried in place)",
+      "title": "Failed delivery attempts by exception, retried in place (since start)",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
       "datasource": { "type": "prometheus", "uid": "Prometheus" },
       "targets": [
-        { "expr": "sum by (exception) (rate(notification_delivery_failures_total[1m]))", "legendFormat": "{{exception}}", "refId": "A" }
+        { "expr": "sum by (exception) (notification_delivery_failures_total)", "legendFormat": "{{exception}}", "refId": "A" }
       ]
     },
     {
       "id": 7,
-      "title": "Dead-lettered by topic and reason",
+      "title": "Dead-lettered by topic and reason (since start)",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
       "datasource": { "type": "prometheus", "uid": "Prometheus" },
       "targets": [
-        { "expr": "sum by (topic, reason) (rate(notification_dead_lettered_total[1m]))", "legendFormat": "{{topic}} - {{reason}}", "refId": "A" }
+        { "expr": "sum by (topic, reason) (notification_dead_lettered_total)", "legendFormat": "{{topic}} - {{reason}}", "refId": "A" }
       ]
     }
   ]
