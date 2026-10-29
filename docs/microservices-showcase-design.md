@@ -1,13 +1,13 @@
 # Banking Microservices Showcase — Design
 
-**Status:** Implemented through Phase 9 — see `docs/roadmap.md`. This document describes the system as built; where it and a phase doc disagree, fix this one.
+**Status:** Implemented through Phase 14 — see `docs/roadmap.md`. This document describes the system as built; where it and a phase doc disagree, fix this one.
 **Purpose:** Demonstrating current Java microservices practice: synchronous + asynchronous inter-service communication, relational persistence with JPA, observability, resilience, and containerized local deployment.
 
 ## 1. Overview
 
 A small banking/ledger system: users hold accounts with balances, and money moves between accounts via a **transfer** operation. The transfer flow is the centerpiece — it's a genuine distributed transaction across services, orchestrated as a saga with compensation, giving a concrete, demoable story for both synchronous resilience patterns and asynchronous eventing, rather than either in isolation.
 
-Non-goals: this is not a production banking system. No real payment rails, no double-entry general ledger accounting, no multi-currency, no k8s/service mesh. Scope is deliberately bounded to what's needed to demonstrate the target patterns credibly.
+Non-goals: this is not a production banking system. No real payment rails, no double-entry general ledger accounting, no k8s/service mesh. Multi-currency is limited to one fixed currency per account and a rate locked onto each cross-currency transfer (§4). Scope is deliberately bounded to what's needed to demonstrate the target patterns credibly.
 
 ## 2. Services
 
@@ -103,7 +103,7 @@ Every terminal state emits a `TransferCompleted` or `TransferFailed` event throu
 
 ## 5. Observability
 
-- **Tracing:** a single transfer request produces one continuous trace spanning Gateway → Transfer → Fraud/Account (in saga order) → (async hop via Kafka headers) → Notification. Micrometer auto-propagates W3C trace context across both REST calls and Kafka messages, so the trace crosses the sync/async boundary — the concrete proof of the "both sync and async" design goal. FX Service goes one level deeper: `@Observed` on `FxRateController`, `FxRateService`, `RateCache` and `RateProvider` makes their public methods spans (with every argument as an `args.*` span attribute, never a metric tag), and Lettuce's `MicrometerTracing` (`TracingConfig`) adds a span per Redis command with its key, so a `/fx/rates` trace shows the cache-aside path (hit, or miss → lock → provider → put → unlock). Fraud Service traces its database calls with `datasource-micrometer-spring-boot` (Boot does not instrument the `DataSource`): a span per JDBC connection (checkout to release) and one per query carrying its SQL without bound parameter values, both under the calling span.
+- **Tracing:** a single transfer request produces one continuous trace spanning Gateway → Transfer → Account/FX/Fraud (in saga order) → (async hop via Kafka headers) → Notification. Micrometer auto-propagates W3C trace context across both REST calls and Kafka messages, so the trace crosses the sync/async boundary — the concrete proof of the "both sync and async" design goal. FX Service goes one level deeper: `@Observed` on `FxRateController`, `FxRateService`, `RateCache` and `RateProvider` makes their public methods spans (with every argument as an `args.*` span attribute, never a metric tag), and Lettuce's `MicrometerTracing` (`TracingConfig`) adds a span per Redis command with its key, so a `/fx/rates` trace shows the cache-aside path (hit, or miss → lock → provider → put → unlock). Fraud Service traces its database calls with `datasource-micrometer-spring-boot` (Boot does not instrument the `DataSource`): a span per JDBC connection (checkout to release) and one per query carrying its SQL without bound parameter values, both under the calling span.
 - **Metrics:** standard JVM/HTTP metrics plus business metrics: transfers completed/failed/fraud-rejected counters, outbox-backlog gauge. Resilience4j's Micrometer integration exposes circuit-breaker state transitions as metrics for free — visible on a Grafana panel during a fault-injection test.
 - **Logging:** structured JSON, `traceId`/`spanId` auto-injected via MDC. Grafana Alloy tails the six Spring services' container stdout through the Docker socket and pushes it to Grafana Loki (single binary, 3-day retention), labelled only `service` and `level`; every other JSON field, `traceId` included, stays in the line and is filtered with `| json`. In Grafana, a Tempo span's "Related logs" runs that query for its trace, and a log line's `traceId` links back to the trace; a provisioned Service Logs dashboard filters by service, level and text. Each HTTP-facing service (all but Notification) logs one line per request (`POST /transfers 201 184ms`, no query string, headers or bodies, `/actuator/**` skipped; 5xx at `WARN`), so every hop of a request shows up in its trace's logs. Anonymous Grafana visitors are Editors, because the trace↔logs links open in Explore, which Viewers can't use. Kafka, Keycloak, Postgres and the other infrastructure containers are not collected. Built in `docs/phase-13-log-aggregation-loki.md`.
 - **Health:** Actuator health/readiness endpoints per service, wired into Docker Compose healthchecks.
@@ -119,11 +119,12 @@ Every terminal state emits a `TransferCompleted` or `TransferFailed` event throu
 ## 7. Deployment / Local Dev
 
 Single `docker compose up`:
-- 5 Spring Boot services (Gateway, Account, Transfer, Fraud, Notification), plus the Bank UI (`web-ui`, `nginx:alpine` serving static assets, no build step, host port 8090) — see `docs/phase-9-bank-ui.md`
+- 6 Spring Boot services (Gateway, Account, Transfer, Fraud, FX, Notification), plus the Bank UI (`web-ui`, `nginx:alpine` serving static assets, no build step, host port 8090) — see `docs/phase-9-bank-ui.md`
 - One Postgres container, separate database per stateful service (Account, Transfer, Notification, Fraud) via init script
 - Kafka in KRaft mode (no Zookeeper)
+- Redis (single node, persistence off), FX Service's rate cache
 - Keycloak with a pre-loaded realm/client (import file, not manual setup), including the Bank UI's custom login/registration theme
-- OTel Collector, Prometheus, Grafana (provisioned dashboards), Grafana Tempo
+- OTel Collector, Prometheus, Grafana (provisioned dashboards), Grafana Tempo, Grafana Loki fed by Grafana Alloy (Loki and Alloy are not in the E2E stack)
 
 There is no seed script. Keycloak's realm import provides the demo users; bank accounts are created by self-registration through the Bank UI (one account per user, seeded with a 1000.00 balance) or with `POST /accounts`. README covers: architecture diagram, run instructions, example requests, and where to observe the result (Grafana dashboard, trace UI).
 
