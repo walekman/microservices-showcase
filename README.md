@@ -130,8 +130,9 @@ at-least-once and redeliveries are deduplicated by `transferId`; unreadable even
 
 ## Observability
 
-Grafana (http://localhost:3001) ships five dashboards: JVM, business metrics (transfer
-outcomes, outbox backlog, circuit breaker), Service Versions, FX Cache, and Service Logs. Every service
+Grafana (http://localhost:3001) ships six dashboards: JVM, business metrics (transfer
+outcomes, outbox backlog, circuit breaker), Service Versions, FX Cache, Notification Consumer
+(stored, duplicate, retried and dead-lettered events), and Service Logs. Every service
 exports traces to Tempo via an OTel Collector — one transfer yields a single trace from the
 Gateway through Transfer, Account, Fraud and the Kafka hop to Notification. Logs are JSON on
 stdout carrying `traceId`/`spanId`. See `docs/phase-8-observability.md`.

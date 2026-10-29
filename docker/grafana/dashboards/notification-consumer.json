@@ -1,0 +1,86 @@
+{
+  "title": "Microservices Showcase — Notification Consumer",
+  "uid": "showcase-notification-consumer",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-15m", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Notifications stored (since start)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "sum(notification_events_total{outcome=\"stored\"}) or vector(0)", "refId": "A" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Duplicates skipped (since start)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "sum(notification_events_total{outcome=\"duplicate\"}) or vector(0)", "refId": "A" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Failed delivery attempts (since start)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "sum(notification_delivery_failures_total) or vector(0)", "refId": "A" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Dead-lettered (since start)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] }
+        }
+      },
+      "targets": [
+        { "expr": "sum(notification_dead_lettered_total) or vector(0)", "refId": "A" }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Events consumed by topic and outcome (since start)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "sum by (topic, outcome) (notification_events_total)", "legendFormat": "{{topic}} - {{outcome}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Failed delivery attempts by exception, retried in place (since start)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "sum by (exception) (notification_delivery_failures_total)", "legendFormat": "{{exception}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Dead-lettered by topic and reason (since start)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        { "expr": "sum by (topic, reason) (notification_dead_lettered_total)", "legendFormat": "{{topic}} - {{reason}}", "refId": "A" }
+      ]
+    }
+  ]
+}
