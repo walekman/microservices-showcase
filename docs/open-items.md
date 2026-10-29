@@ -14,7 +14,6 @@ lands, and add new ones as phases defer them.
 | 3 | **Release automation**: versions from git tags, an image registry, a changelog. | `phase-8b-version-visibility.md` Scope Boundary |
 | 4 | **Automated browser tests for the Bank UI** (e.g. Playwright). | `phase-9-bank-ui.md` Scope Boundary |
 | 5 | **Replaying Notification's dead-letter topics.** Dead-lettered records stay parked on `transfer.*-dlt`; re-publishing one after a fix is a manual Kafka CLI step. | `phase-11-notification-persistence-error-handling.md` Scope Boundary |
-| 6 | **A Grafana panel for Notification's consumer metrics** (`notification_events_total`, `notification_delivery_failures_total`, `notification_dead_lettered_total`). Prometheus scrapes them; no dashboard shows them. | `phase-11-notification-persistence-error-handling.md` Scope Boundary |
 
 ## 2. Deliberately not planned
 
