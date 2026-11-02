@@ -195,8 +195,8 @@ class TransferSaveServiceTest {
         ArgumentCaptor<OutboxEvent> event = ArgumentCaptor.forClass(OutboxEvent.class);
         verify(outboxEventRepository).save(event.capture());
         tools.jackson.databind.JsonNode payload = new ObjectMapper().readTree(event.getValue().getPayload());
-        assertThat(payload.get("sourceCurrency").asText()).isEqualTo("PLN");
-        assertThat(payload.get("destinationCurrency").asText()).isEqualTo("EUR");
+        assertThat(payload.get("sourceCurrency").asString()).isEqualTo("PLN");
+        assertThat(payload.get("destinationCurrency").asString()).isEqualTo("EUR");
         assertThat(payload.get("rate").decimalValue()).isEqualByComparingTo("0.22819");
         assertThat(payload.get("creditAmount").decimalValue()).isEqualByComparingTo("9.13");
     }

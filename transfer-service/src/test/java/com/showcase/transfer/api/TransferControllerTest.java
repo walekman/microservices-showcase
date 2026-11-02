@@ -95,7 +95,7 @@ class TransferControllerTest {
         when(transferService.execute(FROM, TO, AMOUNT, SUBJECT, KEY)).thenReturn(transfer);
 
         mockMvc.perform(post("/transfers").header("Idempotency-Key", KEY).contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(transferExecutor()))
-                .andExpect(status().isUnprocessableEntity())
+                .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.code").value("INSUFFICIENT_FUNDS"))
                 .andExpect(jsonPath("$.transferStatus").value("FAILED"));
     }
@@ -134,7 +134,7 @@ class TransferControllerTest {
         when(transferService.execute(FROM, TO, AMOUNT, SUBJECT, KEY)).thenReturn(transfer);
 
         mockMvc.perform(post("/transfers").header("Idempotency-Key", KEY).contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(transferExecutor()))
-                .andExpect(status().isUnprocessableEntity())
+                .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.code").value("AMOUNT_TOO_SMALL"))
                 .andExpect(jsonPath("$.detail").value("0.01 PLN converts to 0.00 EUR at rate 0.22819"));
     }
@@ -179,7 +179,7 @@ class TransferControllerTest {
         // and contains nothing internal, so blanket sanitising would throw away the one thing
         // that tells them what to do next.
         mockMvc.perform(post("/transfers").header("Idempotency-Key", KEY).contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(transferExecutor()))
-                .andExpect(status().isUnprocessableEntity())
+                .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.detail").value("Balance 10.00 is less than 40.00"));
     }
 

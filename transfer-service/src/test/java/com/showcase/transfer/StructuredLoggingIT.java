@@ -13,7 +13,7 @@ import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
@@ -29,7 +29,7 @@ class StructuredLoggingIT {
 
     @Container
     @ServiceConnection
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+    static PostgreSQLContainer postgres = new PostgreSQLContainer("postgres:16-alpine");
 
     private static final Logger log = LoggerFactory.getLogger(StructuredLoggingIT.class);
 
@@ -54,6 +54,6 @@ class StructuredLoggingIT {
         JsonNode node = mapper.readTree(jsonLine);
         assertThat(node.has("traceId")).isTrue();
         assertThat(node.has("spanId")).isTrue();
-        assertThat(node.get("traceId").asText()).isNotBlank();
+        assertThat(node.get("traceId").asString()).isNotBlank();
     }
 }

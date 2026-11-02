@@ -49,7 +49,7 @@ public class OutboxPublisher implements SchedulingConfigurer {
 
     @Override
     public void configureTasks(ScheduledTaskRegistrar registrar) {
-        registrar.addFixedDelayTask(this::publishPending, properties.pollInterval().toMillis());
+        registrar.addFixedDelayTask(this::publishPending, properties.pollInterval());
     }
 
     // Package-private so OutboxPublisherIT/OutboxPublisherTest can invoke it directly,
