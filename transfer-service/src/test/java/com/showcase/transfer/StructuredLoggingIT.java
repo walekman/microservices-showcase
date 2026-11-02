@@ -1,8 +1,8 @@
 // transfer-service/src/test/java/com/showcase/transfer/StructuredLoggingIT.java
 package com.showcase.transfer;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import io.micrometer.tracing.Tracer;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;

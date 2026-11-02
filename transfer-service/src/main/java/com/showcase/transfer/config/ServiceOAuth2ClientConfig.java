@@ -1,7 +1,7 @@
 package com.showcase.transfer.config;
 
 import com.showcase.transfer.client.AuthorizationPropagatingInterceptor;
-import org.springframework.boot.web.client.RestClientCustomizer;
+import org.springframework.boot.restclient.RestClientCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.oauth2.client.AuthorizedClientServiceOAuth2AuthorizedClientManager;

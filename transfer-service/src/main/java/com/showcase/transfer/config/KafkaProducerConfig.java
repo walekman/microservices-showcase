@@ -1,7 +1,7 @@
 package com.showcase.transfer.config;
 
 import io.micrometer.observation.ObservationRegistry;
-import org.springframework.boot.autoconfigure.kafka.KafkaProperties;
+import org.springframework.boot.kafka.autoconfigure.KafkaProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.core.DefaultKafkaProducerFactory;
@@ -15,7 +15,7 @@ public class KafkaProducerConfig {
 
     @Bean
     public ProducerFactory<String, String> producerFactory(KafkaProperties kafkaProperties) {
-        Map<String, Object> properties = kafkaProperties.buildProducerProperties(null);
+        Map<String, Object> properties = kafkaProperties.buildProducerProperties();
         return new DefaultKafkaProducerFactory<>(properties);
     }
 

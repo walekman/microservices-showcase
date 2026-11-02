@@ -1,7 +1,7 @@
 package com.showcase.e2e.support;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
 
 import java.math.BigDecimal;
 import java.util.UUID;
@@ -15,7 +15,7 @@ public record HttpResult(int status, String raw) {
         }
         try {
             return Http.JSON.readTree(raw);
-        } catch (JsonProcessingException ex) {
+        } catch (JacksonException ex) {
             throw new AssertionError("Response body is not JSON: " + raw, ex);
         }
     }

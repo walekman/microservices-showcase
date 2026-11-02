@@ -115,3 +115,9 @@ each case, and the rule for future dependencies.
 - `./mvnw -Pe2e -pl e2e-tests verify` with the dev stack stopped first.
 
 ## Implementation Notes (as built)
+
+### Task 1
+
+Landed as specified in "What has to change". Full `./mvnw test`: 467 tests, 0 failures, on the
+same versions as the Versions table. Not yet exercised: Docker images, the live stack and E2E
+(Task 2).

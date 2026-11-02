@@ -1,8 +1,7 @@
 // transfer-service/src/test/java/com/showcase/transfer/service/TransferSaveServiceTest.java
 package com.showcase.transfer.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import tools.jackson.databind.ObjectMapper;
 import com.showcase.transfer.domain.OutboxEvent;
 import com.showcase.transfer.domain.OutboxEventRepository;
 import com.showcase.transfer.domain.Transfer;
@@ -48,10 +47,9 @@ class TransferSaveServiceTest {
 
     @BeforeEach
     void setUp() {
-        // A plain ObjectMapper does not know how to serialize java.time.Instant without this
-        // module -- Spring's auto-configured bean has it registered already, but a
-        // hand-built one in a unit test needs it explicitly, or toPayload() throws.
-        ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
+        // Jackson 3 handles java.time.Instant out of the box, so a plain mapper serializes the
+        // payload the same way Spring's auto-configured one does.
+        ObjectMapper objectMapper = new ObjectMapper();
         meterRegistry = new SimpleMeterRegistry();
         service = new TransferSaveService(transferRepository, outboxEventRepository, objectMapper, meterRegistry, tracer);
     }
@@ -196,7 +194,7 @@ class TransferSaveServiceTest {
 
         ArgumentCaptor<OutboxEvent> event = ArgumentCaptor.forClass(OutboxEvent.class);
         verify(outboxEventRepository).save(event.capture());
-        com.fasterxml.jackson.databind.JsonNode payload = new ObjectMapper().readTree(event.getValue().getPayload());
+        tools.jackson.databind.JsonNode payload = new ObjectMapper().readTree(event.getValue().getPayload());
         assertThat(payload.get("sourceCurrency").asText()).isEqualTo("PLN");
         assertThat(payload.get("destinationCurrency").asText()).isEqualTo("EUR");
         assertThat(payload.get("rate").decimalValue()).isEqualByComparingTo("0.22819");

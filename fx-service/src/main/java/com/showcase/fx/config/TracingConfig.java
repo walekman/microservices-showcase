@@ -6,7 +6,7 @@ import io.micrometer.observation.ObservationFilter;
 import io.micrometer.observation.ObservationRegistry;
 import io.micrometer.observation.aop.ObservedAspect;
 import org.aspectj.lang.reflect.MethodSignature;
-import org.springframework.boot.autoconfigure.data.redis.ClientResourcesBuilderCustomizer;
+import org.springframework.boot.data.redis.autoconfigure.ClientResourcesBuilderCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 

@@ -1,6 +1,6 @@
 package com.showcase.transfer.client;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -197,7 +197,7 @@ class AccountClientTest {
     @Test
     void debitThrowsRejectedOnInsufficientFunds() {
         server.expect(requestTo(BASE_URL + "/accounts/" + ACCOUNT_ID + "/debit"))
-                .andRespond(problem(HttpStatus.UNPROCESSABLE_ENTITY, "INSUFFICIENT_FUNDS", "not enough money"));
+                .andRespond(problem(HttpStatus.UNPROCESSABLE_CONTENT, "INSUFFICIENT_FUNDS", "not enough money"));
 
         assertThatThrownBy(() -> accountClient.debit(ACCOUNT_ID, new BigDecimal("40.00"), "PLN", "transfer-1:debit"))
                 .isInstanceOf(AccountRejectedException.class)

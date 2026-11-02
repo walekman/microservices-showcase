@@ -1,8 +1,9 @@
 package com.showcase.e2e.support;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -18,7 +19,8 @@ import java.util.stream.Collectors;
 public final class Http {
 
     // BigDecimal for every JSON decimal, so a balance of 425.37 is compared exactly, never as a double.
-    static final ObjectMapper JSON = new ObjectMapper().enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
+    static final ObjectMapper JSON = JsonMapper.builder()
+            .enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS).build();
 
     private static final HttpClient CLIENT = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
     // Longer than the slowest single request the suite makes: a lost-debit transfer takes ~15 s.
@@ -43,7 +45,7 @@ public final class Http {
     public static HttpRequest.BodyPublisher json(Object body) {
         try {
             return HttpRequest.BodyPublishers.ofString(JSON.writeValueAsString(body));
-        } catch (JsonProcessingException ex) {
+        } catch (JacksonException ex) {
             throw new IllegalArgumentException(ex);
         }
     }

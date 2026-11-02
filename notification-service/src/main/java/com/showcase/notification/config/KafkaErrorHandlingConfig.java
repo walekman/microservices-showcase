@@ -1,6 +1,6 @@
 package com.showcase.notification.config;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -10,7 +10,7 @@ import org.apache.kafka.common.serialization.StringSerializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.kafka.KafkaProperties;
+import org.springframework.boot.kafka.autoconfigure.KafkaProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -26,7 +26,7 @@ import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
 import org.springframework.kafka.listener.DefaultErrorHandler;
 import org.springframework.kafka.listener.RetryListener;
 import org.springframework.kafka.support.serializer.DelegatingByTypeSerializer;
-import org.springframework.kafka.support.serializer.JsonSerializer;
+import org.springframework.kafka.support.serializer.JacksonJsonSerializer;
 import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.util.backoff.ExponentialBackOff;
 
@@ -72,10 +72,10 @@ public class KafkaErrorHandlingConfig {
 
     // Boot hands a CommonErrorHandler bean to its auto-configured listener container factory.
     @Bean
-    CommonErrorHandler kafkaErrorHandler(KafkaProperties kafkaProperties, ObjectMapper objectMapper,
+    CommonErrorHandler kafkaErrorHandler(KafkaProperties kafkaProperties, JsonMapper jsonMapper,
                                          NotificationRetryProperties retry, MeterRegistry meterRegistry) {
         DeadLetterPublishingRecoverer recoverer =
-                new DeadLetterPublishingRecoverer(deadLetterTemplate(kafkaProperties, objectMapper));
+                new DeadLetterPublishingRecoverer(deadLetterTemplate(kafkaProperties, jsonMapper));
 
         ExponentialBackOff backOff = new ExponentialBackOff(retry.initialInterval().toMillis(), retry.multiplier());
         backOff.setMaxInterval(retry.maxInterval().toMillis());
@@ -117,14 +117,14 @@ public class KafkaErrorHandlingConfig {
      * value serializer picks by type.
      */
     private static KafkaTemplate<Object, Object> deadLetterTemplate(KafkaProperties kafkaProperties,
-                                                                    ObjectMapper objectMapper) {
+                                                                    JsonMapper jsonMapper) {
         Map<Class<?>, Serializer<?>> byType = new LinkedHashMap<>();
         byType.put(byte[].class, new ByteArraySerializer());
-        byType.put(Object.class, new JsonSerializer<>(objectMapper).noTypeInfo());
+        byType.put(Object.class, new JacksonJsonSerializer<>(jsonMapper).noTypeInfo());
         @SuppressWarnings({"unchecked", "rawtypes"})
         Serializer<Object> keySerializer = (Serializer) new StringSerializer();
         DefaultKafkaProducerFactory<Object, Object> producerFactory = new DefaultKafkaProducerFactory<>(
-                kafkaProperties.buildProducerProperties(null), keySerializer,
+                kafkaProperties.buildProducerProperties(), keySerializer,
                 new DelegatingByTypeSerializer(byType, true));
         return new KafkaTemplate<>(producerFactory);
     }

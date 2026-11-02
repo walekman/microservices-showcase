@@ -13,6 +13,6 @@ public class ApiExceptionHandler extends PlatformExceptionHandler {
 
     @ExceptionHandler(AccountBlockedException.class)
     public ProblemDetail handleBlocked(AccountBlockedException ex) {
-        return Problems.of(HttpStatus.UNPROCESSABLE_ENTITY, "ACCOUNT_BLOCKED", "Account blocked", ex.getMessage());
+        return Problems.of(HttpStatus.UNPROCESSABLE_CONTENT, "ACCOUNT_BLOCKED", "Account blocked", ex.getMessage());
     }
 }

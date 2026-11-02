@@ -47,7 +47,7 @@ public class ApiExceptionHandler extends PlatformExceptionHandler {
             status = switch (transfer.getFailureCode()) {
                 case ACCOUNT_NOT_FOUND, INSUFFICIENT_FUNDS, CONCURRENT_MODIFICATION,
                      SOURCE_ACCOUNT_BLOCKED, DESTINATION_ACCOUNT_BLOCKED, AMOUNT_TOO_SMALL ->
-                        HttpStatus.UNPROCESSABLE_ENTITY;
+                        HttpStatus.UNPROCESSABLE_CONTENT;
                 case ACCOUNT_SERVICE_UNAVAILABLE, SOURCE_FRAUD_SERVICE_UNAVAILABLE,
                      DESTINATION_FRAUD_SERVICE_UNAVAILABLE, FX_SERVICE_UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
                 case UNEXPECTED_ERROR -> HttpStatus.INTERNAL_SERVER_ERROR;

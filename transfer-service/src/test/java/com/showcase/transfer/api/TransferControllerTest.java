@@ -1,6 +1,6 @@
 package com.showcase.transfer.api;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.showcase.transfer.domain.DebitOutcomeUnknownException;
 import com.showcase.transfer.domain.IdempotencyKeyConflictException;
 import com.showcase.transfer.domain.SameAccountTransferException;
@@ -13,8 +13,8 @@ import com.showcase.transfer.service.TransferPersistenceException;
 import com.showcase.transfer.service.TransferService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
@@ -62,7 +62,7 @@ class TransferControllerTest {
     @Autowired
     private ObjectMapper objectMapper;
 
-    @MockBean
+    @MockitoBean
     private TransferService transferService;
 
     private static RequestPostProcessor transferExecutor() {
