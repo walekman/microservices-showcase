@@ -44,9 +44,9 @@ class RequestLoggingIT {
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("No request log line for GET /transfers/123"));
         JsonNode node = new ObjectMapper().readTree(line);
-        assertThat(node.get("level").asText()).isEqualTo("INFO");
-        assertThat(node.path("traceId").asText()).isNotBlank();
-        assertThat(node.path("spanId").asText()).isNotBlank();
+        assertThat(node.get("level").asString()).isEqualTo("INFO");
+        assertThat(node.path("traceId").asString()).isNotBlank();
+        assertThat(node.path("spanId").asString()).isNotBlank();
         assertThat(node.path("http.status").asInt()).isEqualTo(401);
     }
 }

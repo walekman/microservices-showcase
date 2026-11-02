@@ -150,3 +150,21 @@ needed.
 
 Not checked here: a click-through of the Bank UI's Keycloak PKCE login in a browser. The UI and
 the realm are unchanged; only the APIs it calls were exercised.
+
+### Task 3
+
+`-Xlint:deprecation,removal` across main, test and E2E code found 84 warnings; none remain:
+
+- `org.testcontainers.containers.PostgreSQLContainer<?>` (34 tests) → `org.testcontainers.postgresql.PostgreSQLContainer`
+  (no longer generic).
+- `ScheduledTaskRegistrar.addFixedDelayTask(Runnable, long)` → the `Duration` overload in
+  `CompensationScheduler` and `OutboxPublisher`. Same zero initial delay, same intervals.
+- Jackson 3 `JsonNode.asText()` → `asString()`; MockMvc `isUnprocessableEntity()` →
+  `isUnprocessableContent()`; `KafkaTestUtils.consumerProps(…, "true")` → the `boolean` overload.
+
+Two deprecated starters don't show up at compile time:
+`spring-boot-starter-oauth2-resource-server` → `spring-boot-starter-security-oauth2-resource-server`,
+`spring-boot-starter-oauth2-client` → `spring-boot-starter-security-oauth2-client`.
+No YAML key in any service matches one of the 434 deprecated properties in the classpath's
+configuration metadata. (The scan does flag the pre-Task 1 tracing keys, so it works.)
+Full `./mvnw test`: 467 tests, 0 failures.

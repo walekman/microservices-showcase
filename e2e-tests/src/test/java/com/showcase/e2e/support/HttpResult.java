@@ -25,7 +25,7 @@ public record HttpResult(int status, String raw) {
     }
 
     public UUID uuid(String field) {
-        return UUID.fromString(json().path(field).asText());
+        return UUID.fromString(json().path(field).asString());
     }
 
     public BigDecimal decimal(String field) {

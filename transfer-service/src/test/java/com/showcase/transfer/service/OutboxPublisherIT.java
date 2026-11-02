@@ -22,7 +22,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.kafka.test.utils.KafkaTestUtils;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.kafka.KafkaContainer;
@@ -51,7 +51,7 @@ class OutboxPublisherIT {
 
     @Container
     @ServiceConnection
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+    static PostgreSQLContainer postgres = new PostgreSQLContainer("postgres:16-alpine");
 
     // @ServiceConnection on the Kafka container threw ConnectionDetailsNotFoundException
     // on Spring Boot 3.3.4 -- found live during Task 3's implementation. Wire the bootstrap
@@ -126,7 +126,7 @@ class OutboxPublisherIT {
         // routes to, and prove the key/value contract directly -- this is the one thing nothing
         // else in the suite protects.
         String topic = outboxPublisherProperties.topics().completed();
-        var consumerProps = KafkaTestUtils.consumerProps(kafka.getBootstrapServers(), "outbox-publisher-it", "true");
+        var consumerProps = KafkaTestUtils.consumerProps(kafka.getBootstrapServers(), "outbox-publisher-it", true);
         // consumerProps() defaults to IntegerDeserializer for the key -- OutboxPublisher's
         // producer key is the transfer id as a String (see topicFor()/publish()), so this
         // must be overridden or the consumer throws deserializing the first record.
@@ -174,7 +174,7 @@ class OutboxPublisherIT {
         outboxPublisher.publishPending();
 
         String topic = outboxPublisherProperties.topics().failed();
-        var consumerProps = KafkaTestUtils.consumerProps(kafka.getBootstrapServers(), "outbox-publisher-it-trace", "true");
+        var consumerProps = KafkaTestUtils.consumerProps(kafka.getBootstrapServers(), "outbox-publisher-it-trace", true);
         consumerProps.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
         try (Consumer<String, String> consumer = new KafkaConsumer<>(consumerProps)) {
             consumer.subscribe(List.of(topic));

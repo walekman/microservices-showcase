@@ -17,6 +17,7 @@ import org.springframework.scheduling.annotation.SchedulingConfigurer;
 import org.springframework.scheduling.config.ScheduledTaskRegistrar;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 
@@ -59,9 +60,9 @@ public class CompensationScheduler implements SchedulingConfigurer {
 
     @Override
     public void configureTasks(ScheduledTaskRegistrar registrar) {
-        long intervalMillis = properties.sweepInterval().toMillis();
-        registrar.addFixedDelayTask(this::drainCompensationRequired, intervalMillis);
-        registrar.addFixedDelayTask(this::sweepStalePending, intervalMillis);
+        Duration interval = properties.sweepInterval();
+        registrar.addFixedDelayTask(this::drainCompensationRequired, interval);
+        registrar.addFixedDelayTask(this::sweepStalePending, interval);
     }
 
     // Package-private so CompensationSchedulerTest can invoke it directly, without going
