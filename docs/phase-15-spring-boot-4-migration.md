@@ -121,3 +121,32 @@ each case, and the rule for future dependencies.
 Landed as specified in "What has to change". Full `./mvnw test`: 467 tests, 0 failures, on the
 same versions as the Versions table. Not yet exercised: Docker images, the live stack and E2E
 (Task 2).
+
+### Task 2
+
+Live verification on the stack built from Task 1 (`GIT_SHA=433d276`). No code changes were
+needed.
+
+- **Startup:** all six services healthy under the unchanged `-Xmx192m` cap (210–300 MiB per
+  container). `/actuator/info` reports the commit. Keycloak failed once on the first
+  `up --build`, a Postgres connection timeout while image builds held the CPU; a plain `up -d`
+  cleared it. That's unrelated to the migration.
+- **Tracing (finding 2):** one transfer through the Gateway gives a single Tempo trace of 62
+  spans across Gateway, Transfer, Account, Fraud and Notification, including the Kafka hop
+  (`outbox.publish` → `transfer.completed process`), each with `service.version`, plus Fraud's
+  datasource-micrometer spans. `GET /fx/rates` traces `@Observed` spans, Lettuce `get`/`set`/`eval`,
+  and the provider call.
+- **Logs:** `tools/check-trace-logs.ps1` finds the transfer's traceId in Loki for all five services.
+- **Metrics:** all six Prometheus targets up. Every metric on the project's dashboards exists. The
+  11 missing ones are all panels of the stock community `jvm-micrometer.json` (Jetty, Tomcat
+  MBean registry, an extra process-memory library) that this project never enabled. They were
+  already missing on Boot 3.
+- **API contract:** `/v3/api-docs` 200 (OpenAPI 3.1) on Account, Transfer, Fraud and FX. Bank UI
+  endpoints (`/accounts/mine`, `/accounts/{id}/summary`, `/transfers/mine`) answer as before, and
+  RFC 7807 bodies are unchanged: `SAME_ACCOUNT_TRANSFER` 400, and `INSUFFICIENT_FUNDS` 422 with
+  `transferStatus: FAILED`.
+- **E2E:** `./mvnw -Pe2e -pl e2e-tests verify`: 6/6, including the Account fault scenarios (the
+  breaker opens and recovers; a lost debit stays `PENDING` until the sweep replays it).
+
+Not checked here: a click-through of the Bank UI's Keycloak PKCE login in a browser. The UI and
+the realm are unchanged; only the APIs it calls were exercised.
