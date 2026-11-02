@@ -14,7 +14,8 @@ import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.actuate.observability.AutoConfigureObservability;
+import org.springframework.boot.micrometer.metrics.test.autoconfigure.AutoConfigureMetrics;
+import org.springframework.boot.micrometer.tracing.test.autoconfigure.AutoConfigureTracing;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.context.annotation.Import;
@@ -42,7 +43,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 // here in this class, because publishedRecordCarriesTraceparentHeaderWhenTheOutboxEventHasTraceContext
 // asserts on real wire-level header propagation, not just a mocked call or a bean's type.
 @SpringBootTest
-@AutoConfigureObservability
+@AutoConfigureMetrics
+@AutoConfigureTracing
 @Testcontainers
 @Import(StubServiceTokenTestConfig.class)
 class OutboxPublisherIT {

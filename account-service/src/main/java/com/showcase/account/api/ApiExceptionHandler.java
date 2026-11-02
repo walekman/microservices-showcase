@@ -28,12 +28,12 @@ public class ApiExceptionHandler extends PlatformExceptionHandler {
 
     @ExceptionHandler(InsufficientFundsException.class)
     public ProblemDetail handleInsufficientFunds(InsufficientFundsException ex) {
-        return Problems.of(HttpStatus.UNPROCESSABLE_ENTITY, "INSUFFICIENT_FUNDS", "Insufficient funds", ex.getMessage());
+        return Problems.of(HttpStatus.UNPROCESSABLE_CONTENT, "INSUFFICIENT_FUNDS", "Insufficient funds", ex.getMessage());
     }
 
     @ExceptionHandler(CurrencyMismatchException.class)
     public ProblemDetail handleCurrencyMismatch(CurrencyMismatchException ex) {
-        return Problems.of(HttpStatus.UNPROCESSABLE_ENTITY, "CURRENCY_MISMATCH", "Currency mismatch", ex.getMessage());
+        return Problems.of(HttpStatus.UNPROCESSABLE_CONTENT, "CURRENCY_MISMATCH", "Currency mismatch", ex.getMessage());
     }
 
     @ExceptionHandler(ObjectOptimisticLockingFailureException.class)

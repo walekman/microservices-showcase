@@ -43,13 +43,15 @@ management:
   opentelemetry:
     resource-attributes:
       "service.version": "@project.version@"
+    tracing:
+      export:
+        otlp:
+          endpoint: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:http://localhost:4318/v1/traces}
   tracing:
-    enabled: true
+    export:
+      enabled: true
     sampling:
       probability: 1.0
-  otlp:
-    tracing:
-      endpoint: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:http://localhost:4318/v1/traces}
 
 # JDBC spans from datasource-micrometer: one per connection (checkout to release) and one per
 # query (SQL text, no bound values), both under the calling span. Result-set FETCH spans are left
