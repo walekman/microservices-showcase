@@ -4,11 +4,11 @@ Guidance for Claude Code in this repository.
 
 ## Project
 
-Phases 1–13 (plus 7b, 8b) are done; `docs/roadmap.md` indexes them. Architecture lives in
+Phases 1–15 (plus 7b, 8b) are done; `docs/roadmap.md` indexes them. Architecture lives in
 `docs/microservices-showcase-design.md` and each phase's build in `docs/phase-N-*.md`.
 **Do not re-derive decisions already settled there.**
 
-Six Spring Boot 3.5 / Java 21 services and a static UI, all started by `docker compose up`:
+Six Spring Boot 4.0 / Java 21 services and a static UI, all started by `docker compose up`:
 
 | Service | Port | Role |
 |---|---|---|
@@ -101,6 +101,10 @@ Each of these cost a real defect.
 - **On a Spring Boot bump, re-check every pin by exercising the feature.** Boot's BOM doesn't
   manage springdoc, resilience4j or testcontainers; the 3.5 bump left springdoc 2.6.0, which
   started healthy but 500'd on every `/v3/api-docs` (`OpenApiDocsIT` now guards it).
+- **Since Boot 4, a library on the classpath no longer brings its autoconfiguration** — depend
+  on the Boot starter (`spring-boot-starter-kafka`, `-opentelemetry`, `-restclient`), never the
+  raw library. Raw `spring-kafka` and the OTel bridge compiled and started fine, but had no
+  Kafka autoconfig and exported no traces (`docs/phase-15-spring-boot-4-migration.md`).
 - **One worktree per task: the coordinator, never a subagent, stops other worktrees' compose
   stacks before live verification.** Fixed `container_name`s collide across checkouts, and in
   Phase 9 an implementer deleted another worktree's container to unblock itself.
