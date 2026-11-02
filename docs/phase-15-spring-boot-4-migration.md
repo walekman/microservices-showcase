@@ -93,7 +93,7 @@ each case, and the rule for future dependencies.
 |---|---|
 | Framework 7 API versioning (`/v1`) | A feature, not a migration; `phase-8b-version-visibility.md` ruled out `/v1` |
 | JSpecify null-safety annotations | Optional adoption, no migration need |
-| Flyway (open item #2) | Its own phase; Hibernate 7 keeps `ddl-auto: update` working |
+| Flyway (`open-items.md`) | Its own phase; Hibernate 7 keeps `ddl-auto: update` working |
 | Boot 4.1 | Waits for Spring Cloud 2026.0 GA |
 
 ## Delivery
@@ -168,3 +168,12 @@ Two deprecated starters don't show up at compile time:
 No YAML key in any service matches one of the 434 deprecated properties in the classpath's
 configuration metadata. (The scan does flag the pre-Task 1 tracing keys, so it works.)
 Full `./mvnw test`: 467 tests, 0 failures.
+
+### Task 4
+
+Docs brought up to Boot 4: the version line in `CLAUDE.md` (plus a lesson about starters vs raw
+libraries under "Executing implementation phases"), `README.md`, design doc §3 (runtime line and
+the starters rule), the infographic header (re-rendered with `docs/infographic/render.sh`),
+roadmap row marked done, open item #1 removed (the remaining items are renumbered), and Phase 8's
+Scope Boundary row now points here. Phase 8's own rationale for staying on 3.5.16 is kept as
+history.

@@ -9,9 +9,8 @@ lands, and add new ones as phases defer them.
 
 | # | Item | Source |
 |---|---|---|
-| 1 | **Boot 4.x migration.** The current 3.5.16 is past OSS end of life, which the phase doc calls "a real gap, not deferred lightly". | `phase-8-observability.md` Scope Boundary |
-| 2 | **Flyway/Liquibase instead of `ddl-auto: update`**, deferred three times and marked "its own phase". | `phase-1-foundation-account-service.md` Deferred / Known Gaps; phases 2–4 Scope Boundary |
-| 3 | **Automated browser tests for the Bank UI** (e.g. Playwright). | `phase-9-bank-ui.md` Scope Boundary |
+| 1 | **Flyway/Liquibase instead of `ddl-auto: update`**, deferred three times and marked "its own phase". | `phase-1-foundation-account-service.md` Deferred / Known Gaps; phases 2–4 Scope Boundary |
+| 2 | **Automated browser tests for the Bank UI** (e.g. Playwright). | `phase-9-bank-ui.md` Scope Boundary |
 
 ## 2. Deliberately not planned
 
