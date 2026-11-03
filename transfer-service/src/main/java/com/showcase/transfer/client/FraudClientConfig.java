@@ -1,8 +1,8 @@
 package com.showcase.transfer.client;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.boot.web.client.ClientHttpRequestFactories;
-import org.springframework.boot.web.client.ClientHttpRequestFactorySettings;
+import tools.jackson.databind.ObjectMapper;
+import org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder;
+import org.springframework.boot.http.client.HttpClientSettings;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.client.RestClient;
@@ -16,8 +16,8 @@ public class FraudClientConfig {
                                     ObjectMapper objectMapper) {
         RestClient restClient = builder
                 .baseUrl(properties.baseUrl())
-                .requestFactory(ClientHttpRequestFactories.get(
-                        ClientHttpRequestFactorySettings.DEFAULTS
+                .requestFactory(ClientHttpRequestFactoryBuilder.detect().build(
+                        HttpClientSettings.defaults()
                                 .withConnectTimeout(properties.connectTimeout())
                                 .withReadTimeout(properties.readTimeout())))
                 .build();

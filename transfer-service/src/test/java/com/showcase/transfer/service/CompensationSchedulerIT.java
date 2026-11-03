@@ -18,7 +18,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.data.domain.Limit;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
@@ -56,7 +56,7 @@ class CompensationSchedulerIT {
 
     @Container
     @ServiceConnection
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+    static PostgreSQLContainer postgres = new PostgreSQLContainer("postgres:16-alpine");
 
     private static final UUID FROM = UUID.fromString("22222222-2222-2222-2222-222222222222");
     private static final UUID TO = UUID.fromString("33333333-3333-3333-3333-333333333333");

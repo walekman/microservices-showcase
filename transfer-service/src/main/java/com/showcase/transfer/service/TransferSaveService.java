@@ -1,8 +1,8 @@
 // transfer-service/src/main/java/com/showcase/transfer/service/TransferSaveService.java
 package com.showcase.transfer.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 import com.showcase.transfer.domain.OutboxEvent;
 import com.showcase.transfer.domain.OutboxEventRepository;
 import com.showcase.transfer.domain.OutboxEventType;
@@ -96,7 +96,7 @@ public class TransferSaveService {
                     // Raw getCreditAmount(), as in TransferResponse: null when the transfer failed before it was priced.
                     transfer.getSourceCurrency(), transfer.getDestinationCurrency(), transfer.getRate(),
                     transfer.getCreditAmount()));
-        } catch (JsonProcessingException impossible) {
+        } catch (JacksonException impossible) {
             // Every field here is a UUID/BigDecimal/enum/String/Instant -- Jackson has no
             // way to fail serializing this record once JavaTimeModule is registered (it is,
             // on the Spring-managed ObjectMapper this class is given). Wrapped rather than

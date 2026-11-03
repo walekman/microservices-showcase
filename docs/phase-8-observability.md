@@ -113,7 +113,7 @@ Each task is its own branch/PR off the current `master`, per this project's work
 | Deferred | Why not now | Lands in |
 |---|---|---|
 | End-to-end saga test module (Testcontainers-driven, real services through the Gateway) | Independent concern from runtime observability infra — different kind of work, own design questions (which scenarios, how services get booted for the test) | Phase 10 (renumbered from Phase 9, not yet brainstormed) |
-| Boot 4.x migration (Spring Framework 7 / Jakarta EE 11 / Jackson 3) | 3.5.16 was a deliberate stopgap despite being past OSS EOL — see Design Decisions. A real gap, not deferred lightly: this project is meant to demonstrate modern practice, and it's now pinned to a dead branch | Not yet scheduled — revisit as its own phase |
+| Boot 4.x migration (Spring Framework 7 / Jakarta EE 11 / Jackson 3) | 3.5.16 was a deliberate stopgap despite being past OSS EOL — see Design Decisions. A real gap, not deferred lightly: this project is meant to demonstrate modern practice, and it's now pinned to a dead branch | Done in Phase 15 — [`phase-15-spring-boot-4-migration.md`](phase-15-spring-boot-4-migration.md) |
 | Centralized log aggregation (ELK/Loki) | Explicitly out of scope per the design doc §5 | Not currently planned |
 | Alerting (Prometheus Alertmanager / Grafana alert rules) | Not asked for; the design doc's observability section describes dashboards and traces, not alerting | Not currently planned |
 | Trace-to-metrics exemplar correlation in Grafana | Nice-to-have Tempo/Grafana feature, not required by the design doc's observability goals | Not currently planned — revisit if it proves easy during implementation |

@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/walekman/microservices-showcase/actions/workflows/ci.yml/badge.svg)](https://github.com/walekman/microservices-showcase/actions/workflows/ci.yml)
 
-A money-transfer system built as six Spring Boot 3 / Java 21 services: a transfer saga over
+A money-transfer system built as six Spring Boot 4 / Java 21 services: a transfer saga over
 synchronous HTTP with idempotent compensation, a transactional outbox to Kafka, a Redis-cached
 FX rate service, Keycloak JWT auth, and OpenTelemetry tracing — plus a small browser UI.
 

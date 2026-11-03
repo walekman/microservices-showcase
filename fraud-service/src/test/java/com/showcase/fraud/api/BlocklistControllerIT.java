@@ -4,12 +4,12 @@ import com.showcase.fraud.domain.BlockedAccountRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
-import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
@@ -34,7 +34,7 @@ class BlocklistControllerIT {
 
     @Container
     @ServiceConnection
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+    static PostgreSQLContainer postgres = new PostgreSQLContainer("postgres:16-alpine");
 
     private static final RequestPostProcessor FRAUD_ADMIN = jwt().authorities(() -> "fraud-admin");
     private static final RequestPostProcessor FRAUD_CHECKER = jwt().authorities(() -> "fraud-checker");
@@ -57,7 +57,7 @@ class BlocklistControllerIT {
                 .andExpect(status().isNoContent());
 
         mockMvc.perform(get("/fraud-check").param("accountId", accountId.toString()).with(FRAUD_CHECKER))
-                .andExpect(status().isUnprocessableEntity())
+                .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.code").value("ACCOUNT_BLOCKED"));
     }
 

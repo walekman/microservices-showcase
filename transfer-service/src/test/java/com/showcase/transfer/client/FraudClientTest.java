@@ -1,6 +1,6 @@
 package com.showcase.transfer.client;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -47,7 +47,7 @@ class FraudClientTest {
     @Test
     void checkThrowsRejectedWithDetailWhenTheAccountIsBlocked() {
         server.expect(requestToUriTemplate(BASE_URL + "/fraud-check?accountId={id}", ACCOUNT_ID))
-                .andRespond(problem(HttpStatus.UNPROCESSABLE_ENTITY, "ACCOUNT_BLOCKED",
+                .andRespond(problem(HttpStatus.UNPROCESSABLE_CONTENT, "ACCOUNT_BLOCKED",
                         "Account is blocklisted: " + ACCOUNT_ID));
 
         assertThatThrownBy(() -> fraudClient.check(ACCOUNT_ID))

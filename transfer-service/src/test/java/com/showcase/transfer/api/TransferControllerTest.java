@@ -1,6 +1,6 @@
 package com.showcase.transfer.api;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.showcase.transfer.domain.DebitOutcomeUnknownException;
 import com.showcase.transfer.domain.IdempotencyKeyConflictException;
 import com.showcase.transfer.domain.SameAccountTransferException;
@@ -13,8 +13,8 @@ import com.showcase.transfer.service.TransferPersistenceException;
 import com.showcase.transfer.service.TransferService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
@@ -62,7 +62,7 @@ class TransferControllerTest {
     @Autowired
     private ObjectMapper objectMapper;
 
-    @MockBean
+    @MockitoBean
     private TransferService transferService;
 
     private static RequestPostProcessor transferExecutor() {
@@ -95,7 +95,7 @@ class TransferControllerTest {
         when(transferService.execute(FROM, TO, AMOUNT, SUBJECT, KEY)).thenReturn(transfer);
 
         mockMvc.perform(post("/transfers").header("Idempotency-Key", KEY).contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(transferExecutor()))
-                .andExpect(status().isUnprocessableEntity())
+                .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.code").value("INSUFFICIENT_FUNDS"))
                 .andExpect(jsonPath("$.transferStatus").value("FAILED"));
     }
@@ -134,7 +134,7 @@ class TransferControllerTest {
         when(transferService.execute(FROM, TO, AMOUNT, SUBJECT, KEY)).thenReturn(transfer);
 
         mockMvc.perform(post("/transfers").header("Idempotency-Key", KEY).contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(transferExecutor()))
-                .andExpect(status().isUnprocessableEntity())
+                .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.code").value("AMOUNT_TOO_SMALL"))
                 .andExpect(jsonPath("$.detail").value("0.01 PLN converts to 0.00 EUR at rate 0.22819"));
     }
@@ -179,7 +179,7 @@ class TransferControllerTest {
         // and contains nothing internal, so blanket sanitising would throw away the one thing
         // that tells them what to do next.
         mockMvc.perform(post("/transfers").header("Idempotency-Key", KEY).contentType(MediaType.APPLICATION_JSON).content(requestBody()).with(transferExecutor()))
-                .andExpect(status().isUnprocessableEntity())
+                .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.detail").value("Balance 10.00 is less than 40.00"));
     }
 

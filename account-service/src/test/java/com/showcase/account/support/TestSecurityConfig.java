@@ -1,7 +1,7 @@
 package com.showcase.account.support;
 
 import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.boot.test.web.client.TestRestTemplate;
+import org.springframework.boot.resttestclient.TestRestTemplate;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.http.HttpHeaders;
@@ -135,7 +135,7 @@ public class TestSecurityConfig {
         @Override
         public ClientHttpResponse intercept(HttpRequest request, byte[] body, ClientHttpRequestExecution execution)
                 throws IOException {
-            if (!request.getHeaders().containsKey(HttpHeaders.AUTHORIZATION)) {
+            if (!request.getHeaders().containsHeader(HttpHeaders.AUTHORIZATION)) {
                 request.getHeaders().setBearerAuth(token);
             }
             return execution.execute(request, body);

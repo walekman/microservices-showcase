@@ -26,7 +26,7 @@ Each stateful service owns its data exclusively — no service queries another's
 
 ## 3. Tech Stack
 
-- **Language/runtime:** Java 21, Spring Boot 3.x
+- **Language/runtime:** Java 21, Spring Boot 4.0 (Spring Framework 7, Jakarta EE 11, Hibernate 7, Jackson 3). Each capability comes in through its Boot starter (e.g. `spring-boot-starter-kafka`, `-opentelemetry`, `-restclient`): since Boot 4 the raw library alone is not autoconfigured. See `docs/phase-15-spring-boot-4-migration.md`.
 - **Web:** Spring MVC (blocking, not WebFlux) with **virtual threads enabled** (`spring.threads.virtual.enabled=true`) — gets Java 21's concurrency model with plain sequential blocking code, no reactive programming model. Rationale: Transfer Service's saga makes a sequential chain of blocking downstream calls per request; virtual threads let that scale to many concurrent in-flight transfers without exhausting a platform-thread pool, and without rewriting the orchestration as reactive/async code. Out of scope: explicit thread-pinning verification/diagnostics tooling — the flag is enabled and left at that.
 - **Persistence:** Spring Data JPA + PostgreSQL, one logical database per stateful service (Account, Transfer, Notification, Fraud), provisioned as separate databases inside a single Postgres container via init script.
 - **Messaging:** Apache Kafka, **KRaft mode** (no Zookeeper).

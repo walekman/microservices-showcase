@@ -6,7 +6,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.web.client.TestRestTemplate;
+import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureTestRestTemplate;
+import org.springframework.boot.resttestclient.TestRestTemplate;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpEntity;
@@ -16,7 +17,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
-import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
@@ -45,6 +46,7 @@ import static org.assertj.core.api.Assertions.fail;
 // and the race window (a few ms between one request's idempotency-key lookup and its commit) was
 // narrower than the HTTP dispatch jitter on CI, so they flaked with every request returning 200 OK
 // -- see docs/investigation-account-controller-it-concurrency-flake.md.
+@AutoConfigureTestRestTemplate
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Testcontainers
 @Import(TestSecurityConfig.class)
@@ -56,7 +58,7 @@ class AccountControllerIT {
 
     @Container
     @ServiceConnection
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+    static PostgreSQLContainer postgres = new PostgreSQLContainer("postgres:16-alpine");
 
     @Autowired
     private TestRestTemplate restTemplate;
@@ -256,7 +258,7 @@ class AccountControllerIT {
                 "/accounts/" + id + "/debit", HttpMethod.POST,
                 amountRequest(new BigDecimal("40.00"), "debit-key-2"), ProblemDetail.class);
 
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
         assertThat(response.getBody().getProperties()).containsEntry("code", "INSUFFICIENT_FUNDS");
     }
 
@@ -556,7 +558,7 @@ class AccountControllerIT {
         ResponseEntity<ProblemDetail> response = restTemplate.exchange("/accounts/" + id + "/debit", HttpMethod.POST,
                 new HttpEntity<>(new AmountRequest(new BigDecimal("40.00"), "EUR"), headers), ProblemDetail.class);
 
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_CONTENT);
         assertThat(response.getBody().getProperties()).containsEntry("code", "CURRENCY_MISMATCH");
         AccountResponse after = restTemplate.getForObject("/accounts/" + id, AccountResponse.class);
         assertThat(after.balance()).isEqualByComparingTo("100.00");

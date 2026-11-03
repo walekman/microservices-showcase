@@ -1,7 +1,7 @@
 package com.showcase.fx.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 import io.micrometer.observation.annotation.Observed;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -81,7 +81,7 @@ public class RateCache {
         }
         try {
             return Optional.of(objectMapper.readValue(json, RateTable.class));
-        } catch (JsonProcessingException unreadable) {
+        } catch (JacksonException unreadable) {
             // Treated as absent rather than as an error: the next successful fetch overwrites it.
             log.warn("Ignoring unreadable FX cache entry {}: {}", key, unreadable.getMessage());
             return Optional.empty();
@@ -91,7 +91,7 @@ public class RateCache {
     private String write(RateTable table) {
         try {
             return objectMapper.writeValueAsString(table);
-        } catch (JsonProcessingException impossible) {
+        } catch (JacksonException impossible) {
             // A String, a LocalDate and a Map<String, BigDecimal> -- Boot's ObjectMapper
             // (JavaTimeModule registered) cannot fail on this.
             throw new IllegalStateException("Failed to serialize rates for " + table.base(), impossible);
