@@ -177,3 +177,14 @@ the starters rule), the infographic header (re-rendered with `docs/infographic/r
 roadmap row marked done, open item #1 removed (the remaining items are renumbered), and Phase 8's
 Scope Boundary row now points here. Phase 8's own rationale for staying on 3.5.16 is kept as
 history.
+
+### Post-phase fix: OTLP metrics push
+
+Found after the merge, on 2026-11-25 (`fix/jvm-dashboard`): `spring-boot-starter-opentelemetry`
+also brings `micrometer-registry-otlp`, and Boot 4 autoconfigures it. Every service started an
+`OtlpMeterRegistry` that pushed metrics each minute to its default
+`http://localhost:4318/v1/metrics`, which nothing listens on inside a container, so the service
+logged a `WARN` with a `ConnectException` stack trace each minute. Metrics still go through
+Prometheus scraping `/actuator/prometheus` (Phase 8), so the push is off in all six services:
+`management.otlp.metrics.export.enabled: false`. It is the same trap as item 2: the starter
+brings more than the library it replaces, here a second exporter nobody configured.

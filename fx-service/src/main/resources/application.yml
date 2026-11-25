@@ -52,6 +52,11 @@ management:
   observations:
     annotations:
       enabled: true
+  # Metrics are scraped by Prometheus; the OTLP registry the OTel starter brings would push to localhost:4318.
+  otlp:
+    metrics:
+      export:
+        enabled: false
   opentelemetry:
     resource-attributes:
       "service.version": "@project.version@"
