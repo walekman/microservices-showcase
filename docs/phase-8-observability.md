@@ -1662,3 +1662,22 @@ git add transfer-service/src/main/java/com/showcase/transfer/domain/OutboxEvent.
         gateway-service/src/main/resources/application.yml
 git commit -m "fix(observability): carry trace context across the outbox's async gap (Phase 8, Task 7)"
 ```
+
+## Post-phase fix: the JVM (Micrometer) dashboard
+
+Found on 2026-11-25 (`fix/jvm-dashboard`): the community dashboard from Task 5 had never shown
+data. Its `Application` dropdown is `label_values(application)` and every panel filters
+`{application="$application"}`, but no service set an `application` meter tag; Prometheus only
+had the scrape config's `job` label. The JSON also had no `uid`, so Grafana (which has no volume
+and recreates its database with the container) gave it a new random uid on each fresh start, and
+the hard-coded link in `tools/service-links.html` went stale.
+
+- `BuildInfoMetricsAutoConfiguration` (platform) now adds the common tag
+  `application=${spring.application.name}` to every meter via a `MeterFilter` bean. It is stable
+  across deploys, unlike the version/commit labels kept on `application_info` alone.
+- The dashboard has the fixed uid `showcase-jvm-micrometer`, like the hand-authored dashboards.
+  A Grafana container started before this change cannot take the new uid (provisioning logs
+  `deprecatedInternalID ... is already in use`): `docker compose up -d --force-recreate grafana`.
+- The Tomcat and Jetty thread panels stay empty on purpose. With `spring.threads.virtual.enabled`
+  Tomcat has no thread pool: with `server.tomcat.mbeanregistry.enabled=true` its
+  `tomcat_threads_*` meters all read `-1`, so that setting was not added. No service runs Jetty.

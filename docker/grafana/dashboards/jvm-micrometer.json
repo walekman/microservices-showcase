@@ -3165,5 +3165,6 @@
   },
   "timezone": "browser",
   "title": "JVM (Micrometer)",
+  "uid": "showcase-jvm-micrometer",
   "version": 24
 }

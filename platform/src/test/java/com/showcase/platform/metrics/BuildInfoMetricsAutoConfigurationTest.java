@@ -1,7 +1,9 @@
 package com.showcase.platform.metrics;
 
 import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.binder.MeterBinder;
+import io.micrometer.core.instrument.config.MeterFilter;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
@@ -38,6 +40,21 @@ class BuildInfoMetricsAutoConfigurationTest {
             assertThat(gauge.getId().getTag("version")).isEqualTo("unknown");
             assertThat(gauge.getId().getTag("commit")).isEqualTo("unknown");
         });
+    }
+
+    @Test
+    void tagsEveryMeterWithTheApplicationName() {
+        runner.withPropertyValues("spring.application.name=transfer-service").run(context -> {
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            registry.config().meterFilter(context.getBean("applicationTagMeterFilter", MeterFilter.class));
+            Counter counter = registry.counter("transfers.completed");
+            assertThat(counter.getId().getTag("application")).isEqualTo("transfer-service");
+        });
+    }
+
+    @Test
+    void addsNoApplicationTagWithoutAnApplicationName() {
+        runner.run(context -> assertThat(context).doesNotHaveBean("applicationTagMeterFilter"));
     }
 
     private static Gauge register(MeterBinder binder) {
